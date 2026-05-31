@@ -1,40 +1,26 @@
 """
-Native Analytics Vizro - Main Application Entry Point
+Native Analytics Vizro — Amazon Media Monitoring Dashboard
+Rebuilt from the reference notebook with full Vizro controls.
+
+Pages
+  1. Reach & Engagement Timeline  — dual-axis chart + campaign Gantt
+  2. Narrative Breakdown          — bar, stacked-area, and scatter charts
+
+Run:
+  python app.py
+  → http://127.0.0.1:8050
 """
 
-import vizro.plotly.express as px
-from vizro import Vizro
 import vizro.models as vm
+from vizro import Vizro
 
-df = px.data.iris()
+from pages.breakdown import breakdown_page
+from pages.timeline import timeline_page
 
-page = vm.Page(
-    title="Native Analytics - Iris Explorer",
-    components=[
-        vm.Graph(
-            figure=px.scatter(
-                df,
-                x="sepal_width",
-                y="sepal_length",
-                color="species",
-                title="Iris: Sepal Width vs Length",
-            )
-        ),
-        vm.Graph(
-            figure=px.histogram(
-                df,
-                x="sepal_length",
-                color="species",
-                title="Iris: Sepal Length Distribution",
-            )
-        ),
-    ],
-    controls=[
-        vm.Filter(column="species"),
-    ],
+dashboard = vm.Dashboard(
+    title="Native Analytics · Amazon Media Monitor",
+    pages=[timeline_page, breakdown_page],
 )
 
-dashboard = vm.Dashboard(pages=[page])
-
 if __name__ == "__main__":
-    Vizro().build(dashboard).run()
+    Vizro().build(dashboard).run(debug=True)
