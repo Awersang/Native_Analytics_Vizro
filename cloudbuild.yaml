@@ -1,0 +1,52 @@
+# Build, push and deploy the dashboard platform to Cloud Run.
+#
+#   gcloud builds submit --config cloudbuild.yaml \
+#       --substitutions=_REGION=europe-west1,_SERVICE=na-dashboards
+#
+# Secrets (SESSION_SECRET, Firebase admin creds) should be stored in Secret
+# Manager and referenced via --set-secrets on the Cloud Run service, not baked
+# into the image.
+
+substitutions:
+  _REGION: europe-west1
+  _SERVICE: na-dashboards
+  _REPO: dashboards
+
+steps:
+  # 1. Build the image
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - .
+
+  # 2. Push to Artifact Registry
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+
+  # 3. Deploy to Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --set-env-vars=ENV=prod,AUTH_ENABLED=true,GCP_PROJECT_ID=$PROJECT_ID
+      - --set-secrets=SESSION_SECRET=na-session-secret:latest
+      - --cpu=1
+      - --memory=1Gi
+      - --min-instances=0
+      - --max-instances=4
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY

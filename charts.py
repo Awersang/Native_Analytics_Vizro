@@ -44,7 +44,7 @@ def _reach_gradient_color(r: float, r_min: float, r_max: float) -> str:
 
 # ── Chart 1: Dual-axis reach / engagement timeline ─────────────────────────────
 @capture("graph")
-def reach_engagement_timeline(data_frame: pd.DataFrame) -> go.Figure:
+def reach_engagement_timeline(data_frame: pd.DataFrame, y_scale: str = "linear") -> go.Figure:
     """
     Dual y-axis weekly line chart.
       Left  axis (solid lines)  = Traditional Media Reach
@@ -92,9 +92,9 @@ def reach_engagement_timeline(data_frame: pd.DataFrame) -> go.Figure:
                       zerolinewidth=1, color="white")
 
     fig.update_yaxes(title_text="<b>Traditional Media Reach</b>",
-                     **axis_style, secondary_y=False)
+                     type=y_scale, **axis_style, secondary_y=False)
     fig.update_yaxes(title_text="<b>Social Media Engagement</b>",
-                     **axis_style, secondary_y=True)
+                     type=y_scale, **axis_style, secondary_y=True)
     fig.update_xaxes(gridcolor=GRID_COL, color="white", tickformat="%b %Y",
                      showgrid=True)
     fig.update_layout(
@@ -180,7 +180,7 @@ def campaign_gantt(data_frame: pd.DataFrame) -> go.Figure:
 
 # ── Chart 3: Total reach by narrative & sentiment (grouped bar) ────────────────
 @capture("graph")
-def narrative_reach_bar(data_frame: pd.DataFrame) -> go.Figure:
+def narrative_reach_bar(data_frame: pd.DataFrame, barmode: str = "group") -> go.Figure:
     """
     Horizontal grouped-bar chart: total reach per narrative per sentiment.
     Excludes the "All narratives" aggregate row.
@@ -218,7 +218,7 @@ def narrative_reach_bar(data_frame: pd.DataFrame) -> go.Figure:
         paper_bgcolor=DARK_BG,
         plot_bgcolor=DARK_BG,
         font=dict(color="white", family="Arial, sans-serif"),
-        barmode="group",
+        barmode=barmode,
         xaxis=dict(gridcolor=GRID_COL, color="white", title="Total Reach",
                    tickformat=","),
         yaxis=dict(color="white", showgrid=False, autorange="reversed"),
@@ -231,7 +231,7 @@ def narrative_reach_bar(data_frame: pd.DataFrame) -> go.Figure:
 
 # ── Chart 4: Stacked area reach over time by sentiment ─────────────────────────
 @capture("graph")
-def sentiment_stacked_area(data_frame: pd.DataFrame) -> go.Figure:
+def sentiment_stacked_area(data_frame: pd.DataFrame, y_scale: str = "linear") -> go.Figure:
     """
     Stacked area chart of weekly total reach split by sentiment.
     Excludes "All narratives" to avoid double-counting.
@@ -269,7 +269,7 @@ def sentiment_stacked_area(data_frame: pd.DataFrame) -> go.Figure:
         hovermode="x unified",
         xaxis=dict(gridcolor=GRID_COL, color="white", tickformat="%b %Y"),
         yaxis=dict(gridcolor=GRID_COL, color="white", title="Total Reach",
-                   tickformat=","),
+                   type=y_scale, tickformat=","),
         legend=dict(bgcolor="rgba(255,255,255,0.05)", bordercolor=GRID_COL,
                     borderwidth=1),
         margin=dict(l=60, r=20, t=20, b=30),

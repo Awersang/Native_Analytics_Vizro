@@ -1,0 +1,35 @@
+/* Native Analytics — dashboard chrome customisations.
+ *
+ * 1. Hide the Vizro NavBar icon rail so users cannot switch between dashboards
+ *    from inside a dashboard. Dashboard switching happens only via the user
+ *    panel at "/". The page accordion (#nav-panel) for the *current* dashboard
+ *    stays visible, so multi-page dashboards still navigate normally.
+ */
+#nav-bar {
+  display: none !important;
+}
+
+/* 2. "Back to panel" link injected into the header via Dashboard.custom_header. */
+a.back-to-panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin-right: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle-alpha-01, #444);
+  color: inherit;
+  text-decoration: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+a.back-to-panel:hover {
+  border-color: #4a6cf7;
+  color: #fff;
+}
+
+a.back-to-panel .material-symbols-outlined {
+  font-size: 18px;
+  line-height: 1;
+}

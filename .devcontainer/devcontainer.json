@@ -1,0 +1,31 @@
+{
+  "name": "Native Analytics Vizro",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true
+      }
+    }
+  },
+  // Mount the host's gcloud ADC so BigQuery / Firestore work inside the container.
+  // Run `gcloud auth application-default login` on the host first.
+  "mounts": [
+    "source=${localEnv:APPDATA}/gcloud,target=/root/.config/gcloud,type=bind,consistency=cached"
+  ],
+  "forwardPorts": [8050],
+  "postCreateCommand": "pip install -r requirements-dev.txt",
+  "remoteEnv": {
+    "AUTH_ENABLED": "false",
+    "ENV": "dev"
+  }
+}

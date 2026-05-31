@@ -31,4 +31,28 @@ build/
 Thumbs.db
 
 # Vizro / Dash
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# Local config & secrets — NEVER commit
+.env
+*.env
+!.env.example
+service-account*.json
+firebase-*.json
+*-credentials.json
+
+# Vizro / app cache
 assets/cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
