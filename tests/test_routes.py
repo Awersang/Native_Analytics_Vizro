@@ -183,3 +183,20 @@ def test_dashboard_open_records_usage_event():
     events = get_user_store().list_usage_events()
     assert any(e.slug == "timeline" for e in events)
 
+
+def test_chat_endpoint_answers_with_local_fallback():
+    # No GEMINI_API_KEY in dev → the offline pandas fallback answers.
+    r = client.post(
+        "/ext/chat/ask",
+        json={"slug": "timeline", "question": "How many rows are there?"},
+    )
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["source"] == "local"
+    assert "rows" in body["answer"].lower()
+
+
+def test_chat_endpoint_validates_input():
+    assert client.post("/ext/chat/ask", json={"slug": "timeline"}).status_code == 400
+    assert client.post("/ext/chat/ask", json={"question": "hi"}).status_code == 400
+

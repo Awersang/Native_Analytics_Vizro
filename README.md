@@ -125,6 +125,15 @@ python -m pytest -q
 4. Restart the app. The dashboard is auto-discovered, appears in the admin grant
    UI, and shows on a user's landing page once granted.
 
+### Responsive Plotly charts in cards
+
+For charts inside custom flex/grid cards, make the whole sizing chain shrinkable:
+use `dcc.Graph(responsive=True, style={"width": "100%", "height": "...", "minWidth": 0})`,
+set Plotly `layout.autosize=True` with `width=None` and `height=None`, and add
+`min-width: 0` to the card, grid item, and graph wrapper. Vizro/Dash layouts can
+otherwise keep a content-based minimum width and the Plotly SVG will overflow the
+card. For donut charts with outside labels, keep `automargin=True`.
+
 ## Authentication & tenancy
 
 - **Toggle:** `AUTH_ENABLED=true` enables Firebase. Set `FIREBASE_API_KEY`,

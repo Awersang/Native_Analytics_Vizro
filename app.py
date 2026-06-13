@@ -16,14 +16,18 @@ Run locally:  python app.py   →  http://127.0.0.1:8050
 """
 
 from __future__ import annotations
-
 import logging
 from pathlib import Path
 
+import dash
+from dash import _callback as dash_callback
+import dash._callback as _dc
 import vizro.models as vm
 from dash import html
 from flask import Response, jsonify, redirect, request
+from flask_caching import Cache
 from vizro import Vizro
+from vizro.managers import data_manager as _data_manager
 
 from auth.middleware import current_user
 from config import settings
@@ -35,6 +39,35 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 _ASSETS_FOLDER = str(Path(__file__).resolve().parent / "assets")
+
+# ---------------------------------------------------------------------------
+# Workaround for Vizro 0.1.56 / Dash 4.x behaviour where Dashboard.build()
+# pre-calls page.build() for each page (to register RangeSlider callbacks),
+# AND Dash's lazy page routing calls page.build() again on first navigation.
+# Graph.build() registers hidden clientside callbacks both times, producing
+# duplicate output entries in GLOBAL_CALLBACK_LIST that the browser rejects.
+# Making insert_callback idempotent (skip if callback_id already registered)
+# lets the first registration win and silently drops the redundant second one.
+# ---------------------------------------------------------------------------
+_orig_insert_callback = _dc.insert_callback
+
+
+def _idempotent_insert_callback(callback_list, callback_map, *args, **kwargs):
+    from dash._utils import create_callback_id
+
+    output = args[0] if args else kwargs.get("output")
+    inputs = args[2] if len(args) > 2 else kwargs.get("inputs", [])
+    no_output = kwargs.get("no_output", False)
+    try:
+        cb_id = create_callback_id(output, inputs, no_output)
+        if cb_id in callback_map:
+            return cb_id
+    except Exception:
+        pass
+    return _orig_insert_callback(callback_list, callback_map, *args, **kwargs)
+
+
+_dc.insert_callback = _idempotent_insert_callback
 
 # Discovered once (cached); shared with the landing + admin blueprints, which
 # import it from `dashboards` (NOT from `app`) to avoid re-executing this module.
@@ -63,9 +96,8 @@ def _build_home_page() -> vm.Page:
 class _PanelDashboard(vm.Dashboard):
     """Vizro dashboard with a persistent 'Back to panel' link in the header.
 
-    Switching between dashboards happens only via the user panel at '/', so the
-    in-dashboard chrome offers a way back there but never a cross-dashboard
-    switcher (the dashboard nav-bar icon rail is hidden via assets CSS)."""
+    The standard Vizro left navigation rail remains available, while the
+    in-dashboard header also offers a direct way back to the landing panel."""
 
     def custom_header(self):
         return [
@@ -82,35 +114,39 @@ class _PanelDashboard(vm.Dashboard):
 
 
 def _build_navigation() -> vm.Navigation:
-    """One NavBar entry per dashboard. Vizro only renders the *active* entry's
-    page accordion, so within a dashboard users see just that dashboard's pages
-    (enabling multi-page dashboards) and never other dashboards' pages."""
+    """One NavBar entry per page.
+
+    Dashboard switching stays in the landing panel while the left icon rail is
+    used for page-to-page navigation inside the active dashboard.
+    """
     items: list[vm.NavLink] = []
     for entry in DASHBOARD_REGISTRY:
-        page_ids = _PAGE_IDS_BY_SLUG.get(entry.manifest.slug, [])
-        if not page_ids:
+        dashboard_pages = _PAGES_BY_SLUG.get(entry.manifest.slug, [])
+        if not dashboard_pages:
             continue
-        items.append(
-            vm.NavLink(
-                label=entry.manifest.title,
-                icon=entry.manifest.icon,
-                pages=page_ids,
+        page_icons = entry.page_icons or {}
+        for page in dashboard_pages:
+            items.append(
+                vm.NavLink(
+                    label=page.title,
+                    icon=page_icons.get(page.id, entry.manifest.icon),
+                    pages=[page.id],
+                )
             )
-        )
     return vm.Navigation(nav_selector=vm.NavBar(items=items))
 
 
-# slug -> list of page ids contributed by that dashboard (filled in _build_dashboard).
-_PAGE_IDS_BY_SLUG: dict[str, list[str]] = {}
+# slug -> pages contributed by that dashboard (filled in _build_dashboard).
+_PAGES_BY_SLUG: dict[str, list[vm.Page]] = {}
 
 
 def _build_dashboard() -> vm.Dashboard:
     ctx = BuildContext(is_dev=settings.is_dev)
     pages: list[vm.Page] = [_build_home_page()]
-    _PAGE_IDS_BY_SLUG.clear()
+    _PAGES_BY_SLUG.clear()
     for entry in DASHBOARD_REGISTRY:
         dashboard_pages = entry.build_pages(ctx)
-        _PAGE_IDS_BY_SLUG[entry.manifest.slug] = [p.id for p in dashboard_pages]
+        _PAGES_BY_SLUG[entry.manifest.slug] = dashboard_pages
         pages.extend(dashboard_pages)
     return _PanelDashboard(
         title="Native Analytics",
@@ -169,6 +205,15 @@ def _install_access_gate(server) -> None:
 
 
 def create_app() -> Vizro:
+    # In dev, Dash/Vizro rebuild can happen inside the same process while files
+    # change. Clear process-global Dash registries first to avoid duplicate page
+    # paths, duplicate model ids, and duplicate callback outputs on hot reload.
+    if settings.is_dev:
+        Vizro._reset()
+        dash.page_registry.clear()
+        dash_callback.GLOBAL_CALLBACK_LIST.clear()
+        dash_callback.GLOBAL_CALLBACK_MAP.clear()
+
     viz = Vizro(
         routes_pathname_prefix=settings.vizro_mount_prefix,
         requests_pathname_prefix=settings.vizro_mount_prefix,
@@ -178,6 +223,12 @@ def create_app() -> Vizro:
 
     server = viz.dash.server
     server.secret_key = settings.session_secret
+
+    # Cache BQ results for 10 minutes so repeated filter interactions don't
+    # hit BigQuery on every callback.  Full-table queries are preserved.
+    _cache = Cache(config={"CACHE_TYPE": "SimpleCache", "CACHE_DEFAULT_TIMEOUT": 600})
+    _cache.init_app(server)
+    _data_manager.cache = _cache
 
     # Our own pages live at the site root, outside the Vizro mount.
     from admin.routes import bp as admin_bp
@@ -190,6 +241,12 @@ def create_app() -> Vizro:
     def _healthz():
         """Liveness probe for Cloud Run / load balancers."""
         return jsonify(status="ok", env=settings.env)
+
+    # Optional, detachable feature add-ons (chat-with-data, ...). Delete the
+    # `extensions/` package + the matching `assets/ext_*` files to remove them.
+    from extensions import install_extensions
+
+    install_extensions(server)
 
     _install_access_gate(server)
     logger.info(
@@ -206,14 +263,13 @@ server = app.dash.server  # WSGI entry point for gunicorn: `app:server`
 
 
 if __name__ == "__main__":
-    # Hot-reload is disabled: Vizro registers pages in Dash's process-global
-    # page registry at build time, so re-building on file change raises
-    # "Path ... cannot be used by more than one page". Restart manually to
-    # pick up code changes.
+    # Auto-reload in dev; keep production behavior deterministic.
+    dev_reload = settings.is_dev
     app.dash.run(
         host="127.0.0.1",
         port=8050,
         debug=True,
-        use_reloader=False,
-        dev_tools_hot_reload=False,
+        use_reloader=dev_reload,
+        dev_tools_hot_reload=dev_reload,
+        dev_tools_ui=False,
     )

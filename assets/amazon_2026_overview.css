@@ -1,0 +1,150 @@
+/* Token aliases — values are defined once (light + dark) in
+   assets/native_analytics.css as --na-*. Kept under the
+   --amazon-publishers-* names here so shared Python components
+   (KPI cards, na_panel, etc.) resolve correctly on this page. */
+#amazon-2026-overview {
+  --amazon-publishers-text: var(--na-text);
+  --amazon-publishers-text-muted: var(--na-text-muted);
+  --amazon-publishers-text-soft: var(--na-text-soft);
+  --amazon-publishers-border: var(--na-border);
+  --amazon-publishers-surface: var(--na-surface);
+  --amazon-publishers-surface-alt: var(--na-surface-alt);
+  --amazon-publishers-surface-hover: var(--na-surface-hover);
+  --amazon-publishers-grid: var(--na-grid);
+  --amazon-publishers-kpi-group-bg: var(--na-kpi-group-bg);
+}
+
+/* -----------------------------------------------------------------------
+   KPI row — "Traditional Media" (3 KPIs) and "Social Media" (2 KPIs)
+   panels side by side, preserving the original 4:2 (2:1) column split.
+----------------------------------------------------------------------- */
+.amazon-overview-kpi-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.amazon-publishers-kpis--2col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  .amazon-overview-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Hide Plotly modebar and logo for Amazon 2026 overview charts only. */
+#amazon-2026-overview-tml .modebar,
+#amazon-2026-media-type-monthly .modebar,
+#amazon-2026-media-type-period .modebar,
+#amazon-2026-some-platform .modebar,
+#amazon-2026-pubs-posts-reach .modebar,
+#amazon-2026-source-sentiment-monthly .modebar,
+#amazon-2026-sentiment-monthly .modebar,
+#amazon-2026-sentiment-period .modebar {
+  display: none !important;
+}
+
+#amazon-2026-overview .dash-graph {
+  min-height: 380px;
+}
+
+/* Section containers have no visible title outside dev mode; hide the
+   empty title bar and its bottom separator line. */
+#amazon-2026-overview .container-title {
+  display: none;
+}
+
+#amazon-2026-top-articles,
+#amazon-2026-top-posts {
+  position: relative;
+  z-index: 20;
+}
+
+#amazon-2026-top-articles .dash-table-container,
+#amazon-2026-top-articles .dash-spreadsheet-container,
+#amazon-2026-top-articles .dash-spreadsheet-inner,
+#amazon-2026-top-posts .dash-table-container,
+#amazon-2026-top-posts .dash-spreadsheet-container,
+#amazon-2026-top-posts .dash-spreadsheet-inner {
+  overflow: visible !important;
+}
+
+#amazon-2026-top-articles .dash-table-container,
+#amazon-2026-top-posts .dash-table-container {
+  position: relative !important;
+  z-index: 1;
+}
+
+#amazon-2026-top-articles .dash-spreadsheet-container,
+#amazon-2026-top-posts .dash-spreadsheet-container {
+  position: static !important;
+}
+
+#amazon-2026-top-articles .dash-cell-value,
+#amazon-2026-top-posts .dash-cell-value {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#amazon-2026-top-articles table,
+#amazon-2026-top-posts table {
+  table-layout: fixed !important;
+}
+
+#amazon-2026-top-articles td,
+#amazon-2026-top-articles th,
+#amazon-2026-top-posts td,
+#amazon-2026-top-posts th {
+  overflow: hidden !important;
+}
+
+#amazon-2026-top-articles td p,
+#amazon-2026-top-articles th p,
+#amazon-2026-top-posts td p,
+#amazon-2026-top-posts th p,
+#amazon-2026-top-articles td a,
+#amazon-2026-top-posts td a {
+  margin: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#amazon-2026-top-articles td:has(.dash-tooltip),
+#amazon-2026-top-articles .dash-cell:has(.dash-tooltip),
+#amazon-2026-top-posts td:has(.dash-tooltip),
+#amazon-2026-top-posts .dash-cell:has(.dash-tooltip) {
+  position: relative;
+  z-index: 6100 !important;
+}
+
+#amazon-2026-top-articles .dash-tooltip,
+#amazon-2026-top-articles .dash-table-tooltip,
+#amazon-2026-top-posts .dash-tooltip,
+#amazon-2026-top-posts .dash-table-tooltip {
+  z-index: 9999 !important;
+}
+
+#amazon-2026-top-articles .dash-table-tooltip,
+#amazon-2026-top-posts .dash-table-tooltip {
+  background: var(--bs-body-bg, #111827) !important;
+  color: var(--bs-body-color, #f8fafc) !important;
+  border: 1px solid var(--bs-border-color, rgba(255, 255, 255, 0.18)) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35) !important;
+  max-width: min(420px, 40vw) !important;
+  white-space: normal !important;
+}
+
+#amazon-2026-top-articles .dash-tooltip:before,
+#amazon-2026-top-articles .dash-tooltip:after,
+#amazon-2026-top-posts .dash-tooltip:before,
+#amazon-2026-top-posts .dash-tooltip:after {
+  border-top-color: var(--bs-body-bg, #111827) !important;
+}

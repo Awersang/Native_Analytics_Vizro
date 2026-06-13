@@ -5,7 +5,7 @@ from dashboards import discover_dashboards
 
 def test_discovers_the_three_dummy_dashboards():
     slugs = {d.manifest.slug for d in discover_dashboards()}
-    assert {"timeline", "breakdown", "bq_sample"} <= slugs
+    assert {"timeline", "breakdown", "bq_sample", "amazon_2026"} <= slugs
 
 
 def test_manifest_paths_are_namespaced():

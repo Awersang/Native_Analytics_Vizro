@@ -1,0 +1,679 @@
+/* Token aliases — values are defined once (light + dark) in
+   assets/native_analytics.css as --na-*. Kept under the
+   --amazon-publishers-* names here so existing component classes/Python
+   style dicts on this page keep working unchanged. */
+#amazon-2026-publishers {
+  --amazon-publishers-text: var(--na-text);
+  --amazon-publishers-text-muted: var(--na-text-muted);
+  --amazon-publishers-text-soft: var(--na-text-soft);
+  --amazon-publishers-border: var(--na-border);
+  --amazon-publishers-surface: var(--na-surface);
+  --amazon-publishers-surface-alt: var(--na-surface-alt);
+  --amazon-publishers-surface-hover: var(--na-surface-hover);
+  --amazon-publishers-row-even: var(--na-row-even);
+  --amazon-publishers-row-odd: var(--na-row-odd);
+  --amazon-publishers-header-bg: var(--na-header-bg);
+  --amazon-publishers-grid: var(--na-grid);
+  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
+  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
+  --amazon-publishers-link: var(--na-link);
+  --amazon-publishers-kpi-group-bg: var(--na-kpi-group-bg);
+  --amazon-publishers-avatar-bg: var(--na-avatar-bg);
+  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
+  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
+  --amazon-publishers-bar-positive: var(--na-bar-positive);
+  --amazon-publishers-bar-negative: var(--na-bar-negative);
+  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
+  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
+  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
+  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
+}
+
+#amazon-2026-publishers .figure-container {
+  width: 100%;
+}
+
+#amazon-2026-publisher-trad-timeline .modebar,
+#amazon-2026-publisher-some-timeline .modebar,
+#amazon-2026-publisher-timeline-graph .modebar {
+  display: none !important;
+}
+
+.loading-container:has(#amazon-2026-publisher-basic-metric-sink),
+#amazon-2026-publisher-basic-metric-sink,
+.amazon-publishers-control-sink {
+  display: none !important;
+}
+
+.amazon-publishers-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.amazon-publishers-section-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.amazon-publishers-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.amazon-publishers-kpis > *,
+.amazon-publishers-kpi-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.amazon-publishers-kpi-panel {
+  padding: 12px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-kpi-group-bg);
+}
+
+.amazon-publishers-kpi-panel-summary {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.amazon-publishers-kpi-panel-summary-kpis {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+}
+
+.amazon-publishers-kpi-panel-summary-kpis > .amazon-publishers-kpi {
+  min-height: 0;
+}
+
+.amazon-publishers-kpi-compact {
+  min-height: 74px;
+}
+
+.amazon-publishers-kpi-compact .amazon-publishers-kpi-value {
+  margin-top: 6px;
+  font-size: 24px;
+}
+
+.amazon-publishers-kpi-panel-body {
+  display: grid;
+  grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.amazon-publishers-kpi-panel-body > * {
+  min-width: 0;
+}
+
+.amazon-publishers-kpi-group-title {
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.amazon-publishers-kpi {
+  min-height: 96px;
+  padding: 14px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface);
+}
+
+.amazon-publishers-kpi-compact {
+  min-height: 0;
+}
+
+.amazon-publishers-kpi-label,
+.amazon-publishers-control-label,
+.amazon-publishers-links-title {
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.amazon-publishers-kpi-value {
+  margin-top: 8px;
+  color: var(--amazon-publishers-text);
+  font-size: 28px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.amazon-publishers-kpi-caption {
+  margin-top: 6px;
+  color: var(--amazon-publishers-text-soft);
+  font-size: 12px;
+}
+
+.amazon-publishers-mini-donut {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 260px;
+  padding: 12px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface);
+  overflow: clip;
+}
+
+.amazon-publishers-mini-donut-empty {
+  justify-content: center;
+  align-items: center;
+}
+
+.amazon-publishers-mini-donut-header,
+.amazon-publishers-mini-axis {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.amazon-publishers-mini-title,
+.amazon-publishers-mini-range,
+.amazon-publishers-mini-axis,
+.amazon-publishers-mini-empty {
+  font-size: 12px;
+}
+
+.amazon-publishers-mini-title,
+.amazon-publishers-mini-empty {
+  color: var(--amazon-publishers-text-muted);
+}
+
+.amazon-publishers-mini-range {
+  color: var(--amazon-publishers-text-soft);
+}
+
+.amazon-publishers-mini-donut-graph {
+  display: block;
+  width: 100%;
+  height: 240px;
+  margin: 8px 0 0;
+  min-width: 0;
+}
+
+.amazon-publishers-mini-donut .dash-graph,
+.amazon-publishers-mini-donut-graph.dash-graph {
+  min-width: 0 !important;
+  overflow: hidden;
+}
+
+.amazon-publishers-venn {
+  display: flex;
+  flex-direction: column;
+  justify-content: stretch;
+  min-width: 0;
+  min-height: 250px;
+  padding: 6px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface);
+  overflow: clip;
+}
+
+.amazon-publishers-venn-graph {
+  display: block;
+  width: 100%;
+  height: 238px;
+  margin: 0;
+  min-width: 0;
+}
+
+.amazon-publishers-venn .dash-graph,
+.amazon-publishers-venn-graph.dash-graph {
+  min-width: 0 !important;
+  overflow: hidden;
+}
+
+.amazon-publishers-mini-axis {
+  color: var(--amazon-publishers-text-soft);
+  font-size: 11px;
+}
+
+.amazon-publishers-controls {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.3fr) minmax(180px, 0.8fr) minmax(240px, 1fr);
+  gap: 16px;
+  align-items: end;
+}
+
+.amazon-publishers-control {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.amazon-publishers-source-control {
+  min-width: 280px;
+}
+
+.amazon-publishers-radio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.amazon-publishers-radio label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface);
+  color: var(--amazon-publishers-text);
+  font-size: 13px;
+}
+
+.amazon-publishers-dropdown .Select-control,
+.amazon-publishers-dropdown .Select-menu-outer,
+.amazon-publishers-dropdown .Select-value,
+.amazon-publishers-dropdown .Select-placeholder,
+.amazon-publishers-dropdown .Select-input,
+.amazon-publishers-dropdown .Select-input input {
+  background: var(--amazon-publishers-dropdown-bg) !important;
+  color: var(--amazon-publishers-text) !important;
+}
+
+.amazon-publishers-dropdown .Select-control {
+  min-height: 38px;
+  border-color: var(--amazon-publishers-border) !important;
+  border-radius: 8px !important;
+}
+
+.amazon-publishers-dropdown .Select-menu-outer {
+  border-color: var(--amazon-publishers-border) !important;
+}
+
+.amazon-publishers-dropdown .Select-option {
+  background: var(--amazon-publishers-dropdown-bg);
+  color: var(--amazon-publishers-text);
+}
+
+.amazon-publishers-dropdown .Select-option.is-focused {
+  background: var(--amazon-publishers-dropdown-hover);
+}
+
+.amazon-publishers-dropdown .Select-value-label {
+  color: var(--amazon-publishers-text) !important;
+}
+
+#amazon-2026-publishers-table .dash-table-container,
+#amazon-2026-publisher-narratives-table .dash-table-container {
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#amazon-2026-publishers-table .dash-spreadsheet-menu-item,
+#amazon-2026-publishers-table .dash-spreadsheet-menu,
+#amazon-2026-publishers-table .show-hide {
+  display: none !important;
+}
+
+#amazon-2026-publishers-table .dash-header,
+#amazon-2026-publishers-table .dash-header div,
+#amazon-2026-publisher-narratives-table .dash-header,
+#amazon-2026-publisher-narratives-table .dash-header div {
+  white-space: normal !important;
+  line-height: 1.18;
+}
+
+#amazon-2026-publishers-table .dash-cell-value,
+#amazon-2026-publisher-narratives-table .dash-cell-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#amazon-2026-publishers-table .dash-fixed-column {
+  z-index: 3;
+  box-shadow: inset -1px 0 0 var(--amazon-publishers-border);
+}
+
+#amazon-2026-publishers-table .dash-fixed-column th {
+  background: var(--amazon-publishers-header-bg) !important;
+}
+
+#amazon-2026-publishers-table .dash-fixed-column .dash-header div {
+  display: flex;
+  margin: 0;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+#amazon-2026-publishers-table .dash-fixed-column tbody tr:nth-child(odd) td {
+  background: var(--amazon-publishers-row-odd) !important;
+}
+
+#amazon-2026-publishers-table .dash-fixed-column tbody tr:nth-child(even) td {
+  background: var(--amazon-publishers-row-even) !important;
+}
+
+#amazon-2026-publishers-table .dash-fixed-column td,
+#amazon-2026-publishers-table .dash-fixed-column th,
+#amazon-2026-publishers-table td[data-dash-column="display_name"] {
+  vertical-align: middle !important;
+}
+
+#amazon-2026-publishers-table td[data-dash-column="display_name"] {
+  position: relative;
+  z-index: 5;
+  background-clip: padding-box;
+}
+
+#amazon-2026-publishers-table td[data-dash-column="display_name"] .dash-cell-value {
+  display: block;
+  margin: 0;
+  color: var(--amazon-publishers-link);
+  line-height: 1.2;
+}
+
+#amazon-2026-publisher-narratives-table td,
+#amazon-2026-publisher-narratives-table th,
+#amazon-2026-publisher-narratives-table td[data-dash-column="narrative_label"] {
+  vertical-align: middle !important;
+}
+
+#amazon-2026-publisher-narratives-table td[data-dash-column="narrative_label"] {
+  position: relative;
+  z-index: 2;
+  background-clip: padding-box;
+}
+
+/* -----------------------------------------------------------------------
+   Pagination — applies to every dash_table on this page so the current-page
+   digit, arrows and pagination bar always follow --na-text (never pure
+   black/white). Scoped via .dash-table-container so new tables inherit it
+   automatically — do not add per-table-id pagination overrides.
+----------------------------------------------------------------------- */
+
+#amazon-2026-publishers .dash-table-container .current-page {
+  color: var(--amazon-publishers-text) !important;
+  background: var(--amazon-publishers-surface) !important;
+  border-color: var(--amazon-publishers-border) !important;
+}
+
+#amazon-2026-publishers .dash-table-container .current-page input,
+#amazon-2026-publishers .dash-table-container .current-page-shadow,
+#amazon-2026-publishers .dash-table-container .current-page-container input,
+#amazon-2026-publishers .dash-table-container .page-number,
+#amazon-2026-publishers .dash-table-container .page-number *,
+#amazon-2026-publishers .dash-table-container .dash-table-pagination,
+#amazon-2026-publishers .dash-table-container .dash-table-pagination *,
+#amazon-2026-publishers .dash-table-container input.current-page {
+  color: var(--amazon-publishers-text) !important;
+  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  opacity: 1 !important;
+}
+
+#amazon-2026-publishers .dash-table-container .first-page,
+#amazon-2026-publishers .dash-table-container .previous-page,
+#amazon-2026-publishers .dash-table-container .next-page,
+#amazon-2026-publishers .dash-table-container .last-page {
+  color: var(--amazon-publishers-text) !important;
+}
+
+.amazon-publishers-detail-selector {
+  max-width: 440px;
+}
+
+.amazon-publishers-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.amazon-publishers-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.3fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.amazon-publishers-detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.amazon-narrative-details .amazon-publishers-detail-kpis {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.amazon-publishers-profile {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface-alt);
+}
+
+.amazon-publishers-avatar {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-avatar-bg);
+  color: var(--amazon-publishers-text);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.amazon-publishers-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.amazon-publishers-type {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.amazon-publishers-type-tml {
+  color: var(--amazon-publishers-text-muted);
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--amazon-publishers-border);
+}
+
+.amazon-publishers-profile h3 {
+  margin: 10px 0 10px;
+  color: var(--amazon-publishers-text);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.amazon-publishers-profile-summary {
+  margin: 2px 0 28px;
+  max-width: 72ch;
+  color: var(--amazon-publishers-text);
+  font-size: 15px;
+  opacity: 0.92;
+}
+
+.amazon-publishers-profile-summary p {
+  margin: 0;
+  line-height: 1.72;
+}
+
+.amazon-publishers-profile-subtitle {
+  margin-top: 14px;
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.amazon-publishers-profile-summary ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.amazon-publishers-profile-summary li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.amazon-publishers-narrative-count {
+  color: var(--amazon-publishers-text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.amazon-publishers-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.amazon-publishers-links-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  gap: 18px 24px;
+  align-items: start;
+  justify-content: start;
+}
+
+.amazon-publishers-link-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.amazon-publishers-link-list a {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 6px 9px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  color: var(--amazon-publishers-link);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amazon-publishers-empty {
+  padding: 18px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  color: var(--amazon-publishers-text-muted);
+}
+
+.amazon-publishers-timelines {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+
+.amazon-publishers-chart-controls {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.amazon-publishers-timeline-card {
+  min-height: 380px;
+}
+
+.amazon-publishers-timeline-graph {
+  min-height: 380px;
+}
+
+.amazon-publishers-timeline-graph .js-plotly-plot,
+.amazon-publishers-timeline-graph .plot-container {
+  min-height: 380px;
+}
+
+/* Hover label theming for these two charts is now handled by the
+   dashboard-wide Plotly rules in assets/native_analytics.css. */
+
+@media (max-width: 1100px) {
+  .amazon-publishers-kpis,
+  .amazon-publishers-controls,
+  .amazon-publishers-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .amazon-publishers-kpi-panel-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .amazon-publishers-kpi-panel-summary-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .amazon-publishers-kpi-panel-body,
+  .amazon-publishers-detail-kpis,
+  .amazon-publishers-profile {
+    grid-template-columns: 1fr;
+  }
+
+  .amazon-publishers-mini-donut {
+    min-height: 300px;
+  }
+
+  .amazon-publishers-mini-donut-graph,
+  .amazon-publishers-venn-graph {
+    height: 270px;
+  }
+
+  .amazon-publishers-kpi-panel-summary-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .amazon-publishers-avatar {
+    width: 58px;
+    height: 58px;
+  }
+
+  .amazon-publishers-links-row {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}

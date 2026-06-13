@@ -78,6 +78,21 @@ class Settings(BaseSettings):
     # for our own landing / login pages.
     vizro_mount_prefix: str = "/app/"
 
+    # Upper limit on bytes read per BigQuery query (safety net against runaway
+    # queries from aggressive dashboard filters). 0 = unlimited (default for
+    # dev). Set e.g. 10_000_000_000 (10 GB) for production.
+    bq_max_bytes_billed: int = 0
+
+    # ── Optional / detachable features ────────────────────────────────────────
+    # "Chat with your data" widget (extensions/chat_with_data.py). Toggle off to
+    # disable the feature without removing the code. Delete the `extensions/`
+    # package + ``assets/ext_chat.*`` + the hook in app.py to remove it entirely.
+    features_chat_enabled: bool = True
+    # Gemini API key for the chat feature. Empty → a local pandas fallback
+    # answers questions offline (no GCP creds needed in dev).
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+
     @property
     def is_dev(self) -> bool:
         return self.env == "dev"

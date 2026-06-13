@@ -28,6 +28,9 @@ class RegisteredDashboard:
     build_pages: Callable[[BuildContext], list[vm.Page]]
     # Optional health probe exported by the dashboard package as ``data_health``.
     data_health: Callable[[], list[DataSourceHealth]] | None = None
+    # Optional page-level icon mapping exported by the dashboard package as
+    # ``PAGE_ICONS`` with keys of page ids and values of Material icon names.
+    page_icons: dict[str, str] | None = None
 
 
 def discover_dashboards() -> list[RegisteredDashboard]:
@@ -49,11 +52,13 @@ def discover_dashboards() -> list[RegisteredDashboard]:
                     f"'{manifest.slug}'. Folder name and slug must match."
                 )
             data_health = getattr(module, "data_health", None)
+            page_icons = getattr(module, "PAGE_ICONS", None)
             found.append(
                 RegisteredDashboard(
                     manifest=manifest,
                     build_pages=build_pages,
                     data_health=data_health if callable(data_health) else None,
+                    page_icons=page_icons if isinstance(page_icons, dict) else None,
                 )
             )
 

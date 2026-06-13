@@ -24,11 +24,17 @@ MANIFEST = DashboardManifest(
     data_requirements=["bigquery:amazon_2025.disinformation_timeline"],
 )
 
-# Register the dynamic data source once at import time.
-data_manager[DATA_KEY] = load_disinformation_timeline
+def _register_data_sources() -> None:
+    # Register the dynamic data source at build time too because Vizro resets
+    # clear the shared data manager during dev hot reload.
+    data_manager[DATA_KEY] = load_disinformation_timeline
+
+
+_register_data_sources()
 
 
 def build_pages(ctx: BuildContext) -> list[vm.Page]:
+    _register_data_sources()
     page = vm.Page(
         id="bq_sample",
         title=MANIFEST.title,

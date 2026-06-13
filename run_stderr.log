@@ -1,0 +1,12 @@
+INFO:dash.dash:Dash is running on http://127.0.0.1:8050/app/
+
+WARNING:data_sources.bq:BigQuery query failed in dev; using fixture fallback: 404 Not found: Table native-analytics-486522:amazon_2026.amazon_2026_topic_areas was not found in location EU; reason: notFound, message: Not found: Table native-analytics-486522:amazon_2026.amazon_2026_topic_areas was not found in location EU
+
+Location: EU
+Job ID: 103229c6-3028-47c7-ab5b-cceffe4777c8
+
+WARNING:data_sources.bq:BigQuery query failed in dev; using fixture fallback: 404 Not found: Table native-analytics-486522:amazon_2026.amazon_2026_topic_area_narratives was not found in location EU; reason: notFound, message: Not found: Table native-analytics-486522:amazon_2026.amazon_2026_topic_area_narratives was not found in location EU
+
+Location: EU
+Job ID: 905c7965-ca5a-4433-b3a0-b8dccdd1e752
+

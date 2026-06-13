@@ -1,0 +1,68 @@
+/* -----------------------------------------------------------------------
+   Campaigns page — CSS variable scope + table styling
+   The --amazon-publishers-* variables are defined on the publishers page
+   only, so we re-declare them here so the shared Python components
+   (data-bar gradients, separators, etc.) resolve correctly.
+----------------------------------------------------------------------- */
+
+/* Token aliases — values are defined once (light + dark) in
+   assets/native_analytics.css as --na-*. Kept under the
+   --amazon-publishers-* names here so existing component classes/Python
+   style dicts on this page keep working unchanged. */
+#amazon-2026-campaigns {
+  --amazon-publishers-text: var(--na-text);
+  --amazon-publishers-text-muted: var(--na-text-muted);
+  --amazon-publishers-text-soft: var(--na-text-soft);
+  --amazon-publishers-border: var(--na-border);
+  --amazon-publishers-surface: var(--na-surface);
+  --amazon-publishers-surface-alt: var(--na-surface-alt);
+  --amazon-publishers-surface-hover: var(--na-surface-hover);
+  --amazon-publishers-row-even: var(--na-row-even);
+  --amazon-publishers-row-odd: var(--na-row-odd);
+  --amazon-publishers-header-bg: var(--na-header-bg);
+  --amazon-publishers-grid: var(--na-grid);
+  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
+  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
+  --amazon-publishers-link: var(--na-link);
+  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
+  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
+  --amazon-publishers-bar-positive: var(--na-bar-positive);
+  --amazon-publishers-bar-negative: var(--na-bar-negative);
+  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
+  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
+  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
+  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
+}
+
+/* -----------------------------------------------------------------------
+   Pagination — applies to every dash_table on this page so the current-page
+   digit, arrows and pagination bar always follow --na-text (never pure
+   black/white). Scoped via .dash-table-container so new tables inherit it
+   automatically — do not add per-table-id pagination overrides.
+----------------------------------------------------------------------- */
+
+#amazon-2026-campaigns .dash-table-container .current-page {
+  color: var(--amazon-publishers-text) !important;
+  background: var(--amazon-publishers-surface) !important;
+  border-color: var(--amazon-publishers-border) !important;
+}
+
+#amazon-2026-campaigns .dash-table-container .current-page input,
+#amazon-2026-campaigns .dash-table-container .current-page-shadow,
+#amazon-2026-campaigns .dash-table-container .current-page-container input,
+#amazon-2026-campaigns .dash-table-container .page-number,
+#amazon-2026-campaigns .dash-table-container .page-number *,
+#amazon-2026-campaigns .dash-table-container .dash-table-pagination,
+#amazon-2026-campaigns .dash-table-container .dash-table-pagination *,
+#amazon-2026-campaigns .dash-table-container input.current-page {
+  color: var(--amazon-publishers-text) !important;
+  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  opacity: 1 !important;
+}
+
+#amazon-2026-campaigns .dash-table-container .first-page,
+#amazon-2026-campaigns .dash-table-container .previous-page,
+#amazon-2026-campaigns .dash-table-container .next-page,
+#amazon-2026-campaigns .dash-table-container .last-page {
+  color: var(--amazon-publishers-text) !important;
+}

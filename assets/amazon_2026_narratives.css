@@ -1,0 +1,267 @@
+/* -----------------------------------------------------------------------
+   Narratives page — CSS variable scope + table styling
+   The --amazon-publishers-* variables are defined on the publishers page
+   only, so we re-declare them here so the shared Python components
+   (data-bar gradients, separators, etc.) resolve correctly.
+----------------------------------------------------------------------- */
+
+/* Token aliases — values are defined once (light + dark) in
+   assets/native_analytics.css as --na-*. Kept under the
+   --amazon-publishers-* names here so existing component classes/Python
+   style dicts on this page keep working unchanged. */
+#amazon-2026-narratives {
+  --amazon-publishers-text: var(--na-text);
+  --amazon-publishers-text-muted: var(--na-text-muted);
+  --amazon-publishers-text-soft: var(--na-text-soft);
+  --amazon-publishers-border: var(--na-border);
+  --amazon-publishers-surface: var(--na-surface);
+  --amazon-publishers-surface-alt: var(--na-surface-alt);
+  --amazon-publishers-surface-hover: var(--na-surface-hover);
+  --amazon-publishers-row-even: var(--na-row-even);
+  --amazon-publishers-row-odd: var(--na-row-odd);
+  --amazon-publishers-header-bg: var(--na-header-bg);
+  --amazon-publishers-grid: var(--na-grid);
+  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
+  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
+  --amazon-publishers-link: var(--na-link);
+  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
+  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
+  --amazon-publishers-bar-positive: var(--na-bar-positive);
+  --amazon-publishers-bar-negative: var(--na-bar-negative);
+  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
+  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
+  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
+  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
+}
+
+/* -----------------------------------------------------------------------
+   Table container — rounded border matching publishers table
+----------------------------------------------------------------------- */
+
+#amazon-2026-narratives .figure-container {
+  width: 100%;
+}
+
+#amazon-2026-narratives-overview-table .dash-table-container {
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#amazon-2026-narratives-overview-table .dash-spreadsheet-menu-item,
+#amazon-2026-narratives-overview-table .dash-spreadsheet-menu,
+#amazon-2026-narratives-overview-table .show-hide {
+  display: none !important;
+}
+
+/* -----------------------------------------------------------------------
+   Header — allow wrapping so multi-word column headers match publishers
+----------------------------------------------------------------------- */
+
+#amazon-2026-narratives-overview-table .dash-header,
+#amazon-2026-narratives-overview-table .dash-header div {
+  white-space: normal !important;
+  line-height: 1.18;
+}
+
+/* -----------------------------------------------------------------------
+   Data cells — text overflow + vertical alignment
+----------------------------------------------------------------------- */
+
+#amazon-2026-narratives-overview-table .dash-cell-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#amazon-2026-narratives-overview-table td,
+#amazon-2026-narratives-overview-table th,
+#amazon-2026-narratives-overview-table td[data-dash-column="narrative_label"] {
+  vertical-align: middle !important;
+}
+
+/* Narrative column — keep it above data-bar gradients */
+#amazon-2026-narratives-overview-table td[data-dash-column="narrative_label"] {
+  position: relative;
+  z-index: 2;
+  background-clip: padding-box;
+}
+
+/* -----------------------------------------------------------------------
+   Pagination — applies to every dash_table on this page so the current-page
+   digit, arrows and pagination bar always follow --na-text (never pure
+   black/white). Scoped via .dash-table-container so new tables inherit it
+   automatically — do not add per-table-id pagination overrides.
+----------------------------------------------------------------------- */
+
+#amazon-2026-narratives .dash-table-container .current-page {
+  color: var(--amazon-publishers-text) !important;
+  background: var(--amazon-publishers-surface) !important;
+  border-color: var(--amazon-publishers-border) !important;
+}
+
+#amazon-2026-narratives .dash-table-container .current-page input,
+#amazon-2026-narratives .dash-table-container .current-page-shadow,
+#amazon-2026-narratives .dash-table-container .current-page-container input,
+#amazon-2026-narratives .dash-table-container .page-number,
+#amazon-2026-narratives .dash-table-container .page-number *,
+#amazon-2026-narratives .dash-table-container .dash-table-pagination,
+#amazon-2026-narratives .dash-table-container .dash-table-pagination *,
+#amazon-2026-narratives .dash-table-container input.current-page {
+  color: var(--amazon-publishers-text) !important;
+  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  opacity: 1 !important;
+}
+
+#amazon-2026-narratives .dash-table-container .first-page,
+#amazon-2026-narratives .dash-table-container .previous-page,
+#amazon-2026-narratives .dash-table-container .next-page,
+#amazon-2026-narratives .dash-table-container .last-page {
+  color: var(--amazon-publishers-text) !important;
+}
+
+/* -----------------------------------------------------------------------
+   Source dropdown — single-filter layout (one column, not three)
+----------------------------------------------------------------------- */
+
+#amazon-2026-narratives .amazon-publishers-controls {
+  grid-template-columns: minmax(280px, 440px);
+}
+
+/* -----------------------------------------------------------------------
+   KPI two-row grid layout for the narratives page
+----------------------------------------------------------------------- */
+
+#amazon-2026-narratives .amazon-publishers-kpis-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#amazon-2026-narratives .amazon-publishers-kpis-grid .amazon-publishers-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+
+/* -----------------------------------------------------------------------
+   Narrative details — Overview/Trad/SoMe panels on the left, profile on the right
+----------------------------------------------------------------------- */
+
+.amazon-narrative-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.3fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.amazon-narrative-detail-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-content: start;
+}
+
+.amazon-narrative-profile-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.amazon-narrative-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+}
+
+/* Loosen up the shared publisher KPI panel/donut spacing within the
+   narrative details container — the defaults feel cramped here. */
+.amazon-narrative-details .amazon-publishers-detail-content {
+  gap: 28px;
+}
+
+.amazon-narrative-details .amazon-publishers-kpi-panel {
+  padding: 18px;
+  gap: 16px;
+}
+
+.amazon-narrative-details .amazon-publishers-kpi-panel-body {
+  gap: 18px;
+}
+
+.amazon-narrative-details .amazon-publishers-kpi-panel-summary-kpis {
+  gap: 16px;
+}
+
+.amazon-narrative-profile-title {
+  margin: 0;
+  color: var(--amazon-publishers-text);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+@media (max-width: 900px) {
+  .amazon-narrative-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Top Narrative Publishers / Top Journalists tables — side by side
+----------------------------------------------------------------------- */
+
+.amazon-narrative-tables-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1400px) {
+  .amazon-narrative-tables-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Narrative description and key insights
+----------------------------------------------------------------------- */
+
+.amazon-narrative-description-text {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--text-primary, #e5e7eb);
+}
+
+.amazon-narrative-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
+
+.amazon-narrative-insight-card {
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  padding: 16px 18px;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .amazon-narrative-insights-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.amazon-narrative-subheading {
+  margin: 24px 0 12px;
+  color: var(--amazon-publishers-text);
+  font-size: 15px;
+  font-weight: 700;
+}

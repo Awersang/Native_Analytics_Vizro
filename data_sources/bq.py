@@ -30,8 +30,13 @@ def get_bq_client():
 
 def run_query(sql: str) -> pd.DataFrame:
     """Execute a SQL query and return a DataFrame. Raises on any failure."""
+    from google.cloud.bigquery import QueryJobConfig
+
     client = get_bq_client()
-    return client.query(sql).to_dataframe()
+    job_config: QueryJobConfig | None = None
+    if settings.bq_max_bytes_billed > 0:
+        job_config = QueryJobConfig(maximum_bytes_billed=settings.bq_max_bytes_billed)
+    return client.query(sql, job_config=job_config).to_dataframe()
 
 
 def safe_query(sql: str, fallback: pd.DataFrame | None = None) -> pd.DataFrame:

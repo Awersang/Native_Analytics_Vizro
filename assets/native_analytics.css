@@ -1,15 +1,135 @@
 /* Native Analytics — dashboard chrome customisations.
  *
- * 1. Hide the Vizro NavBar icon rail so users cannot switch between dashboards
- *    from inside a dashboard. Dashboard switching happens only via the user
- *    panel at "/". The page accordion (#nav-panel) for the *current* dashboard
- *    stays visible, so multi-page dashboards still navigate normally.
+ * Keep the standard Vizro left icon rail visible so dashboards/pages use the
+ * familiar Vizro navigation layout alongside the collapsible side panel.
  */
-#nav-bar {
-  display: none !important;
+
+/* -----------------------------------------------------------------------
+   Design tokens (--na-*) — single source of truth for light + dark mode,
+   shared across the Overview, Narratives and Publishers pages.
+----------------------------------------------------------------------- */
+
+:root {
+  /* --bs-body-color / --bs-border-color have multiple conflicting definitions
+     across vizro-bootstrap.min.css depending on DOM scope (one resolves to a
+     60%-opacity body color, another to a ~10%-opacity border) — hardcode
+     --na-text/--na-border so chart chrome (axis text, ticks, legends,
+     tooltips) gets a reliable, fully-opaque/consistent color regardless of
+     where in the DOM the chart is mounted. */
+  --na-text: #212529;
+  --na-text-muted: rgba(33, 37, 41, 0.72);
+  --na-text-soft: rgba(33, 37, 41, 0.58);
+  --na-border: rgba(33, 37, 41, 0.18);
+  --na-surface: var(--bs-body-bg, #ffffff);
+  --na-surface-alt: var(--bs-tertiary-bg, #f8f9fa);
+  --na-surface-hover: var(--bs-secondary-bg, #edf1f5);
+  --na-row-even: var(--na-surface);
+  --na-row-odd: var(--na-surface-alt);
+  --na-header-bg: var(--na-surface-alt);
+  --na-grid: rgba(33, 37, 41, 0.16);
+  --na-dropdown-bg: var(--na-surface);
+  --na-dropdown-hover: var(--na-surface-hover);
+  --na-link: var(--bs-link-color, #0d6efd);
+  --na-kpi-group-bg: var(--na-surface-alt);
+  --na-avatar-bg: var(--bs-primary-bg-subtle, #dfe7f3);
+
+  /* Canonical sentiment pair (Plotly traces + table data-bars) */
+  --na-sentiment-positive: #3f9d5c;
+  --na-sentiment-neutral: #4a8fc2;
+  --na-sentiment-negative: #d9534f;
+
+  /* Canonical Trad / SoMe accent pair (Overview source bars, Venn, data-bars) */
+  --na-accent-trad: #2f7dd1;
+  --na-accent-some: #d98933;
+  --na-accent-trad-fill: rgba(47, 125, 209, 0.28);
+  --na-accent-some-fill: rgba(217, 137, 51, 0.28);
+
+  /* Data-bar palette (table gradient columns) */
+  --na-bar-trad-publications: var(--na-accent-trad);
+  --na-bar-trad-reach: #4ba3a0;
+  --na-bar-positive: var(--na-sentiment-positive);
+  --na-bar-negative: var(--na-sentiment-negative);
+  --na-bar-some-posts: var(--na-accent-some);
+  --na-bar-some-reach: #9783c9;
+  --na-bar-some-engagement: #c97aa6;
+  --na-bar-some-average: #c2ab5e;
 }
 
-/* 2. "Back to panel" link injected into the header via Dashboard.custom_header. */
+[data-bs-theme="dark"] {
+  /* Titles/headers can run brighter than body text, but a fully-opaque
+     near-white (#f7f9fc at alpha 1) reads as harsh against the dark
+     surface — soften to ~92% so it's still the brightest text on the
+     page without glaring. Body text (--na-text-muted/-soft) stays
+     further down the scale. */
+  --na-text: rgba(235, 241, 250, 0.92);
+  --na-text-muted: rgba(235, 241, 250, 0.72);
+  --na-text-soft: rgba(235, 241, 250, 0.58);
+  /* Toned down from the earlier 0.2/0.18 — that made gridlines, axis
+     lines and tick marks read as noticeably thicker/more pronounced
+     than the original (Plotly default) dark-mode chart chrome. */
+  --na-border: rgba(247, 249, 252, 0.12);
+  --na-surface: var(--bs-body-bg, #111827);
+  --na-surface-alt: var(--bs-tertiary-bg, #1b212b);
+  --na-surface-hover: var(--bs-secondary-bg, #202631);
+  --na-grid: rgba(247, 249, 252, 0.1);
+  --na-link: var(--bs-link-color, #9fd1ff);
+  --na-avatar-bg: var(--bs-primary-bg-subtle, #283645);
+}
+
+/* -----------------------------------------------------------------------
+   Shared box styles — `panel` (boxed) and `flat` (unboxed) — and the
+   element title that sits inside either. See dashboards/amazon_2026/
+   charts_shared.py:na_panel().
+----------------------------------------------------------------------- */
+
+.na-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+  padding: 18px;
+  border: 1px solid var(--na-border);
+  border-radius: 8px;
+  background: var(--na-surface-alt);
+}
+
+.na-panel--outline {
+  padding: 18px;
+  border: 1px solid var(--na-border);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.na-panel--flat {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  min-height: 0;
+}
+
+.na-element-title {
+  color: var(--na-text);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* Header row used when na_panel() is given `controls` — title on the left,
+   source toggle (RadioItems/Checklist) on the right, no separator line. */
+.na-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.na-panel-header > .na-element-title {
+  margin: 0;
+}
+
+/* "Back to panel" link injected into the header via Dashboard.custom_header. */
 a.back-to-panel {
   display: inline-flex;
   align-items: center;
@@ -32,4 +152,120 @@ a.back-to-panel:hover {
 a.back-to-panel .material-symbols-outlined {
   font-size: 18px;
   line-height: 1;
+}
+
+.na-dev-inline-label {
+  margin: 0 0 8px;
+  color: var(--bs-secondary-color, rgba(255, 255, 255, 0.75));
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* -----------------------------------------------------------------------
+   Plotly chart theming — force chart chrome (axes, gridlines, legends,
+   hover labels, in-chart text labels) to follow the active --na-* theme.
+
+   Plotly bakes colors passed via Python (incl. "var(--na-*)" strings)
+   into inline SVG styles/attributes at draw time and does not reliably
+   re-resolve them when data-bs-theme toggles afterwards — so a chart
+   first painted in one theme can end up "stuck" showing that theme's
+   colors after switching. Stylesheet rules with !important win over
+   Plotly's inline styles and always re-resolve var() live on theme
+   change, so chart chrome stays in sync with the page theme.
+
+   This intentionally does NOT touch text inside pie/donut/treemap slices
+   or annotation <tspan> colors set via inline <span style="color:..."> —
+   those carry their own deliberate colors (e.g. the P2S2G1 narrative
+   legend swatches) and must not be overridden.
+----------------------------------------------------------------------- */
+
+/* Axis titles, legend entries, in-chart annotations/labels and hover text
+   act like chart "headers" — keep them on --na-text (now toned down to
+   ~92% in dark mode rather than a glaring 100% white). */
+.js-plotly-plot .xtitle,
+.js-plotly-plot .ytitle,
+.js-plotly-plot .x2title,
+.js-plotly-plot .y2title,
+.js-plotly-plot .g-xtitle text,
+.js-plotly-plot .g-ytitle text,
+.js-plotly-plot .g-x2title text,
+.js-plotly-plot .g-y2title text,
+.js-plotly-plot .legend .legendtext,
+.js-plotly-plot .scatterlayer .textpoint text,
+.js-plotly-plot .outsidetextlayer text,
+.js-plotly-plot .annotation-text {
+  fill: var(--na-text) !important;
+  fill-opacity: 1 !important;
+}
+
+/* Axis tick numbers/labels are the most repetitive, lowest-priority text
+   on a chart — use the softer --na-text-muted so they recede behind
+   titles, legends and annotations. */
+.js-plotly-plot .xtick > text,
+.js-plotly-plot .ytick > text,
+.js-plotly-plot .x2tick > text,
+.js-plotly-plot .y2tick > text {
+  fill: var(--na-text-muted) !important;
+  fill-opacity: 1 !important;
+}
+
+/* "Outside" bar value labels (Overview P1S3G1) — scoped, since Plotly
+   renders inside- and outside-positioned bar text with the same
+   ".barlayer text" markup and other charts use intentional white
+   inside-bar text on colored sentiment segments. */
+#amazon-2026-pubs-posts-reach .js-plotly-plot .barlayer text {
+  fill: var(--na-text) !important;
+}
+
+/* Plotly bakes a `stroke-opacity` (taken from the alpha of the original
+   draw-time color) as a SEPARATE inline property alongside `stroke`. Our
+   `!important stroke` override alone isn't enough — the leftover
+   stroke-opacity (often a low dark-mode value) multiplies against our
+   color's own alpha and makes lines nearly invisible. Force stroke-opacity
+   to 1 and put the desired transparency directly into the --na-* color. */
+.js-plotly-plot .gridlayer .xgrid,
+.js-plotly-plot .gridlayer .ygrid,
+.js-plotly-plot .gridlayer .x2grid,
+.js-plotly-plot .gridlayer .y2grid {
+  stroke: var(--na-grid) !important;
+  stroke-opacity: 1 !important;
+}
+
+.js-plotly-plot .zerolinelayer path,
+.js-plotly-plot .xaxislayer-above path.domain,
+.js-plotly-plot .yaxislayer-above path.domain,
+.js-plotly-plot .x2axislayer-above path.domain,
+.js-plotly-plot .y2axislayer-above path.domain {
+  stroke: var(--na-border) !important;
+  stroke-opacity: 1 !important;
+}
+
+/* Tick marks (the short perpendicular lines next to axis labels) — a
+   separate <path class="xtick ticks ..."> from the tick label <text>
+   above, with its own baked-in stroke + stroke-opacity that gets "stuck"
+   on whichever theme was active when the chart first drew. */
+.js-plotly-plot .xtick.ticks,
+.js-plotly-plot .ytick.ticks,
+.js-plotly-plot .x2tick.ticks,
+.js-plotly-plot .y2tick.ticks {
+  stroke: var(--na-border) !important;
+  stroke-opacity: 1 !important;
+}
+
+.js-plotly-plot .legend .bg {
+  fill: var(--na-surface) !important;
+  stroke: var(--na-border) !important;
+}
+
+.js-plotly-plot .hoverlayer .hovertext .bg,
+.js-plotly-plot .hoverlayer .hovertext rect {
+  fill: var(--na-surface) !important;
+  fill-opacity: 0.98 !important;
+  stroke: var(--na-border) !important;
+}
+
+.js-plotly-plot .hoverlayer .hovertext text {
+  fill: var(--na-text) !important;
 }

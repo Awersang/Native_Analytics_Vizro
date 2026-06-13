@@ -1,6 +1,6 @@
 """Access-control logic: who can see / open which dashboard."""
 
-from tenancy.access import accessible_slugs, resolve_client_dataset
+from tenancy.access import accessible_slugs, can_access, resolve_client_dataset
 from tenancy.models import User
 
 ALL = ["timeline", "breakdown", "bq_sample"]
@@ -9,14 +9,14 @@ ALL = ["timeline", "breakdown", "bq_sample"]
 def test_admin_sees_everything():
     admin = User(uid="a", email="a@x", role="admin")
     assert accessible_slugs(admin, ALL) == ALL
-    assert admin.can_access("anything") is True
+    assert can_access(admin, "anything") is True
 
 
 def test_user_limited_to_grants():
     user = User(uid="u", email="u@x", role="user", dashboard_slugs=["timeline"])
     assert accessible_slugs(user, ALL) == ["timeline"]
-    assert user.can_access("timeline") is True
-    assert user.can_access("breakdown") is False
+    assert can_access(user, "timeline") is True
+    assert can_access(user, "breakdown") is False
 
 
 def test_grant_order_follows_registry():

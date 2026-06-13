@@ -75,9 +75,6 @@ class User:
     def is_admin(self) -> bool:
         return self.role == "admin"
 
-    def can_access(self, slug: str) -> bool:
-        return self.is_admin or slug in self.dashboard_slugs
-
     @classmethod
     def from_doc(cls, doc_id: str, data: dict[str, Any]) -> "User":
         return cls(
