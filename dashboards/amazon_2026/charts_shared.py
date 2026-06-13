@@ -1011,6 +1011,64 @@ TABLE_STYLE_DATA_CONDITIONAL = [
 ]
 
 
+OVERVIEW_TABLE_STYLE_CELL = {
+    "backgroundColor": THEME_ROW_EVEN,
+    "border": f"1px solid {THEME_BORDER}",
+    "color": THEME_TEXT,
+    "fontSize": "12px",
+    "height": "38px",
+    "padding": "5px 9px",
+    "textAlign": "right",
+    "whiteSpace": "nowrap",
+    "overflow": "hidden",
+    "textOverflow": "ellipsis",
+}
+
+OVERVIEW_TABLE_STYLE_HEADER = {
+    "backgroundColor": "var(--amazon-publishers-header-bg)",
+    "border": f"1px solid {THEME_BORDER}",
+    "color": THEME_TEXT,
+    "fontWeight": "700",
+    "height": "34px",
+    "textAlign": "center",
+    "whiteSpace": "nowrap",
+    "overflow": "hidden",
+    "textOverflow": "ellipsis",
+}
+
+OVERVIEW_TABLE_CSS = [
+    {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
+    {
+        "selector": "td[data-dash-column='display_name'] .dash-cell-value",
+        "rule": "pointer-events: none; cursor: pointer;",
+    },
+    {
+        "selector": ".dash-header",
+        "rule": "white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;",
+    },
+    {
+        "selector": ".current-page",
+        "rule": (
+            "color: var(--amazon-publishers-text) !important; "
+            "background: var(--amazon-publishers-surface) !important; "
+            "border-color: var(--amazon-publishers-border) !important;"
+        ),
+    },
+    {
+        "selector": ".current-page, .current-page input, .page-number, .page-number *, .dash-table-pagination, .dash-table-pagination *",
+        "rule": (
+            "color: var(--amazon-publishers-text) !important; "
+            "-webkit-text-fill-color: var(--amazon-publishers-text) !important; "
+            "opacity: 1 !important;"
+        ),
+    },
+    {
+        "selector": ".first-page, .previous-page, .next-page, .last-page",
+        "rule": "color: var(--amazon-publishers-text) !important;",
+    },
+]
+
+
 def na_panel(title: Any, children: Any, *, box: str = "panel", controls: Any = None) -> html.Div:
     """Wrap ``children`` in the shared `panel` (boxed), `outline` (bordered, no fill), or `flat` (unboxed) box style.
 
@@ -1045,6 +1103,53 @@ def na_panel(title: Any, children: Any, *, box: str = "panel", controls: Any = N
 
 # Backward-compatible alias — `_analysis_card(title, children)` == `na_panel(title, children, box="panel")`.
 _analysis_card = na_panel
+
+
+def build_overview_table_section(
+    *,
+    records: list[dict[str, Any]],
+    store_id: str,
+    section_title: Any,
+    controls: Any,
+    dev_label: Any,
+    table_id: str,
+    table_data: list[dict[str, Any]],
+    columns: list[dict[str, Any]],
+    style_cell_conditional: list[dict[str, Any]],
+    style_header_conditional: list[dict[str, Any]],
+    style_data_conditional: list[dict[str, Any]],
+    pre_table_children: list[Any] | None = None,
+) -> html.Div:
+    section_children: list[Any] = [
+        dcc.Store(id=store_id, data=records),
+        html.Div(
+            className="amazon-publishers-section-header",
+            children=[html.H2(section_title)],
+        ),
+        *(pre_table_children or []),
+        controls,
+        dev_label,
+        dash_table.DataTable(
+            id=table_id,
+            data=table_data,
+            columns=columns,
+            merge_duplicate_headers=True,
+            page_size=12,
+            sort_action="native",
+            filter_action="none",
+            fixed_columns={"headers": True, "data": 0},
+            cell_selectable=True,
+            style_as_list_view=True,
+            style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
+            style_cell=OVERVIEW_TABLE_STYLE_CELL,
+            style_header=OVERVIEW_TABLE_STYLE_HEADER,
+            style_cell_conditional=style_cell_conditional,
+            style_header_conditional=style_header_conditional,
+            style_data_conditional=style_data_conditional,
+            css=OVERVIEW_TABLE_CSS,
+        ),
+    ]
+    return html.Div(className="amazon-publishers-section", children=section_children)
 
 
 def build_top_publications_table(table_id: str, table_data: list[dict[str, Any]], show_publication_col: bool = False) -> Any:

@@ -14,21 +14,17 @@ from dashboards.amazon_2026.charts_shared import (
     ACCENT_SOME,
     ACCENT_TRAD,
     DONUT_COLORS,
-    NARRATIVE_BAR_COLORS,
     NARRATIVE_SOME_COLUMNS,
     NARRATIVE_TRAD_COLUMNS,
     THEME_BORDER,
     THEME_ROW_EVEN,
-    THEME_ROW_ODD,
     THEME_SURFACE,
     THEME_SURFACE_ALT,
     THEME_TEXT,
     THEME_TEXT_MUTED,
-    TOOLTIP_CSS,
     TRAD_SOME_OPTIONS,
     _as_list,
     _coerce_float,
-    _detail_metric_values,
     _filter_trad_some,
     _hex_to_rgba,
     _json_safe,
@@ -43,7 +39,7 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_available_sources,
     _timeline_chart_title,
     _timeline_figure,
-    _timeline_records_from_frame,
+    build_overview_table_section,
     build_top_items_panel,
     topic_area_color_map,
 )
@@ -99,130 +95,66 @@ def build_publishers_overview_section(data_frame: pd.DataFrame) -> html.Div:
     records = _records_from_frame(data_frame)
     table_data = _table_records(records)
     columns = _table_columns("All")
-    return html.Div(
-        className="amazon-publishers-section",
+    controls = html.Div(
+        className="amazon-publishers-controls",
         children=[
-            dcc.Store(id="amazon-2026-publishers-data", data=records),
             html.Div(
-                className="amazon-publishers-section-header",
-                children=[html.H2(ref_label("Overview", "P3S1"))],
-            ),
-            html.Div(id="amazon-2026-publishers-kpis", children=_kpi_cards(records, "All")),
-            html.Div(
-                className="amazon-publishers-controls",
+                className="amazon-publishers-control amazon-publishers-source-control",
                 children=[
-                    html.Div(
-                        className="amazon-publishers-control amazon-publishers-source-control",
-                        children=[
-                            html.Div("Source", className="amazon-publishers-control-label"),
-                            dcc.Dropdown(
-                                id="amazon-2026-publisher-source-filter",
-                                options=SOURCE_OPTIONS,
-                                value="All",
-                                clearable=False,
-                                searchable=False,
-                                className="amazon-publishers-dropdown",
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="amazon-publishers-control",
-                        children=[
-                            html.Div("TML", className="amazon-publishers-control-label"),
-                            dcc.Dropdown(
-                                id="amazon-2026-publisher-tml-filter",
-                                options=_filter_options(records, "tml_labels"),
-                                multi=True,
-                                searchable=True,
-                                placeholder="All",
-                                className="amazon-publishers-dropdown",
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        className="amazon-publishers-control",
-                        children=[
-                            html.Div("Media Type", className="amazon-publishers-control-label"),
-                            dcc.Dropdown(
-                                id="amazon-2026-publisher-media-filter",
-                                options=_filter_options(records, "media_types"),
-                                multi=True,
-                                searchable=True,
-                                placeholder="All",
-                                className="amazon-publishers-dropdown",
-                            ),
-                        ],
+                    html.Div("Source", className="amazon-publishers-control-label"),
+                    dcc.Dropdown(
+                        id="amazon-2026-publisher-source-filter",
+                        options=SOURCE_OPTIONS,
+                        value="All",
+                        clearable=False,
+                        searchable=False,
+                        className="amazon-publishers-dropdown",
                     ),
                 ],
             ),
-            _dev_inline_label("P3S1T1", "Overview Table"),
-            dash_table.DataTable(
-                id="amazon-2026-publishers-table",
-                data=table_data,
-                columns=columns,
-                merge_duplicate_headers=True,
-                page_size=12,
-                sort_action="native",
-                filter_action="none",
-                fixed_columns={"headers": True, "data": 0},
-                cell_selectable=True,
-                style_as_list_view=True,
-                style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell={
-                    "backgroundColor": "var(--amazon-publishers-row-even)",
-                    "border": "1px solid var(--amazon-publishers-border)",
-                    "color": "var(--amazon-publishers-text)",
-                    "fontSize": "12px",
-                    "height": "38px",
-                    "padding": "5px 9px",
-                    "textAlign": "right",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
-                style_header={
-                    "backgroundColor": "var(--amazon-publishers-header-bg)",
-                    "border": "1px solid var(--amazon-publishers-border)",
-                    "color": "var(--amazon-publishers-text)",
-                    "fontWeight": "700",
-                    "height": "34px",
-                    "textAlign": "center",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
-                style_cell_conditional=_cell_width_styles(),
-                style_header_conditional=_header_divider_styles(columns),
-                style_data_conditional=_data_bar_styles(table_data, columns),
-                css=[
-                    {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
-                    {
-                        "selector": "td[data-dash-column='display_name'] .dash-cell-value",
-                        "rule": "pointer-events: none; cursor: pointer;",
-                    },
-                    {
-                        "selector": ".dash-header",
-                        "rule": "white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;",
-                    },
-                    {
-                        "selector": ".current-page",
-                        "rule": (
-                            "color: var(--amazon-publishers-text) !important; "
-                            "background: var(--amazon-publishers-surface) !important; "
-                            "border-color: var(--amazon-publishers-border) !important;"
-                        ),
-                    },
-                    {
-                        "selector": ".current-page, .current-page input, .page-number, .page-number *, .dash-table-pagination, .dash-table-pagination *",
-                        "rule": "color: var(--amazon-publishers-text) !important; -webkit-text-fill-color: var(--amazon-publishers-text) !important; opacity: 1 !important;",
-                    },
-                    {
-                        "selector": ".first-page, .previous-page, .next-page, .last-page",
-                        "rule": "color: var(--amazon-publishers-text) !important;",
-                    },
+            html.Div(
+                className="amazon-publishers-control",
+                children=[
+                    html.Div("TML", className="amazon-publishers-control-label"),
+                    dcc.Dropdown(
+                        id="amazon-2026-publisher-tml-filter",
+                        options=_filter_options(records, "tml_labels"),
+                        multi=True,
+                        searchable=True,
+                        placeholder="All",
+                        className="amazon-publishers-dropdown",
+                    ),
+                ],
+            ),
+            html.Div(
+                className="amazon-publishers-control",
+                children=[
+                    html.Div("Media Type", className="amazon-publishers-control-label"),
+                    dcc.Dropdown(
+                        id="amazon-2026-publisher-media-filter",
+                        options=_filter_options(records, "media_types"),
+                        multi=True,
+                        searchable=True,
+                        placeholder="All",
+                        className="amazon-publishers-dropdown",
+                    ),
                 ],
             ),
         ],
+    )
+    return build_overview_table_section(
+        records=records,
+        store_id="amazon-2026-publishers-data",
+        section_title=ref_label("Overview", "P3S1"),
+        controls=controls,
+        dev_label=_dev_inline_label("P3S1T1", "Overview Table"),
+        table_id="amazon-2026-publishers-table",
+        table_data=table_data,
+        columns=columns,
+        style_cell_conditional=_cell_width_styles(),
+        style_header_conditional=_header_divider_styles(columns),
+        style_data_conditional=_data_bar_styles(table_data, columns),
+        pre_table_children=[html.Div(id="amazon-2026-publishers-kpis", children=_kpi_cards(records, "All"))],
     )
 
 

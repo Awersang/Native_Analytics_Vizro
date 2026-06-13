@@ -56,7 +56,12 @@ from dashboards.amazon_2026.data_common import (
     TOPIC_AREA_NARRATIVES_KEY,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
-from dashboards.amazon_2026.pages._shared import metric_parameter
+from dashboards.amazon_2026.pages._shared import (
+    build_detail_timeline_response,
+    build_overview_table_response,
+    metric_parameter,
+    select_active_table_value,
+)
 
 register_top_items_callback("amazon-2026-ta-topicarea", show_publication_col=True, show_author_col=True)
 
@@ -176,15 +181,15 @@ def _update_topic_area_overview_table(
     source_filter: str | None,
     records: list[dict[str, Any]] | None,
 ):
-    filtered = _filter_records(records or [], source_filter or "All", None, None)
-    table_data = _table_records(filtered)
-    columns = _table_columns(source_filter or "All")
-    columns[0] = {"name": ["", "Topic Area"], "id": "display_name"}
-    return (
-        table_data,
-        columns,
-        _header_divider_styles(columns),
-        _data_bar_styles(table_data, columns),
+    return build_overview_table_response(
+        records=records,
+        source_filter=source_filter,
+        filter_records=_filter_records,
+        table_records=_table_records,
+        table_columns=_table_columns,
+        header_styles=_header_divider_styles,
+        data_styles=_data_bar_styles,
+        first_column_label="Topic Area",
     )
 
 
@@ -196,16 +201,14 @@ def _update_topic_area_overview_table(
     prevent_initial_call=True,
 )
 def _select_topic_area_from_table(active_cell, viewport_rows, table_rows):
-    if not active_cell or active_cell.get("column_id") != "display_name":
-        return no_update
-    row_index = active_cell.get("row")
-    if row_index is None:
-        return no_update
-    rows = viewport_rows or table_rows or []
-    if row_index >= len(rows):
-        return no_update
-    selected_row = rows[row_index]
-    return selected_row.get("display_name") or no_update
+    return select_active_table_value(
+        active_cell,
+        viewport_rows,
+        table_rows,
+        expected_column="display_name",
+        fallback_value=no_update,
+        value_keys=["display_name"],
+    )
 
 
 @callback(
@@ -244,49 +247,16 @@ def _update_topic_area_details(selected_topic_area: str | None, records: list[di
     prevent_initial_call=True,
 )
 def _update_topic_area_detail_timeline(source: list[str] | None, basic_metric: str | None, store_data: dict | None):
-    data = store_data or {}
-    x_range = data.get("x_range") or None
-    sources = source or []
-    has_trad = "Trad" in sources
-    has_some = "SoMe" in sources
-
-    weekly_dtick = 7 * 24 * 60 * 60 * 1000
-
-    if has_trad and has_some:
-        trad_df = pd.DataFrame(data.get("trad") or [])
-        some_df = pd.DataFrame(data.get("some") or [])
-        if basic_metric == "reach":
-            fig = _narrative_detail_combined_weekly_figure(
-                trad_df, some_df,
-                trad_metric_col="weekly_reach", trad_label="Trad Reach", trad_cum_label="Trad Cumulative",
-                some_metric_col="weekly_engagement", some_label="SoMe Engagement", some_cum_label="SoMe Cumulative",
-                y_title="Reach / Engagement", cum_title="Cumulative Reach / Engagement",
-                x_range=x_range, dtick=weekly_dtick,
-            )
-            return fig, ref_label("Reach and Engagement", "P6S4G1")
-        fig = _narrative_detail_combined_weekly_figure(
-            trad_df, some_df,
-            trad_metric_col="weekly_publications", trad_label="Trad Publications", trad_cum_label="Trad Cumulative",
-            some_metric_col="weekly_posts", some_label="SoMe Posts", some_cum_label="SoMe Cumulative",
-            y_title="Publications / Posts", cum_title="Cumulative Publications / Posts",
-            x_range=x_range, dtick=weekly_dtick,
-        )
-        return fig, ref_label("Publications and Posts", "P6S4G1")
-
-    if has_some:
-        df = pd.DataFrame(data.get("some") or [])
-        if basic_metric == "reach":
-            fig = _narrative_detail_weekly_figure(df, "weekly_engagement", "SoMe Engagement", "SoMe Cumulative", source="SoMe", x_range=x_range, dtick=weekly_dtick)
-            return fig, ref_label("SoMe Engagement", "P6S4G1")
-        fig = _narrative_detail_weekly_figure(df, "weekly_posts", "SoMe Posts", "SoMe Cumulative", source="SoMe", x_range=x_range, dtick=weekly_dtick)
-        return fig, ref_label("SoMe Posts", "P6S4G1")
-
-    df = pd.DataFrame(data.get("trad") or [])
-    if basic_metric == "reach":
-        fig = _narrative_detail_weekly_figure(df, "weekly_reach", "Trad Reach", "Trad Cumulative", source="Trad", x_range=x_range, dtick=weekly_dtick)
-        return fig, ref_label("Trad Reach", "P6S4G1")
-    fig = _narrative_detail_weekly_figure(df, "weekly_publications", "Trad Publications", "Trad Cumulative", source="Trad", x_range=x_range, dtick=weekly_dtick)
-    return fig, ref_label("Trad Publications", "P6S4G1")
+    return build_detail_timeline_response(
+        source,
+        basic_metric,
+        store_data,
+        ref_code="P6S4G1",
+        make_ref_label=ref_label,
+        combined_builder=_narrative_detail_combined_weekly_figure,
+        single_builder=_narrative_detail_weekly_figure,
+        dtick=7 * 24 * 60 * 60 * 1000,
+    )
 
 
 @callback(

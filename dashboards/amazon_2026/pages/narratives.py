@@ -45,7 +45,11 @@ from dashboards.amazon_2026.data_common import (
     NARRATIVES_KPI_KEY,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
-from dashboards.amazon_2026.pages._shared import metric_parameter
+from dashboards.amazon_2026.pages._shared import (
+    build_detail_timeline_response,
+    metric_parameter,
+    select_active_table_value,
+)
 
 
 def build_narratives_page(base_path: str) -> vm.Page:
@@ -114,17 +118,15 @@ def narratives_detail_panel(data_frame: pd.DataFrame):
     prevent_initial_call=True,
 )
 def _select_narrative_from_table(active_cell, viewport_rows, table_rows):
-    if not active_cell or active_cell.get("column_id") != "narrative_label":
-        return no_update
-    if active_cell.get("row_id"):
-        return active_cell["row_id"]
-    row_index = active_cell.get("row")
-    if row_index is None:
-        return no_update
-    rows = viewport_rows or table_rows or []
-    if row_index >= len(rows):
-        return no_update
-    return rows[row_index].get("narrative_label") or no_update
+    return select_active_table_value(
+        active_cell,
+        viewport_rows,
+        table_rows,
+        expected_column="narrative_label",
+        fallback_value=no_update,
+        row_id_first=True,
+        value_keys=["narrative_label"],
+    )
 
 
 @callback(
@@ -183,47 +185,15 @@ def _update_narratives_timeline(source: str | None, store_data: dict | None):
     prevent_initial_call=True,
 )
 def _update_narrative_detail_timeline(source: list[str] | None, basic_metric: str | None, store_data: dict | None):
-    data = store_data or {}
-    x_range = data.get("x_range") or None
-    sources = source or []
-    has_trad = "Trad" in sources
-    has_some = "SoMe" in sources
-
-    if has_trad and has_some:
-        trad_df = pd.DataFrame(data.get("trad") or [])
-        some_df = pd.DataFrame(data.get("some") or [])
-        if basic_metric == "reach":
-            fig = _narrative_detail_combined_weekly_figure(
-                trad_df, some_df,
-                trad_metric_col="weekly_reach", trad_label="Trad Reach", trad_cum_label="Trad Cumulative",
-                some_metric_col="weekly_engagement", some_label="SoMe Engagement", some_cum_label="SoMe Cumulative",
-                y_title="Reach / Engagement", cum_title="Cumulative Reach / Engagement",
-                x_range=x_range,
-            )
-            return fig, ref_label("Reach and Engagement", "P2S4G1")
-        fig = _narrative_detail_combined_weekly_figure(
-            trad_df, some_df,
-            trad_metric_col="weekly_publications", trad_label="Trad Publications", trad_cum_label="Trad Cumulative",
-            some_metric_col="weekly_posts", some_label="SoMe Posts", some_cum_label="SoMe Cumulative",
-            y_title="Publications / Posts", cum_title="Cumulative Publications / Posts",
-            x_range=x_range,
-        )
-        return fig, ref_label("Publications and Posts", "P2S4G1")
-
-    if has_some:
-        df = pd.DataFrame(data.get("some") or [])
-        if basic_metric == "reach":
-            fig = _narrative_detail_weekly_figure(df, "weekly_engagement", "SoMe Engagement", "SoMe Cumulative", source="SoMe", x_range=x_range)
-            return fig, ref_label("SoMe Engagement", "P2S4G1")
-        fig = _narrative_detail_weekly_figure(df, "weekly_posts", "SoMe Posts", "SoMe Cumulative", source="SoMe", x_range=x_range)
-        return fig, ref_label("SoMe Posts", "P2S4G1")
-
-    df = pd.DataFrame(data.get("trad") or [])
-    if basic_metric == "reach":
-        fig = _narrative_detail_weekly_figure(df, "weekly_reach", "Trad Reach", "Trad Cumulative", source="Trad", x_range=x_range)
-        return fig, ref_label("Trad Reach", "P2S4G1")
-    fig = _narrative_detail_weekly_figure(df, "weekly_publications", "Trad Publications", "Trad Cumulative", source="Trad", x_range=x_range)
-    return fig, ref_label("Trad Publications", "P2S4G1")
+    return build_detail_timeline_response(
+        source,
+        basic_metric,
+        store_data,
+        ref_code="P2S4G1",
+        make_ref_label=ref_label,
+        combined_builder=_narrative_detail_combined_weekly_figure,
+        single_builder=_narrative_detail_weekly_figure,
+    )
 
 
 @callback(
@@ -272,22 +242,19 @@ def _update_narrative_angles_table(
     prevent_initial_call=True,
 )
 def _select_angle_from_table(active_cell, viewport_rows, table_rows):
-    if not active_cell or active_cell.get("column_id") != "angle_label":
-        return no_update
-    if active_cell.get("row_id"):
-        return active_cell["row_id"]
-    row_index = active_cell.get("row")
-    if row_index is None:
-        return no_update
-    rows = viewport_rows or table_rows or []
-    if row_index >= len(rows):
-        return no_update
-    return rows[row_index].get("angle_label") or no_update
+    return select_active_table_value(
+        active_cell,
+        viewport_rows,
+        table_rows,
+        expected_column="angle_label",
+        fallback_value=no_update,
+        row_id_first=True,
+        value_keys=["angle_label"],
+    )
 
 
 @callback(
     Output("amazon-2026-narrative-top-items-table", "children"),
-    Output("amazon-2026-narrative-angle-debug", "children"),
     Input("amazon-2026-narrative-top-items-source", "value"),
     Input("amazon-2026-narrative-angles-filter", "value"),
     State("amazon-2026-narrative-top-items-data", "data"),
@@ -299,16 +266,9 @@ def _update_narrative_top_items_table(source, angle, store_data):
     some_raw = data.get("some", [])
     trad = _filter_top_items_by_angle(trad_raw, angle)
     some = _filter_top_items_by_angle(some_raw, angle)
-    trad_angles = sorted({r.get("Angle") for r in trad_raw if r.get("Angle")})
-    some_angles = sorted({r.get("Angle") for r in some_raw if r.get("Angle")})
-    debug_text = (
-        f"angle filter: {angle!r}\n"
-        f"trad rows: {len(trad_raw)} -> filtered {len(trad)} | distinct trad angles: {trad_angles[:5]}\n"
-        f"some rows: {len(some_raw)} -> filtered {len(some)} | distinct some angles: {some_angles[:5]}"
-    )
     if source == "SoMe":
-        return build_top_posts_table("amazon-2026-narrative-top-posts", some, show_author_col=True), debug_text
-    return build_top_publications_table("amazon-2026-narrative-top-publications", trad, show_publication_col=True), debug_text
+        return build_top_posts_table("amazon-2026-narrative-top-posts", some, show_author_col=True)
+    return build_top_publications_table("amazon-2026-narrative-top-publications", trad, show_publication_col=True)
 
 
 @callback(

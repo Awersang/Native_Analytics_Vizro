@@ -45,7 +45,11 @@ from dashboards.amazon_2026.data_common import (
 )
 from dashboards.amazon_2026.charts_shared import register_top_items_callback
 from dashboards.amazon_2026.dev_ids import ref_label
-from dashboards.amazon_2026.pages._shared import metric_parameter
+from dashboards.amazon_2026.pages._shared import (
+    build_overview_table_response,
+    metric_parameter,
+    select_active_table_value,
+)
 
 register_top_items_callback("amazon-2026-publisher")
 
@@ -118,15 +122,17 @@ def _update_publishers_table(
     media_filter: list[str] | str | None,
     records: list[dict[str, Any]] | None,
 ):
-    filtered = _filter_records(records or [], source_filter or "All", tml_filter, media_filter)
-    table_data = _table_records(filtered)
-    columns = _table_columns(source_filter or "All")
-    return (
-        table_data,
-        columns,
-        _header_divider_styles(columns),
-        _data_bar_styles(table_data, columns),
-        _kpi_cards(filtered, source_filter or "All"),
+    return build_overview_table_response(
+        records=records,
+        source_filter=source_filter,
+        filter_records=_filter_records,
+        table_records=_table_records,
+        table_columns=_table_columns,
+        header_styles=_header_divider_styles,
+        data_styles=_data_bar_styles,
+        tml_filter=tml_filter,
+        media_filter=media_filter,
+        extra_output=lambda filtered, normalized_source: _kpi_cards(filtered, normalized_source),
     )
 
 
@@ -138,18 +144,15 @@ def _update_publishers_table(
     prevent_initial_call=True,
 )
 def _select_author_from_table(active_cell, viewport_rows, table_rows):
-    if not active_cell or active_cell.get("column_id") != "display_name":
-        return no_update
-    if active_cell.get("row_id"):
-        return active_cell["row_id"]
-    row_index = active_cell.get("row")
-    if row_index is None:
-        return no_update
-    rows = viewport_rows or table_rows or []
-    if row_index >= len(rows):
-        return no_update
-    selected_row = rows[row_index]
-    return selected_row.get("publisher_uid") or selected_row.get("id") or no_update
+    return select_active_table_value(
+        active_cell,
+        viewport_rows,
+        table_rows,
+        expected_column="display_name",
+        fallback_value=no_update,
+        row_id_first=True,
+        value_keys=["publisher_uid", "id"],
+    )
 
 
 @callback(
@@ -248,5 +251,3 @@ def _update_publisher_topic_area_treemap(
     available_sources = _topic_area_available_sources(payload)
     selected_sources = _normalize_sources(source_filter, available_sources)
     return _topic_area_treemap_figure(payload, selected_sources), selected_sources
-
-

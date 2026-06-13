@@ -25,7 +25,6 @@ from dashboards.amazon_2026.charts_narratives import (
     _TOP_TABLES_PAGE_SIZE,
     _build_shared_x_range,
     _narrative_detail_combined_weekly_figure,
-    _narrative_detail_weekly_figure,
     _top_journalists_data_bar_styles,
     _top_journalists_table_columns,
     _top_journalists_table_rows,
@@ -52,6 +51,7 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_chart_title,
     _timeline_figure,
     _timeline_records_from_frame,
+    build_overview_table_section,
     build_top_items_panel,
     na_panel,
 )
@@ -208,101 +208,37 @@ def build_campaign_campaigns_section(data_frame: pd.DataFrame) -> html.Div:
     table_data = _table_records(records)
     columns = _table_columns("All")
     columns[0] = {"name": ["", "Campaign"], "id": "display_name"}
-    return html.Div(
-        className="amazon-publishers-section",
+    controls = html.Div(
+        className="amazon-publishers-controls",
         children=[
-            dcc.Store(id="amazon-2026-campaign-campaigns-data", data=records),
             html.Div(
-                className="amazon-publishers-section-header",
-                children=[html.H2(ref_label("Campaigns Overview", "P6S3"))],
-            ),
-            html.Div(
-                className="amazon-publishers-controls",
+                className="amazon-publishers-control amazon-publishers-source-control",
                 children=[
-                    html.Div(
-                        className="amazon-publishers-control amazon-publishers-source-control",
-                        children=[
-                            html.Div("Source", className="amazon-publishers-control-label"),
-                            dcc.Dropdown(
-                                id="amazon-2026-campaign-campaign-source-filter",
-                                options=SOURCE_OPTIONS,
-                                value="All",
-                                clearable=False,
-                                searchable=False,
-                                className="amazon-publishers-dropdown",
-                            ),
-                        ],
+                    html.Div("Source", className="amazon-publishers-control-label"),
+                    dcc.Dropdown(
+                        id="amazon-2026-campaign-campaign-source-filter",
+                        options=SOURCE_OPTIONS,
+                        value="All",
+                        clearable=False,
+                        searchable=False,
+                        className="amazon-publishers-dropdown",
                     ),
                 ],
             ),
-            _dev_inline_label("P6S3T1", "Campaigns Table"),
-            dash_table.DataTable(
-                id="amazon-2026-campaign-campaigns-table",
-                data=table_data,
-                columns=columns,
-                merge_duplicate_headers=True,
-                page_size=12,
-                sort_action="native",
-                filter_action="none",
-                fixed_columns={"headers": True, "data": 0},
-                cell_selectable=True,
-                style_as_list_view=True,
-                style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell={
-                    "backgroundColor": "var(--amazon-publishers-row-even)",
-                    "border": "1px solid var(--amazon-publishers-border)",
-                    "color": "var(--amazon-publishers-text)",
-                    "fontSize": "12px",
-                    "height": "38px",
-                    "padding": "5px 9px",
-                    "textAlign": "right",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
-                style_header={
-                    "backgroundColor": "var(--amazon-publishers-header-bg)",
-                    "border": "1px solid var(--amazon-publishers-border)",
-                    "color": "var(--amazon-publishers-text)",
-                    "fontWeight": "700",
-                    "height": "34px",
-                    "textAlign": "center",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
-                style_cell_conditional=_cell_width_styles(),
-                style_header_conditional=_header_divider_styles(columns),
-                style_data_conditional=_data_bar_styles(table_data, columns),
-                css=[
-                    {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
-                    {
-                        "selector": "td[data-dash-column='display_name'] .dash-cell-value",
-                        "rule": "pointer-events: none; cursor: pointer;",
-                    },
-                    {
-                        "selector": ".dash-header",
-                        "rule": "white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;",
-                    },
-                    {
-                        "selector": ".current-page",
-                        "rule": (
-                            "color: var(--amazon-publishers-text) !important; "
-                            "background: var(--amazon-publishers-surface) !important; "
-                            "border-color: var(--amazon-publishers-border) !important;"
-                        ),
-                    },
-                    {
-                        "selector": ".current-page, .current-page input, .page-number, .page-number *, .dash-table-pagination, .dash-table-pagination *",
-                        "rule": "color: var(--amazon-publishers-text) !important; -webkit-text-fill-color: var(--amazon-publishers-text) !important; opacity: 1 !important;",
-                    },
-                    {
-                        "selector": ".first-page, .previous-page, .next-page, .last-page",
-                        "rule": "color: var(--amazon-publishers-text) !important;",
-                    },
-                ],
-            ),
         ],
+    )
+    return build_overview_table_section(
+        records=records,
+        store_id="amazon-2026-campaign-campaigns-data",
+        section_title=ref_label("Campaigns Overview", "P6S3"),
+        controls=controls,
+        dev_label=_dev_inline_label("P6S3T1", "Campaigns Table"),
+        table_id="amazon-2026-campaign-campaigns-table",
+        table_data=table_data,
+        columns=columns,
+        style_cell_conditional=_cell_width_styles(),
+        style_header_conditional=_header_divider_styles(columns),
+        style_data_conditional=_data_bar_styles(table_data, columns),
     )
 
 

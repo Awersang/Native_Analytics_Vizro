@@ -26,8 +26,6 @@ from dashboards.amazon_2026.charts_shared import (
     THEME_TEXT,
     THEME_TEXT_MUTED,
     TRAD_SOME_OPTIONS,
-    _coerce_float,
-    _detail_metric_values,
     _hex_to_rgba,
     _json_safe,
     _kpi_card,
@@ -1299,15 +1297,6 @@ def _narrative_angles_section(selected_label: str) -> html.Div:
                         className="amazon-publishers-dropdown",
                     ),
                 ],
-            ),
-            html.Pre(
-                id="amazon-2026-narrative-angle-debug",
-                style={
-                    "marginTop": "8px",
-                    "fontSize": "11px",
-                    "color": "var(--bs-secondary-color, #888)",
-                    "whiteSpace": "pre-wrap",
-                },
             ),
         ],
     )

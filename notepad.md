@@ -129,7 +129,7 @@ add media and plaform split for narrative details.
 
 
 
-Analyze the amazon 2026 dashboard, rate the quality of the code and its structure. look for inefficient solution. look for dead code. look for places that are inconsistent. This code is developed chart by chart, it means that many structural solutions might emerge as arbitrary amalgamation of small choices not a deliberate strategy, think about it. don timplement give me analysis a change proposals.
+Analyze the amazon 2026 dashboard, rate the quality of the code and its structure. look for inefficient solution. look for dead code. look for places that are inconsistent. This code was developed chart by chart, it means that many structural solutions might emerge as arbitrary amalgamation of small choices not a deliberate strategy, think about it. don timplement give me analysis and change proposals.
 take extra care to analyze the style of the dashboard.
 
 

@@ -16,14 +16,13 @@ from dashboards.amazon_2026.charts_shared import (
     THEME_BORDER,
     THEME_SURFACE,
     THEME_TEXT,
-    TOOLTIP_CSS,
     _kpi_card,
     _num,
     build_top_items_panel,
     na_panel,
     register_top_items_callback,
 )
-from dashboards.amazon_2026.data_common import MEDIA_TYPE_ORDER, MONTH_ORDER, SENTIMENT_ORDER, TOP_POSTS_KEY
+from dashboards.amazon_2026.data_common import MEDIA_TYPE_ORDER, MONTH_ORDER, TOP_POSTS_KEY
 from dashboards.amazon_2026.dev_ids import ref_label
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
@@ -583,4 +582,3 @@ def overview_kpi_panel(data_frame: pd.DataFrame):
         box="outline",
     )
     return html.Div(className="amazon-overview-kpi-grid", children=[trad_panel, some_panel])
-

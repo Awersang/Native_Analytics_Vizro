@@ -4,12 +4,9 @@ import pandas as pd
 
 from dashboards.amazon_2026.data_common import _metric_pivot, _optional_string_expr, _table, _table_column_map
 from dashboards.amazon_2026.fixtures import (
-    _media_type_monthly_fixture,
     _media_type_period_fixture,
     _overview_fixture,
     _overview_kpi_fixture,
-    _sentiment_monthly_fixture,
-    _sentiment_period_fixture,
     _sentiment_source_monthly_fixture,
     _some_platform_fixture,
     _source_sentiment_monthly_fixture,
@@ -42,24 +39,6 @@ def load_overview_daily() -> pd.DataFrame:
     return safe_query(sql, fallback=_overview_fixture())
 
 
-def load_media_type_monthly() -> pd.DataFrame:
-    sql = f"""
-        WITH base AS (
-            SELECT
-                EXTRACT(MONTH FROM Published_At) AS month_num,
-                FORMAT_TIMESTAMP('%b', Published_At) AS month_label,
-                COALESCE(NULLIF(TRIM(Media_Type), ''), 'Unknown') AS media_type,
-                COUNT(*) AS publications,
-                SUM(CAST(COALESCE(Reach, 0) AS INT64)) AS reach
-            FROM {_table('amazon_2026_trad')}
-            WHERE Published_At IS NOT NULL
-            GROUP BY month_num, month_label, media_type
-        )
-        {_metric_pivot('base', ['month_num', 'month_label', 'media_type'])}
-    """
-    return safe_query(sql, fallback=_media_type_monthly_fixture())
-
-
 def load_media_type_period() -> pd.DataFrame:
     sql = f"""
         WITH base AS (
@@ -73,47 +52,6 @@ def load_media_type_period() -> pd.DataFrame:
         {_metric_pivot('base', ['media_type'])}
     """
     return safe_query(sql, fallback=_media_type_period_fixture())
-
-
-def load_sentiment_monthly() -> pd.DataFrame:
-    sql = f"""
-        WITH base AS (
-            SELECT
-                EXTRACT(MONTH FROM Published_At) AS month_num,
-                FORMAT_TIMESTAMP('%b', Published_At) AS month_label,
-                CASE
-                    WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-                    WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
-                COUNT(*) AS publications,
-                SUM(CAST(COALESCE(Reach, 0) AS INT64)) AS reach
-            FROM {_table('amazon_2026_trad')}
-            WHERE Published_At IS NOT NULL
-            GROUP BY month_num, month_label, sentiment
-        )
-        {_metric_pivot('base', ['month_num', 'month_label', 'sentiment'])}
-    """
-    return safe_query(sql, fallback=_sentiment_monthly_fixture())
-
-
-def load_sentiment_period() -> pd.DataFrame:
-    sql = f"""
-        WITH base AS (
-            SELECT
-                CASE
-                    WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-                    WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
-                COUNT(*) AS publications,
-                SUM(CAST(COALESCE(Reach, 0) AS INT64)) AS reach
-            FROM {_table('amazon_2026_trad')}
-            GROUP BY sentiment
-        )
-        {_metric_pivot('base', ['sentiment'])}
-    """
-    return safe_query(sql, fallback=_sentiment_period_fixture())
 
 
 def load_sentiment_source_monthly() -> pd.DataFrame:
