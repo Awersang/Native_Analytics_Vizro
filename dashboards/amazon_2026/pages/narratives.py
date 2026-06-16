@@ -249,12 +249,13 @@ def _select_angle_from_table(active_cell, viewport_rows, table_rows):
         expected_column="angle_label",
         fallback_value=no_update,
         row_id_first=True,
-        value_keys=["angle_label"],
+        value_keys=["angle_id", "angle_label"],
     )
 
 
 @callback(
     Output("amazon-2026-narrative-top-items-table", "children"),
+    Output("amazon-2026-narrative-top-items-source", "value"),
     Input("amazon-2026-narrative-top-items-source", "value"),
     Input("amazon-2026-narrative-angles-filter", "value"),
     State("amazon-2026-narrative-top-items-data", "data"),
@@ -266,9 +267,17 @@ def _update_narrative_top_items_table(source, angle, store_data):
     some_raw = data.get("some", [])
     trad = _filter_top_items_by_angle(trad_raw, angle)
     some = _filter_top_items_by_angle(some_raw, angle)
-    if source == "SoMe":
-        return build_top_posts_table("amazon-2026-narrative-top-posts", some, show_author_col=True)
-    return build_top_publications_table("amazon-2026-narrative-top-publications", trad, show_publication_col=True)
+
+    effective_source = source
+    if source != "SoMe" and not trad and some:
+        effective_source = "SoMe"
+    elif source == "SoMe" and not some and trad:
+        effective_source = "Trad"
+    source_output = no_update if effective_source == source else effective_source
+
+    if effective_source == "SoMe":
+        return build_top_posts_table("amazon-2026-narrative-top-posts", some, show_author_col=True), source_output
+    return build_top_publications_table("amazon-2026-narrative-top-publications", trad, show_publication_col=True), source_output
 
 
 @callback(

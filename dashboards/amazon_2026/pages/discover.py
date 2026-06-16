@@ -1,4 +1,4 @@
-"""Discover page."""
+﻿"""Discover page."""
 from __future__ import annotations
 
 import re
@@ -11,7 +11,7 @@ from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_archive import _archive_figure, umap_distance_bounds
 from dashboards.amazon_2026.charts_discover import (
-    TRAD_SOME_OPTIONS,
+    _server_discover_data,
     build_discover_clusters_section,
     build_discover_detail_content,
     build_discover_detail_section,
@@ -20,19 +20,17 @@ from dashboards.amazon_2026.charts_discover import (
     build_discover_results_panel,
     build_discover_stores_section,
     discover_cluster_records,
-    discover_color_map,
     discover_date_bounds,
     discover_filter_options,
-    discover_records,
     discover_reference_placeholder,
     discover_results_count_label,
-    discover_some_table_data,
     discover_some_tooltip_data,
-    discover_trad_table_data,
+    discover_split_table_data,
     discover_trad_tooltip_data,
     filter_discover_records,
     find_discover_record,
 )
+from dashboards.amazon_2026.charts_shared import TRAD_SOME_OPTIONS
 from dashboards.amazon_2026.data_common import DISCOVER_ITEMS_KEY
 from dashboards.amazon_2026.dev_ids import ref_label
 
@@ -62,7 +60,7 @@ def build_discover_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-discover-detail-section",
-                figure=discover_detail_panel(data_frame=DISCOVER_ITEMS_KEY),
+                figure=discover_detail_panel(data_frame=pd.DataFrame()),
             ),
         ],
         layout=vm.Flex(direction="column", gap="20px"),
@@ -71,15 +69,14 @@ def build_discover_page(base_path: str) -> vm.Page:
 
 @capture("figure")
 def discover_stores_panel(data_frame: pd.DataFrame):
-    records = discover_records(data_frame)
+    records, _, color_map = _server_discover_data()
     bounds = discover_date_bounds(records)
-    color_map = discover_color_map(records)
-    return build_discover_stores_section(records, bounds, color_map)
+    return build_discover_stores_section(bounds, color_map)
 
 
 @capture("figure")
 def discover_filters_panel(data_frame: pd.DataFrame):
-    records = discover_records(data_frame)
+    records, _, _ = _server_discover_data()
     bounds = discover_date_bounds(records)
     options = discover_filter_options(records)
     return build_discover_filters_panel(records, bounds, options)
@@ -87,15 +84,14 @@ def discover_filters_panel(data_frame: pd.DataFrame):
 
 @capture("figure")
 def discover_clusters_panel(data_frame: pd.DataFrame):
-    records = discover_records(data_frame)
-    return build_discover_clusters_section(records)
+    _, cluster_records, color_map = _server_discover_data()
+    return build_discover_clusters_section(cluster_records, color_map)
 
 
 @capture("figure")
 def discover_results_panel(data_frame: pd.DataFrame):
-    records = discover_records(data_frame)
-    trad_data = discover_trad_table_data(records)
-    some_data = discover_some_table_data(records)
+    records, _, _ = _server_discover_data()
+    trad_data, some_data = discover_split_table_data(records)
     return build_discover_results_panel(trad_data, some_data)
 
 
@@ -129,7 +125,6 @@ def discover_detail_panel(data_frame: pd.DataFrame):
     Input("amazon-2026-discover-selected-ids", "data"),
     Input("amazon-2026-discover-reference-data", "data"),
     Input("amazon-2026-discover-similarity-slider", "value"),
-    State("amazon-2026-discover-data", "data"),
     prevent_initial_call=True,
 )
 def _update_discover_results(
@@ -145,16 +140,15 @@ def _update_discover_results(
     selected_ids: list[Any] | None,
     reference_data: dict[str, Any] | None,
     similarity_value: int | None,
-    records: list[dict[str, Any]] | None,
 ):
+    records, cluster_records, _ = _server_discover_data()
     similarity_radius = None
     if reference_data:
-        all_cluster = discover_cluster_records(records or [])
-        diagonal = umap_distance_bounds(all_cluster)
+        diagonal = umap_distance_bounds(cluster_records)
         similarity_radius = (float(similarity_value or 0) / 100.0) * diagonal
 
     filtered = filter_discover_records(
-        records or [],
+        records,
         source_filter=source_filter,
         sentiment_filter=sentiment_filter,
         publisher_filter=publisher_filter,
@@ -167,8 +161,7 @@ def _update_discover_results(
         reference_record=reference_data,
         similarity_radius=similarity_radius,
     )
-    trad_data = discover_trad_table_data(filtered)
-    some_data = discover_some_table_data(filtered)
+    trad_data, some_data = discover_split_table_data(filtered)
     available_sources = (["Trad"] if trad_data else []) + (["SoMe"] if some_data else [])
 
     if active_source in available_sources:
@@ -202,19 +195,31 @@ def _update_discover_results(
     )
 
 
-@callback(
+clientside_callback(
+    """
+    function(color_value, time_value) {
+        var ctx = dash_clientside.callback_context;
+        if (!ctx.triggered || !ctx.triggered.length) {
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        var triggered_id = ctx.triggered[0].prop_id.split('.')[0];
+        if (triggered_id === 'amazon-2026-discover-clusters-color-toggle'
+                && color_value && color_value.length > 0) {
+            return [color_value, []];
+        }
+        if (triggered_id === 'amazon-2026-discover-clusters-time-toggle'
+                && time_value && time_value.length > 0) {
+            return [[], time_value];
+        }
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+    }
+    """,
     Output("amazon-2026-discover-clusters-color-toggle", "value"),
     Output("amazon-2026-discover-clusters-time-toggle", "value"),
     Input("amazon-2026-discover-clusters-color-toggle", "value"),
     Input("amazon-2026-discover-clusters-time-toggle", "value"),
     prevent_initial_call=True,
 )
-def _sync_discover_cluster_color_mode(color_value: list[str] | None, time_value: list[str] | None):
-    if ctx.triggered_id == "amazon-2026-discover-clusters-color-toggle" and color_value:
-        return color_value, []
-    if ctx.triggered_id == "amazon-2026-discover-clusters-time-toggle" and time_value:
-        return [], time_value
-    return no_update, no_update
 
 
 @callback(
@@ -236,7 +241,6 @@ def _sync_discover_cluster_color_mode(color_value: list[str] | None, time_value:
     Input("amazon-2026-discover-selection-clear", "n_clicks"),
     Input("amazon-2026-discover-reference-data", "data"),
     Input("amazon-2026-discover-similarity-slider", "value"),
-    State("amazon-2026-discover-data", "data"),
     State("amazon-2026-discover-clusters-colormap", "data"),
     State("amazon-2026-discover-bounds", "data"),
     State("amazon-2026-discover-clusters-selections", "data"),
@@ -258,13 +262,13 @@ def _update_discover_clusters(
     _clear_clicks: int | None,
     reference_data: dict[str, Any] | None,
     similarity_value: int | None,
-    records: list[dict[str, Any]] | None,
     color_map: dict[str, str] | None,
     date_bounds: dict[str, Any] | None,
     selections: list[dict[str, Any]] | None,
 ):
+    records, full_cluster_records, _ = _server_discover_data()
     filtered = filter_discover_records(
-        records or [],
+        records,
         source_filter=source_filter,
         sentiment_filter=sentiment_filter,
         publisher_filter=publisher_filter,
@@ -298,7 +302,7 @@ def _update_discover_clusters(
         if rx is not None and ry is not None:
             try:
                 ref_point = (float(rx), float(ry))
-                diagonal = umap_distance_bounds(discover_cluster_records(records or []))
+                diagonal = umap_distance_bounds(full_cluster_records)
                 ref_radius = (float(similarity_value or 0) / 100.0) * diagonal
             except (TypeError, ValueError):
                 ref_point = None
@@ -404,14 +408,13 @@ def _discover_detail_from_active_cell(
     Output("amazon-2026-discover-detail-id", "data", allow_duplicate=True),
     Input("amazon-2026-discover-top-publications", "active_cell"),
     State("amazon-2026-discover-top-publications", "derived_viewport_data"),
-    State("amazon-2026-discover-data", "data"),
     prevent_initial_call=True,
 )
 def _update_discover_detail_trad(
     active_cell: dict[str, Any] | None,
     rows: list[dict[str, Any]] | None,
-    records: list[dict[str, Any]] | None,
 ):
+    records, _, _ = _server_discover_data()
     return _discover_detail_from_active_cell(active_cell, rows, records)
 
 
@@ -420,14 +423,13 @@ def _update_discover_detail_trad(
     Output("amazon-2026-discover-detail-id", "data", allow_duplicate=True),
     Input("amazon-2026-discover-top-posts", "active_cell"),
     State("amazon-2026-discover-top-posts", "derived_viewport_data"),
-    State("amazon-2026-discover-data", "data"),
     prevent_initial_call=True,
 )
 def _update_discover_detail_some(
     active_cell: dict[str, Any] | None,
     rows: list[dict[str, Any]] | None,
-    records: list[dict[str, Any]] | None,
 ):
+    records, _, _ = _server_discover_data()
     return _discover_detail_from_active_cell(active_cell, rows, records)
 
 
@@ -437,72 +439,84 @@ def _update_discover_detail_some(
     Input("amazon-2026-discover-use-as-reference-btn", "n_clicks"),
     Input("amazon-2026-discover-reference-clear", "n_clicks"),
     State("amazon-2026-discover-detail-id", "data"),
-    State("amazon-2026-discover-data", "data"),
     prevent_initial_call=True,
 )
 def _update_discover_reference(
     use_clicks: int | None,
     clear_clicks: int | None,
     detail_id: Any,
-    records: list[dict[str, Any]] | None,
 ):
     if ctx.triggered_id == "amazon-2026-discover-reference-clear":
         return None, discover_reference_placeholder()
 
-    record = find_discover_record(records or [], detail_id)
+    records, _, _ = _server_discover_data()
+    record = find_discover_record(records, detail_id)
     if not record:
         return no_update, no_update
     return record, build_discover_reference_content(record)
 
 
-# Row highlight via clientside callbacks — fires instantly in the browser
-# without a server round-trip, making the highlight appear at the same
-# moment as DataTable's native cell-selection border.
 clientside_callback(
     """
-    function(active_cell, base_style) {
-        if (!active_cell) return base_style || [];
-        var style = (base_style || []).slice();
-        style.push({if: {row_index: active_cell.row}, backgroundColor: 'var(--bs-primary-bg-subtle)'});
-        return style;
+    function(active_cell, _data) {
+        return [];
     }
     """,
-    Output("amazon-2026-discover-top-publications", "style_data_conditional"),
+    Output("amazon-2026-discover-top-publications", "selected_cells"),
     Input("amazon-2026-discover-top-publications", "active_cell"),
-    State("amazon-2026-discover-trad-base-style", "data"),
+    Input("amazon-2026-discover-top-publications", "data"),
     prevent_initial_call=True,
 )
 
 clientside_callback(
     """
-    function(active_cell, base_style) {
-        if (!active_cell) return base_style || [];
-        var style = (base_style || []).slice();
-        style.push({if: {row_index: active_cell.row}, backgroundColor: 'var(--bs-primary-bg-subtle)'});
-        return style;
+    function(active_cell, _data) {
+        return [];
     }
     """,
-    Output("amazon-2026-discover-top-posts", "style_data_conditional"),
+    Output("amazon-2026-discover-top-posts", "selected_cells"),
     Input("amazon-2026-discover-top-posts", "active_cell"),
-    State("amazon-2026-discover-some-base-style", "data"),
+    Input("amazon-2026-discover-top-posts", "data"),
     prevent_initial_call=True,
 )
 
 
-@callback(
+clientside_callback(
+    """
+    function(date_range, bounds) {
+        if (!date_range || !bounds || !bounds.min_date) return '';
+        var min_ts = new Date(bounds.min_date).getTime();
+        function fmtDate(ts) {
+            var d = new Date(ts);
+            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            var day = String(d.getUTCDate()).padStart(2, '0');
+            return day + ' ' + months[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+        }
+        return fmtDate(min_ts + date_range[0] * 86400000) + ' to ' + fmtDate(min_ts + date_range[1] * 86400000);
+    }
+    """,
     Output("amazon-2026-discover-date-label", "children"),
     Input("amazon-2026-discover-date-range", "value"),
     State("amazon-2026-discover-bounds", "data"),
 )
-def _update_discover_date_label(date_range: list[int] | None, bounds: dict[str, Any] | None):
-    bounds = bounds or {}
-    min_date = bounds.get("min_date")
-    if not date_range or not min_date:
-        return ""
-    try:
-        base = pd.Timestamp(min_date)
-        start = (base + pd.Timedelta(days=int(date_range[0]))).date().isoformat()
-        end = (base + pd.Timedelta(days=int(date_range[1]))).date().isoformat()
-    except (ValueError, TypeError):
-        return ""
-    return f"{start} to {end}"
+
+clientside_callback(
+    """
+    function(n_clicks, is_open) {
+        var new_open = !is_open;
+        if (new_open) {
+            setTimeout(function() {
+                var el = document.getElementById('amazon-2026-discover-clusters-graph');
+                if (el && window.Plotly) window.Plotly.Plots.resize(el);
+            }, 50);
+        }
+        return [new_open, new_open ? null : {"display": "none"}, new_open ? "Hide" : "Show"];
+    }
+    """,
+    Output("amazon-2026-discover-umap-open", "data"),
+    Output("amazon-2026-discover-umap-container", "style"),
+    Output("amazon-2026-discover-umap-toggle", "children"),
+    Input("amazon-2026-discover-umap-toggle", "n_clicks"),
+    State("amazon-2026-discover-umap-open", "data"),
+    prevent_initial_call=True,
+)

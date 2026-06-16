@@ -41,21 +41,6 @@ def ref_only(ref: str) -> str:
     return ref if _ENABLED else ""
 
 
-def ref_card_text(text: str, ref: str) -> str:
-    """Prefix the first markdown heading line of a vm.Card's text with the ref."""
-    if not _ENABLED or not ref or not text:
-        return text
-
-    lines = text.splitlines()
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            marker, _, rest = stripped.partition(" ")
-            lines[index] = f"{marker} {ref_label(rest or marker, ref)}"
-            return "\n".join(lines)
-    return ref_label(text, ref)
-
-
 def ref_badge(ref: str) -> str:
     """Inline badge text showing just the ref code, when dev mode is on."""
     return ref if _ENABLED else ""

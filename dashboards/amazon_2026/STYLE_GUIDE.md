@@ -1,4 +1,4 @@
-# Amazon 2026 Dashboard — Style Guide (as implemented)
+﻿# Amazon 2026 Dashboard — Style Guide (as implemented)
 
 This documents the unified style system implemented per `STYLE_PLAN.md`.
 It supersedes the pre-implementation audit that used to live here.
@@ -21,6 +21,7 @@ Overview, Narratives and Publishers pages.
 | `--na-surface-alt`                         | `var(--bs-tertiary-bg, #f8f9fa)`       | `#1b212b`                | panel/section backgrounds                                      |
 | `--na-surface-hover`                       | `var(--bs-secondary-bg, #edf1f5)`      | `#202631`                | hover states                                                   |
 | `--na-row-even` / `--na-row-odd`           | surface / surface-alt                  | same                     | table zebra striping                                           |
+| `--na-row-selected`                        | `rgba(33,37,41,0.08)`                  | `rgba(235,241,250,0.11)` | clicked/selected row highlight (Discover results tables)       |
 | `--na-header-bg`                           | = surface-alt                          | = surface-alt            | table header background                                        |
 | `--na-grid`                                | `rgba(33,37,41,0.16)`                  | `rgba(247,249,252,0.1)`  | Plotly gridlines                                               |
 | `--na-dropdown-bg` / `--na-dropdown-hover` | surface / surface-hover                | same                     | `dcc.Dropdown`                                                 |
@@ -42,13 +43,13 @@ Categorical tokens (theme-independent, also defined in `:root`):
 
 ### Page-scoped aliases
 
-Each page declares an `--amazon-publishers-*` alias block (under its own page
-container id: `#amazon-2026-overview`, `#amazon-2026-narratives`,
-`#amazon-2026-publishers`) mapping every `--amazon-publishers-*` name used by
-shared Python components (`charts_shared.py`'s `THEME_*` constants, `_kpi_card`,
-`na_panel`, table styles, etc.) to the corresponding `--na-*` token. This keeps
-existing component code working unchanged while resolving to the single token
-set.
+`--amazon-publishers-*` aliases are declared globally in a second `:root` block
+in `assets/native_analytics.css`, immediately after the `[data-bs-theme="dark"]`
+overrides. Every name used by shared Python components (`charts_shared.py`'s
+`THEME_*` constants, `_kpi_card`, `na_panel`, table styles, etc.) maps to the
+corresponding `--na-*` token. Because these live on `:root` they resolve on every
+page automatically — no per-page re-declaration block is needed or should be
+added.
 
 ---
 
@@ -496,7 +497,7 @@ page-scoped alias blocks, see §1):
   background = row-even, border = `1px solid <border>`
 - Header: background = surface-alt/header-bg, `fontWeight: 700`, height 32–34px, centered
 - Zebra striping: odd rows get `row-odd` background
-- Active/selected cell highlight: `var(--bs-primary-bg-subtle)` background + border
+- Active/selected cell highlight: `transparent` background + `1px solid <border>` — intentionally invisible so cells/rows don't look "selected"; Dash's built-in focus ring (`box-shadow`/`outline`) is suppressed via CSS on the Discover results tables
 - Container: `border: 1px solid <border>`, `border-radius: 8px`, `overflow: hidden`
 - Tooltips (`TOOLTIP_CSS`): forced dark (`#111827`/`#f8fafc`), `border-radius: 10px`,
   `box-shadow: 0 14px 32px rgba(0,0,0,0.35)`, z-index 5000–9999 — kept as a
@@ -584,13 +585,24 @@ P5S1G1 Archive scatter renderer (`_archive_figure`/`_build_color_map` from
 `charts_archive.py`) with `discover_cluster_records` mapping
 `umap_x`/`umap_y`/`Narrative`/`Source` to the `narrative_label`/`source`
 shape the renderer expects. Same "Color by narrative"/"KDE" toggles as the
-Archive page, but the `dcc.Graph` height is reduced to `320px` (vs `640px`
-on Archive) to keep it compact above the Results table. The
-`_update_discover_clusters` callback (`pages/discover.py`) takes the same
+Archive page. The `dcc.Graph` height is `800px`, matching the Archive page.
+
+**Collapsible**: the chart content is wrapped in
+`html.Div(id="amazon-2026-discover-umap-container", style={"display":"none"}, ...)`.
+A "Show"/"Hide" toggle button (`.amazon-discover-umap-toggle`,
+`id="amazon-2026-discover-umap-toggle"`) is placed via `controls=` in
+`na_panel` so it appears in the panel header row next to the title. A
+`clientside_callback` in `pages/discover.py` toggles `display:none` on/off
+and fires `window.Plotly.Plots.resize()` after a 50ms delay so the chart
+correctly sizes itself when first revealed (Plotly doesn't know the container
+dimensions while it's hidden). State is persisted in
+`amazon-2026-discover-umap-open`. The panel is hidden by default on page
+load to save initial render time.
+
+The `_update_discover_clusters` callback (`pages/discover.py`) takes the same
 filter `Input`s as `_update_discover_results` plus the toggle values, so the
 cluster scatter re-renders in sync with all Discover filters (source,
-sentiment, publisher, topic area, narrative, date range, search). The
-`dcc.Graph` height is `800px`, matching the Archive page.
+sentiment, publisher, topic area, narrative, date range, search).
 
 **Reference overlay**: when a reference publication is set (`amazon-2026-discover-reference-data`), `_add_reference_overlay` (`charts_archive.py`) adds two visual elements on top of the normal scatter: (1) a `go.Scattergl` trace at the reference point with `marker_symbol="cross"`, size 14, color `REFERENCE_MARKER_COLOR = "#ffffff"`, `showlegend=True`, labelled "Reference" — the underlying narrative-colored dot for that point remains visible beneath; (2) when similarity slider radius > 0, a `fig.add_shape(type="circle")` dashed outline in `REFERENCE_CIRCLE_COLOR = "#c8d0da"`, `width=1.5`, no fill, layer "above". The circle's x/y bounds are `reference_point ± radius` in data coordinates. Both are drawn in all coloring modes (color/time/plain). The `_update_discover_clusters` callback takes both `amazon-2026-discover-reference-data` (Input) and `amazon-2026-discover-similarity-slider` (Input), recomputing the radius from `umap_distance_bounds(all_records)` on every redraw.
 
@@ -620,15 +632,15 @@ cleared when the user clicks "Clear selection"
 
 ### Discover hidden stores panel (P8)
 
-A hidden `vm.Figure` (`discover_stores_panel`, `pages/discover.py`) rendered as `display:none` holds all `dcc.Store` components for the Discover page: `amazon-2026-discover-data` (full records), `amazon-2026-discover-bounds` (date bounds), `amazon-2026-discover-detail-id` (selected row _id), `amazon-2026-discover-reference-data`, `amazon-2026-discover-selected-ids`, `amazon-2026-discover-clusters-selections`, `amazon-2026-discover-clusters-colormap`, plus `amazon-2026-discover-trad-base-style` / `amazon-2026-discover-some-base-style` (base `style_data_conditional` arrays for the clientside row-highlight callbacks). Keeping stores here rather than inside the visible panels prevents Vizro's `dcc.Loading` overlay from activating on visible panels when callbacks write to stores (e.g. writing `detail-id` on row click previously flashed the Filters panel).
+A hidden `vm.Figure` (`discover_stores_panel`, `pages/discover.py`) rendered as `display:none` holds all `dcc.Store` components for the Discover page: `amazon-2026-discover-bounds` (date bounds), `amazon-2026-discover-detail-id` (selected row _id), `amazon-2026-discover-reference-data`, `amazon-2026-discover-selected-ids`, `amazon-2026-discover-clusters-selections`, `amazon-2026-discover-clusters-colormap`, `amazon-2026-discover-umap-open` (UMAP panel open/closed state), plus `amazon-2026-discover-trad-base-style` / `amazon-2026-discover-some-base-style` (base `style_data_conditional` arrays for the clientside row-highlight callbacks). The full records dataset is NOT stored in the browser — it lives in a server-side `_server_cache` in `charts_discover.py` (loaded once from BigQuery via `_server_discover_data()`, then reused by all callbacks). This eliminates the per-request browser→server data round-trip that was the main cause of slow Discover page filter callbacks. Keeping stores here rather than inside the visible panels prevents Vizro's `dcc.Loading` overlay from activating on visible panels when callbacks write to stores.
 
 ### Discover "Publication Details" panel (P8)
 
 A fourth `na_panel` below the Results table (`build_discover_detail_section`,
 `charts_discover.py`). Clicking any cell in a results row except the `Link`
 column (`active_cell.column_id != "URL"`) looks up that row's `_id` (added to
-`discover_records`/`discover_*_table_data`, not rendered as a column) in the
-`amazon-2026-discover-data` store, re-renders the panel body via
+`discover_records`/`discover_*_table_data`, not rendered as a column) via
+`_server_discover_data()`, re-renders the panel body via
 `build_discover_detail_content`, and stores the `_id` in
 `amazon-2026-discover-detail-id`.
 
@@ -693,12 +705,12 @@ Responsive breakpoints used: `720px`, `900px`, `1100px`.
 
 Columns: **Angle** | **Sentiment** | **Trad** | **SoMe** | **Reach** | **Popularity (%)**
 
-- `trad_publications` (Trad): count from the `amazon_2026_trad` table joined on `dominant_angle_label`; bar color `--na-bar-trad-publications`
-- `some_posts` (SoMe): count from the `amazon_2026_some` table joined on `dominant_angle_label`; bar color `--na-bar-some-posts`
-- Both fall back to 0 when `dominant_angle_label` column is absent from the source tables (handled by `_optional_string_expr` in `data_angles.py`)
+- `trad_publications` (Trad): count from the `amazon_2026_trad` table joined on `dominant_angle_id`/`angle_id`, with `dominant_angle_label` fallback; bar color `--na-bar-trad-publications`
+- `some_posts` (SoMe): count from the `amazon_2026_some` table joined on `dominant_angle_id`/`angle_id`, with `dominant_angle_label` fallback; bar color `--na-bar-some-posts`
+- Both fall back to 0 when angle ID and label columns are absent from the source tables (handled by `_optional_string_expr` in `data_angles.py`)
 - The old aggregate `publications` column (from `article_count`) is retained in the BQ select for backward compatibility but no longer displayed in the table
 
-**Top Publications / Posts (P2S4T4) angle filtering:** `_filter_top_items_by_angle` in `charts_narratives.py` falls back to showing all top-N publications when the selected angle has no matching `Angle` field in the publications dataset (covers the case where the angle label exists in the summary table but none of the reach-ranked top-50 carry it). The callback in `narratives.py` also auto-switches the Trad/SoMe source toggle when the current source has zero results but the other has data.
+**Top Publications / Posts (P2S4T4) angle filtering:** `_filter_top_items_by_angle` in `charts_narratives.py` filters by hidden `Angle_ID` first, with `Angle` label fallback for older/fallback rows. `load_narrative_top_publications()` no longer applies a per-narrative top-50 cutoff before angle filtering, so selected angles can show all matching publications/posts. If no rows carry angle metadata, filtering is skipped; otherwise zero matches remain zero matches so the callback can auto-switch the Trad/SoMe source toggle when the other source has data.
 
 ## 11. Deliberate exceptions
 
@@ -721,3 +733,44 @@ Columns: **Angle** | **Sentiment** | **Trad** | **SoMe** | **Reach** | **Popular
    literal, not a `var(--na-*)` token: see gotcha 4 below — `marker.line.color`
    on a `go.Treemap` trace does not resolve CSS custom properties, so a
    `var(...)` value renders as a solid black/dark divider in both themes.
+
+---
+
+## 12. Experimental — Chart Context Menu
+
+**Files**: `assets/native_analytics_chartmenu.js` + `assets/native_analytics_chartmenu.css`
+
+A client-side-only feature (no Python changes). Injects a small ⋮ button into the top-right corner of every `.na-panel` inside `#amazon-2026-overview`. Clicking opens a dropdown with four actions.
+
+**Prerequisite CSS change**: `.na-panel` now has `position: relative` (added in `native_analytics.css`) so the absolute-positioned button anchors to the panel corner.
+
+### Menu button (`.na-chart-menu-btn`)
+- `position: absolute; top: 8px; right: 8px;` — 26×26px, border-radius 6px
+- Invisible by default (`opacity: 0`), fades in on `.na-panel:hover` or when the dropdown is open (`.na-chart-menu-btn--open`)
+- Colors: `--na-text-muted` / `--na-surface` / `--na-border` (light and dark mode both handled by these tokens — no separate dark override needed)
+
+### Dropdown (`.na-chart-menu-dropdown`)
+- `position: absolute; top: 38px; right: 8px;` relative to the button's panel
+- `z-index: 1100` — above Plotly modebar (z ~100), below table tooltips (z 9999, see §11)
+- `min-width: 210px`, border-radius 8px, `--na-surface` background
+- Four items (`Copy Image`, `Download Image`, `Copy Data`, `Download Data`); image items are disabled (`.na-chart-menu-item--disabled`) when no `.js-plotly-plot` is found in the panel
+- Closes on outside click, Escape key, or after any item action
+
+### Actions
+| Item | Plotly panel | Table / KPI panel |
+|---|---|---|
+| Copy Image to Clipboard | `Plotly.toImage()` (2× scale PNG) → `ClipboardItem` | Disabled |
+| Download Image | `Plotly.downloadImage()` (2× scale PNG) | Disabled |
+| Copy Data to Clipboard | Trace `x`/`y`/`labels`/`values` → CSV → clipboard | `<table>` DOM cells → CSV → clipboard |
+| Download Data | Same CSV → `<a download>` | Same CSV → `<a download>` |
+
+All actions show a brief toast notification (`.na-chart-menu-toast`, fixed bottom-right, 1.8s then fade).
+
+### Global toggle widget (`#na-chart-menu-toggle-root`)
+- Fixed `bottom: 80px; right: 20px` (above the ext-chat widget at `bottom: 20px`)
+- Pill label: "Chart Menu ON/OFF" — ON pill uses `--na-accent-trad` fill, OFF uses surface-hover
+- State persisted in `localStorage['na-chart-menu-enabled']` (default: `true`)
+- Toggling adds/removes `display: none` on all `.na-chart-menu-btn` elements in the DOM
+
+### MutationObserver injection pattern
+Mirrors `native_analytics.js`: a single observer on `document.body` calls `injectAll()` whenever the DOM changes, finding `#amazon-2026-overview .na-panel` elements not yet marked with `data-chart-menu="true"`. This handles Dash SPA page re-mounts transparently.

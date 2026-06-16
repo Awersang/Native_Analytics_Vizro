@@ -28,7 +28,7 @@
         var root = el("div", null);
         root.id = "ext-chat-root";
 
-        var toggle = el("button", "ext-chat-toggle", "Ask the data");
+        var toggle = el("button", "ext-chat-toggle", "Chat with your data");
         toggle.type = "button";
         toggle.setAttribute("aria-label", "Chat with your data");
 

@@ -1,4 +1,5 @@
 # Memory Index
 
 - [BigQuery Data Sources](bq_data_sources.md) — BQ table alias mapping for amazon_2026 dashboard (bqtrad, bqsome, bqnarr, bqang, bqpub)
-- [App Lifecycle](feedback_app_lifecycle.md) — Do NOT manage app lifecycle; user removed this requirement on 2026-06-09
+- [Screenshot Verification](screenshot_verification.md) — Run app on port 8051 + Playwright to screenshot UI changes; always clean up after
+- [Always update STYLE_GUIDE.md on styling changes](feedback_styleguide_updates.md) — standing rule for dashboard CSS/color/panel edits

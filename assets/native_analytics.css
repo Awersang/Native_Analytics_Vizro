@@ -25,6 +25,7 @@
   --na-surface-hover: var(--bs-secondary-bg, #edf1f5);
   --na-row-even: var(--na-surface);
   --na-row-odd: var(--na-surface-alt);
+  --na-row-selected: rgba(33, 37, 41, 0.08);
   --na-header-bg: var(--na-surface-alt);
   --na-grid: rgba(33, 37, 41, 0.16);
   --na-dropdown-bg: var(--na-surface);
@@ -53,6 +54,9 @@
   --na-bar-some-reach: #9783c9;
   --na-bar-some-engagement: #c97aa6;
   --na-bar-some-average: #c2ab5e;
+
+  /* Header wordmark size — adjust this single value to resize the logo. */
+  --na-logo-height: 50px;
 }
 
 [data-bs-theme="dark"] {
@@ -71,9 +75,42 @@
   --na-surface: var(--bs-body-bg, #111827);
   --na-surface-alt: var(--bs-tertiary-bg, #1b212b);
   --na-surface-hover: var(--bs-secondary-bg, #202631);
+  --na-row-selected: rgba(235, 241, 250, 0.11);
   --na-grid: rgba(247, 249, 252, 0.1);
   --na-link: var(--bs-link-color, #9fd1ff);
   --na-avatar-bg: var(--bs-primary-bg-subtle, #283645);
+}
+
+/* -----------------------------------------------------------------------
+   --amazon-publishers-* aliases — lifted to :root so all pages get them
+   without each page re-declaring its own scope block.
+----------------------------------------------------------------------- */
+
+:root {
+  --amazon-publishers-text: var(--na-text);
+  --amazon-publishers-text-muted: var(--na-text-muted);
+  --amazon-publishers-text-soft: var(--na-text-soft);
+  --amazon-publishers-border: var(--na-border);
+  --amazon-publishers-surface: var(--na-surface);
+  --amazon-publishers-surface-alt: var(--na-surface-alt);
+  --amazon-publishers-surface-hover: var(--na-surface-hover);
+  --amazon-publishers-row-even: var(--na-row-even);
+  --amazon-publishers-row-odd: var(--na-row-odd);
+  --amazon-publishers-header-bg: var(--na-header-bg);
+  --amazon-publishers-grid: var(--na-grid);
+  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
+  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
+  --amazon-publishers-link: var(--na-link);
+  --amazon-publishers-kpi-group-bg: var(--na-kpi-group-bg);
+  --amazon-publishers-avatar-bg: var(--na-avatar-bg);
+  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
+  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
+  --amazon-publishers-bar-positive: var(--na-bar-positive);
+  --amazon-publishers-bar-negative: var(--na-bar-negative);
+  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
+  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
+  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
+  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
 }
 
 /* -----------------------------------------------------------------------
@@ -83,6 +120,7 @@
 ----------------------------------------------------------------------- */
 
 .na-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -127,6 +165,22 @@
 
 .na-panel-header > .na-element-title {
   margin: 0;
+}
+
+/* Full Native Analytics wordmark replaces the "Native Analytics" text title
+   in the dashboard header. The logo SVGs (assets/logo_light.svg — dark grey
+   #495057 fill, assets/logo_dark.svg — light grey #ced4da fill) are picked
+   up automatically by Vizro and swapped based on [data-bs-theme]; the text
+   title is kept (for the browser tab title) but hidden visually. Resize via
+   --na-logo-height above. */
+#dashboard-title {
+  display: none;
+}
+
+#logo-light,
+#logo-dark {
+  height: var(--na-logo-height);
+  width: auto;
 }
 
 /* "Back to panel" link injected into the header via Dashboard.custom_header. */
@@ -211,12 +265,14 @@ a.back-to-panel .material-symbols-outlined {
   fill-opacity: 1 !important;
 }
 
-/* "Outside" bar value labels (Overview P1S3G1) — scoped, since Plotly
-   renders inside- and outside-positioned bar text with the same
-   ".barlayer text" markup and other charts use intentional white
+/* "Outside" bar value labels (Overview P1S3G1, Campaign Timeline P7S1G1) —
+   scoped, since Plotly renders inside- and outside-positioned bar text with
+   the same ".barlayer text" markup and other charts use intentional white
    inside-bar text on colored sentiment segments. */
-#amazon-2026-pubs-posts-reach .js-plotly-plot .barlayer text {
+#amazon-2026-pubs-posts-reach .js-plotly-plot .barlayer text,
+#amazon-2026-campaign-timeline-graph .js-plotly-plot .barlayer text {
   fill: var(--na-text) !important;
+  fill-opacity: 1 !important;
 }
 
 /* Plotly bakes a `stroke-opacity` (taken from the alpha of the original
@@ -268,4 +324,84 @@ a.back-to-panel .material-symbols-outlined {
 
 .js-plotly-plot .hoverlayer .hovertext text {
   fill: var(--na-text) !important;
+}
+
+/* ─── One loading animation per chart ──────────────────────────────────────
+   Vizro wraps every vm.Figure in its own dcc.Loading + ".figure-container"
+   (which carries the figure's own id). Before the chart draws, that div is
+   empty/0-height, so the spinner inside ".loading-container" has nothing to
+   center in and collapses to the top of the page, overlapping every other
+   pending spinner. Fix: reserve each figure's known final height via its id
+   (below), and replace the default Dash bars with the brand logo animation,
+   centered within that reserved space. */
+.loading-container {
+  position: relative;
+  overflow: hidden;
+}
+
+.dash-default-spinner {
+  position: absolute !important;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60px;
+  height: 33px;
+  margin: 0 !important;
+  opacity: 0.45;
+  overflow: hidden;
+  font-size: 0;
+  background-image: url("logo/logo_loader_animation.svg");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  -webkit-animation: none !important;
+  animation: none !important;
+}
+
+.dash-default-spinner > div {
+  display: none !important;
+}
+
+/* The SVG is authored with the light-theme loader color; approximate the
+   lighter dark-theme loader color by inverting it. */
+[data-bs-theme="dark"] .dash-default-spinner {
+  filter: invert(1);
+}
+
+/* ─── Per-chart minimum heights ─────────────────────────────────────────────
+   Reserve roughly the chart's real rendered height so the loading spinner
+   sits in the right place and the page doesn't jump once content arrives.
+   Overview's figures already get their height from row_min_height on their
+   vm.Grid containers, so they're not listed here. Tables/detail panels whose
+   height depends on selected data are intentionally left unset. */
+#amazon-2026-narratives-kpi-section,
+#amazon-2026-topic-area-basic-metric-sink,
+#amazon-2026-publisher-basic-metric-sink,
+#amazon-2026-campaign-basic-metric-sink,
+#amazon-2026-narrative-basic-metric-sink {
+  min-height: 0;
+}
+
+#amazon-2026-narratives-weekly-timeline,
+#amazon-2026-topic-area-treemap-section,
+#amazon-2026-topic-area-media-sankey-section,
+#amazon-2026-publishers-overview-section,
+#amazon-2026-campaign-campaigns-section {
+  min-height: 500px;
+}
+
+#amazon-2026-narratives-overview-section,
+#amazon-2026-topic-area-overview-section {
+  min-height: 460px;
+}
+
+#amazon-2026-narratives-detail-section,
+#amazon-2026-topic-area-details-section,
+#amazon-2026-publishers-details-section,
+#amazon-2026-campaign-details-section {
+  min-height: 600px;
+}
+
+#amazon-2026-campaign-timeline {
+  min-height: 380px;
 }

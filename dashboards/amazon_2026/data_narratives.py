@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import _coalesce_string_expr, _optional_string_expr, _table, _table_column_map
+from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, PAID_VALUES, _coalesce_string_expr, _optional_string_expr, _table, _table_column_map
 from dashboards.amazon_2026.fixtures import (
     _narrative_detail_kpi_fixture,
     _narrative_overview_fixture,
-    _narrative_sentiment_fixture,
+    _narrative_some_platform_timeline_fixture,
     _narrative_some_sentiment_timeline_fixture,
     _narrative_some_weekly_engagement_fixture,
     _narrative_top_journalists_fixture,
     _narrative_top_publications_fixture,
     _narrative_top_publishers_fixture,
+    _narrative_trad_media_type_timeline_fixture,
     _narrative_trad_sentiment_timeline_fixture,
     _narrative_weekly_reach_fixture,
     _narratives_fixture,
@@ -48,7 +49,6 @@ def load_narratives() -> pd.DataFrame:
 def load_narrative_overview() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
-    from dashboards.amazon_2026.data_common import _optional_string_expr
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
     some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
@@ -275,6 +275,52 @@ def load_narrative_some_sentiment_timeline() -> pd.DataFrame:
     return safe_query(sql, fallback=_narrative_some_sentiment_timeline_fixture())
 
 
+def load_narrative_trad_media_type_timeline() -> pd.DataFrame:
+    trad_columns = _table_column_map("amazon_2026_trad")
+    narrative_col_name = trad_columns.get("dominant_narrative", "")
+    if narrative_col_name:
+        narrative_col = f"t.`{narrative_col_name}`"
+    else:
+        narrative_col = _optional_string_expr("t", trad_columns, ["dominant_narrative", "narrative_label"])
+    sql = f"""
+    SELECT
+      NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
+      CAST(DATE_TRUNC(DATE(t.Published_At), WEEK(MONDAY)) AS STRING) AS week_start,
+      COALESCE(NULLIF(TRIM(t.Media_Type), ''), 'Unknown') AS media_type,
+      COUNT(*) AS publications
+    FROM {_table('amazon_2026_trad')} AS t
+    WHERE t.Published_At IS NOT NULL
+      AND NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') IS NOT NULL
+      AND LOWER(NULLIF(TRIM(CAST({narrative_col} AS STRING)), '')) NOT IN ('noise', 'unknown')
+    GROUP BY narrative_label, week_start, media_type
+    ORDER BY narrative_label, week_start, media_type
+    """
+    return safe_query(sql, fallback=_narrative_trad_media_type_timeline_fixture())
+
+
+def load_narrative_some_platform_timeline() -> pd.DataFrame:
+    some_columns = _table_column_map("amazon_2026_some")
+    narrative_col_name = some_columns.get("dominant_narrative", "")
+    if narrative_col_name:
+        narrative_col = f"s.`{narrative_col_name}`"
+    else:
+        narrative_col = _optional_string_expr("s", some_columns, ["dominant_narrative", "narrative_label"])
+    sql = f"""
+    SELECT
+      NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
+      CAST(DATE_TRUNC(DATE(s.Published_At), WEEK(MONDAY)) AS STRING) AS week_start,
+      COALESCE(NULLIF(TRIM(s.Platform), ''), 'Unknown') AS platform,
+      COUNT(*) AS posts
+    FROM {_table('amazon_2026_some')} AS s
+    WHERE s.Published_At IS NOT NULL
+      AND NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') IS NOT NULL
+      AND LOWER(NULLIF(TRIM(CAST({narrative_col} AS STRING)), '')) NOT IN ('noise', 'unknown')
+    GROUP BY narrative_label, week_start, platform
+    ORDER BY narrative_label, week_start, platform
+    """
+    return safe_query(sql, fallback=_narrative_some_platform_timeline_fixture())
+
+
 def load_narratives_kpi() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
@@ -293,8 +339,6 @@ def load_narratives_kpi() -> pd.DataFrame:
     some_paid_expr = _optional_string_expr(
         "s", some_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
     )
-
-    _PAID_VALUES = "('paid', 'sponsored', 'branded', 'advertorial', 'promoted')"
 
     sql = f"""
     WITH
@@ -335,7 +379,7 @@ def load_narratives_kpi() -> pd.DataFrame:
       SELECT COUNT(*) AS total_pubs,
         COUNTIF(
           camp IS NOT NULL
-          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN ('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')
+          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
         ) AS campaign_pubs
       FROM trad_campaign_raw
     ),
@@ -347,7 +391,7 @@ def load_narratives_kpi() -> pd.DataFrame:
       SELECT COUNT(*) AS total_posts,
         COUNTIF(
           camp IS NOT NULL
-          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN ('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')
+          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
         ) AS campaign_posts
       FROM some_campaign_raw
     ),
@@ -357,7 +401,7 @@ def load_narratives_kpi() -> pd.DataFrame:
     ),
     trad_paid AS (
       SELECT COUNTIF(
-        LOWER(TRIM(CAST(paid AS STRING))) IN {_PAID_VALUES}
+        LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}
       ) AS paid_pubs
       FROM trad_paid_raw
     ),
@@ -367,7 +411,7 @@ def load_narratives_kpi() -> pd.DataFrame:
     ),
     some_paid AS (
       SELECT COUNTIF(
-        LOWER(TRIM(CAST(paid AS STRING))) IN {_PAID_VALUES}
+        LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}
       ) AS paid_posts
       FROM some_paid_raw
     ),
@@ -428,20 +472,6 @@ def load_narratives_kpi() -> pd.DataFrame:
     return safe_query(sql, fallback=_narratives_kpi_fixture())
 
 
-def load_narrative_sentiment() -> pd.DataFrame:
-    sql = f"""
-    SELECT narrative_label, 'positive' AS sentiment, share_of_positive_items_trad_some AS pct
-    FROM {_table('amazon_2026_narratives')}
-    UNION ALL
-    SELECT narrative_label, 'neutral' AS sentiment, share_of_neutral_items_trad_some AS pct
-    FROM {_table('amazon_2026_narratives')}
-    UNION ALL
-    SELECT narrative_label, 'negative' AS sentiment, share_of_negative_items_trad_some AS pct
-    FROM {_table('amazon_2026_narratives')}
-    """
-    return safe_query(sql, fallback=_narrative_sentiment_fixture())
-
-
 def load_narrative_detail_kpis() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
@@ -460,9 +490,6 @@ def load_narrative_detail_kpis() -> pd.DataFrame:
     some_paid_expr = _optional_string_expr(
         "s", some_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
     )
-
-    _PAID_VALUES = "('paid', 'sponsored', 'branded', 'advertorial', 'promoted')"
-    _EXCL = "('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')"
 
     sql = f"""
     WITH
@@ -487,10 +514,10 @@ def load_narrative_detail_kpis() -> pd.DataFrame:
         COUNT(*) AS trad_publications,
         COUNTIF(
           camp IS NOT NULL
-          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {_EXCL}
+          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
         ) AS trad_campaign_items,
         COUNTIF(
-          LOWER(TRIM(CAST(paid AS STRING))) IN {_PAID_VALUES}
+          LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}
         ) AS trad_paid_items
       FROM trad_raw
       WHERE narrative_label IS NOT NULL
@@ -504,10 +531,10 @@ def load_narrative_detail_kpis() -> pd.DataFrame:
         SUM(engagement) AS some_engagement,
         COUNTIF(
           camp IS NOT NULL
-          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {_EXCL}
+          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
         ) AS some_campaign_items,
         COUNTIF(
-          LOWER(TRIM(CAST(paid AS STRING))) IN {_PAID_VALUES}
+          LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}
         ) AS some_paid_items
       FROM some_raw
       WHERE narrative_label IS NOT NULL
@@ -599,19 +626,32 @@ def load_narrative_top_journalists() -> pd.DataFrame:
 
 
 def load_narrative_top_publications() -> pd.DataFrame:
+    angle_columns = _table_column_map("amazon_2026_angles")
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
 
+    angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id", "id"])
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
     some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
     trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Description", "Main_Text", "Post_Content", "Text", "Content"])
-    trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle"])
-    some_angle_expr = _optional_string_expr("s", some_columns, ["angle", "dominant_angle"])
+    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
+    trad_angle_id_expr = _optional_string_expr("t", trad_columns, ["dominant_angle_id", "angle_id"])
+    some_angle_id_expr = _optional_string_expr("s", some_columns, ["dominant_angle_id", "angle_id"])
+    trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle_label"])
+    some_angle_expr = _optional_string_expr("s", some_columns, ["dominant_angle_label"])
 
     sql = f"""
-    WITH trad_pubs AS (
+    WITH angle_lookup AS (
+      SELECT
+        COALESCE(NULLIF(n.narrative_label, ''), a.narrative_id) AS narrative_label,
+        a.angle_label,
+        {angle_id_expr} AS angle_id
+      FROM {_table('amazon_2026_angles')} AS a
+      LEFT JOIN {_table('amazon_2026_narratives')} AS n
+        ON a.narrative_id = n.narrative_id
+    ),
+    trad_pubs AS (
       SELECT
         NULLIF(TRIM({trad_label_expr}), '') AS narrative_label,
         CAST(DATE(t.Published_At) AS STRING) AS Date,
@@ -629,6 +669,7 @@ def load_narrative_top_publications() -> pd.DataFrame:
         END AS Sentiment,
         CAST(COALESCE(t.Reach, 0) AS INT64) AS Reach,
         CAST(NULL AS INT64) AS Engagement,
+        COALESCE({trad_angle_id_expr}, '') AS Angle_ID,
         COALESCE({trad_angle_expr}, '') AS Angle
       FROM {_table('amazon_2026_trad')} AS t
       WHERE t.Published_At IS NOT NULL
@@ -653,6 +694,7 @@ def load_narrative_top_publications() -> pd.DataFrame:
         END AS Sentiment,
         CAST(COALESCE(s.Reach, 0) AS INT64) AS Reach,
         COALESCE(s.Engagement, 0) AS Engagement,
+        COALESCE({some_angle_id_expr}, '') AS Angle_ID,
         COALESCE({some_angle_expr}, '') AS Angle
       FROM {_table('amazon_2026_some')} AS s
       WHERE s.Published_At IS NOT NULL
@@ -664,16 +706,25 @@ def load_narrative_top_publications() -> pd.DataFrame:
       UNION ALL
       SELECT * FROM some_pubs
     )
-    SELECT narrative_label, Date, Source, Type, Publication, Author, Title, Summary, URL, Sentiment, Reach, Engagement, Angle
-    FROM (
-      SELECT *,
-        ROW_NUMBER() OVER (
-          PARTITION BY narrative_label, Source
-          ORDER BY COALESCE(Reach, 0) DESC, COALESCE(Engagement, 0) DESC
-        ) AS rn
-      FROM combined
-    )
-    WHERE rn <= 50
-    ORDER BY narrative_label, Source, COALESCE(Reach, 0) DESC, COALESCE(Engagement, 0) DESC
+    SELECT
+      c.narrative_label,
+      c.Date,
+      c.Source,
+      c.Type,
+      c.Publication,
+      c.Author,
+      c.Title,
+      c.Summary,
+      c.URL,
+      c.Sentiment,
+      c.Reach,
+      c.Engagement,
+      COALESCE(NULLIF(c.Angle_ID, ''), al.angle_id, '') AS Angle_ID,
+      c.Angle
+    FROM combined AS c
+    LEFT JOIN angle_lookup AS al
+      ON LOWER(TRIM(c.narrative_label)) = LOWER(TRIM(al.narrative_label))
+      AND LOWER(TRIM(c.Angle)) = LOWER(TRIM(al.angle_label))
+    ORDER BY c.narrative_label, c.Source, COALESCE(c.Reach, 0) DESC, COALESCE(c.Engagement, 0) DESC
     """
     return safe_query(sql, fallback=_narrative_top_publications_fixture())

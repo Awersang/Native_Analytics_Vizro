@@ -18,11 +18,10 @@ SOME_PLATFORM_KEY = "amazon_2026_some_platform"
 TOP_ARTICLES_KEY = "amazon_2026_top_articles"
 TOP_POSTS_KEY = "amazon_2026_top_posts"
 NARRATIVES_KEY = "amazon_2026_narratives"
-NARRATIVE_SENTIMENT_KEY = "amazon_2026_narrative_sentiment"
 PUBLISHERS_KEY = "amazon_2026_publishers"
+PARAM_SINK_KEY = "amazon_2026_param_sink"
 PUBLISHER_TRAD_TIMELINE_KEY = "amazon_2026_publisher_trad_timeline"
 PUBLISHER_SOME_TIMELINE_KEY = "amazon_2026_publisher_some_timeline"
-PUBLISHER_NARRATIVES_KEY = "amazon_2026_publisher_narratives"
 PUBLISHER_TOPIC_AREAS_KEY = "amazon_2026_publisher_topic_areas"
 PUBLISHER_SOME_TOPIC_AREAS_KEY = "amazon_2026_publisher_some_topic_areas"
 PUBLISHER_TOP_PUBLICATIONS_KEY = "amazon_2026_publisher_top_publications"
@@ -37,14 +36,14 @@ TOPIC_AREA_SOME_SENTIMENT_TIMELINE_KEY = "amazon_2026_topic_area_some_sentiment_
 TOPIC_AREA_TOP_PUBLISHERS_KEY = "amazon_2026_topic_area_top_publishers"
 TOPIC_AREA_TOP_JOURNALISTS_KEY = "amazon_2026_topic_area_top_journalists"
 TOPIC_AREA_TOP_PUBLICATIONS_KEY = "amazon_2026_topic_area_top_publications"
-TOPIC_AREA_PROFILE_KEY = "amazon_2026_topic_area_profile"
-TOPIC_AREA_NARRATIVES_KEY = "amazon_2026_topic_area_narratives"
 ANGLES_KEY = "amazon_2026_angles"
 NARRATIVE_OVERVIEW_KEY = "amazon_2026_narrative_overview"
 NARRATIVE_WEEKLY_REACH_KEY = "amazon_2026_narrative_weekly_reach"
 NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY = "amazon_2026_narrative_some_weekly_engagement"
 NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY = "amazon_2026_narrative_trad_sentiment_timeline"
 NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY = "amazon_2026_narrative_some_sentiment_timeline"
+NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY = "amazon_2026_narrative_trad_media_type_timeline"
+NARRATIVE_SOME_PLATFORM_TIMELINE_KEY = "amazon_2026_narrative_some_platform_timeline"
 NARRATIVES_KPI_KEY = "amazon_2026_narratives_kpi"
 NARRATIVE_DETAIL_KPI_KEY = "amazon_2026_narrative_detail_kpi"
 NARRATIVE_TOP_PUBLISHERS_KEY = "amazon_2026_narrative_top_publishers"
@@ -61,6 +60,7 @@ CAMPAIGN_TOP_JOURNALISTS_KEY = "amazon_2026_campaign_top_journalists"
 CAMPAIGN_TOP_PUBLICATIONS_KEY = "amazon_2026_campaign_top_publications"
 CAMPAIGN_PROFILE_KEY = "amazon_2026_campaign_profile"
 CAMPAIGN_NARRATIVES_KEY = "amazon_2026_campaign_narratives"
+DISCOVER_ITEMS_KEY = "amazon_2026_discover_items"
 
 MEDIA_TYPE_ORDER = [
     "Online",
@@ -79,9 +79,24 @@ SENTIMENT_ORDER = ["Positive", "Neutral", "Negative"]
 
 MONTH_ORDER = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
+# Values treated as "no campaign assigned" when filtering campaign columns.
+NON_CAMPAIGN_VALUES = "('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')"
+
+# Values in a `paid` column indicating sponsored/paid content.
+PAID_VALUES = "('paid', 'sponsored', 'branded', 'advertorial', 'promoted')"
+
 
 def _table(name: str) -> str:
     return table_ref(DATASET_ID, name, project=PROJECT_ID)
+
+
+PUBLISHER_SEED_CTE = f"""publisher_seed AS (
+      SELECT
+        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
+        ANY_VALUE(publisher_uid) AS publisher_uid
+      FROM {_table('amazon_2026_publishers')}
+      GROUP BY display_key
+    )"""
 
 
 @lru_cache

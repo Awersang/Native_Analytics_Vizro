@@ -129,12 +129,11 @@ add media and plaform split for narrative details.
 
 
 
-Analyze the amazon 2026 dashboard, rate the quality of the code and its structure. look for inefficient solution. look for dead code. look for places that are inconsistent. This code was developed chart by chart, it means that many structural solutions might emerge as arbitrary amalgamation of small choices not a deliberate strategy, think about it. don timplement give me analysis and change proposals.
-take extra care to analyze the style of the dashboard.
+Analyze the amazon 2026 dashboard, rate the quality of the code and its structure. look for inefficient solution. look for dead code. look for places that are inconsistent, overkill abstractions. This code was developed chart by chart, and page by page, it means that many structural solutions might emerge as arbitrary amalgamation of small choices not a deliberate strategy, think about it. dont implement. give me analysis and change proposals. Take care also to analyze the style of the dashboard.
 
 
 
-
+Loo
 
 
 
@@ -188,6 +187,12 @@ P2S3T1 Narratives Overview Table: at the end of the details section add top publ
 # ############### PLANS ############### #
 
 
+# DATA
+angles in trad&some columns, missing columns and data for angles.
+load new data
+run publisher engine. 
+
+
 
 # VIZRO
 
@@ -195,59 +200,168 @@ General: fix top articles + angles: first fix in Data
 
 
 
-Topic Areas Page: Details section. add a Top Publications / Posts table - this is the same table as P3S2T2 Top Publications / Posts. Only difference is that is filters publications and posts for a selected in the drop down menu topic area. folow the style guide and style of example table.
-
-
-Look at the narratives and publishers details section with profile info, descriptions and takeaways. your task is to build a similar container with info of campaign details. there is campaign table in the BQ. access it and check the contents. 
-
 
 i want P6S4G2 Publications Timeline by Sentiment to have x limits start and end at the further points of the available data, evey if other variables end earlier.
 
 
 
-remove P7S2T2 Top Journalists, 
-turn off the dashboard elements ID that are displayed next to their names. 
+
+Look at publishers page. Rate the quality of the code and its structure. look for inefficient solution. look for dead code. look for places that are inconsistent, overkill abstractions. This code was developed chart by chart, and page by page, it means that many structural solutions might emerge as arbitrary amalgamation of small choices not a deliberate strategy, think about it. dont implement. Make sure you understant the context of this page, the dashboard as a whole, its structure, functions and files shared between different pages. give me analysis and change proposals. The page is loading slowly, why? 
 
 
-# DATA
-angles in trad&some columns, missing columns and data for angles.
-load new data
-run publisher engine. 
+Here is an idea. User goes through the dasboard. Selects stuff, tweeks parameters. And get some sort of interesting results. He wants to save a specific view of a page for later use so that it is not getting lost, and he can go back to tihs specific view. Is this feasable in this dashboard? It could take a form of an extra side panel with saved items. When saving the user can name the saved view. the side panel works as a management tool wher saves can be renamed, deleted, and perhaps exported in some format.
+what do you think about this idea. do not implement.
 
 
-Look how Trad Multinarratives chart is constructed. - couple of charts stacked on top of each other, same scale.
-we will now build something similar under P7S2G2 Publications Timeline by Sentiment in the campaign details section. The idea is that the P7S2G2 Publications Timeline by Sentiment gets a new called, Narratives. when clicked the narratives that are associated (this info you can get from cmapaign_narratives table in bq) have their timelines displayd under the P7S2G2 Publications Timeline by Sentiment, this should be all one chart, with multiple sub charts. when the Narratives chart is not selected the P7S2G2 Publications Timeline by Sentiment look just like before. Importantly is that the new charts need to have the same x limits. as the P7S2G2 Publications Timeline by Sentiment oryginal. 
+This is a experimental feture, create a toggle so that it can be turnedd on and off. Lets test this on the Overview page. In the top right corner of a chart/ table, add a small menu button. when clicked couple of options should apper. 
+"Copy Image to Clipboard", "Copy Data to Clipboard", "Download Image", "Download Data". 
+
+
+
+
+P8S1 Filters: similarity slider: it should be a float - or on case it could slow things down it sohudl have a resolution od 0.1
+
+
+what is the best way to publish this app using gcloud? 
+
+
+when the app loads is it possible to dispaly the same loading animation as it is used when pages are loaded?
+
+
+# Savable views
+
+Implement a generic "saved views" feature for a Vizro/Dash app in c:\Świetlik\NATIVE ANALYTICS\Vizro. The feature should work for any page without per-page configuration.
+
+How it works:
+
+At startup, traverse app.layout recursively to collect all interactive component IDs and their value props (Dropdown→value, Slider→value, RangeSlider→value, Checklist→value, RadioItems→value, DatePickerRange→["start_date","end_date"]). Filter out non-interactive or Vizro-internal components by heuristic (e.g. nav/tab components).
+Use dcc.Store(id="saved-views-store", storage_type="local") to persist saves in browser localStorage. Schema: { "/page-path": { "save-name": { component_id: value, ... }, ... } }.
+Add a collapsible side panel (Bootstrap dbc.Offcanvas or equivalent) with: a text input + "Save" button to name and save the current view; a list of saved views for the current page; per-item Rename, Delete, and Export (JSON download) actions.
+Restoring a saved view writes the saved values back to each component via a callback (one Output per tracked component).
+Constraints:
+
+Generic: zero per-page or per-dashboard config needed beyond adding the panel to the app once.
+Saves are scoped to the current page (dcc.Location pathname).
+Export = download a JSON file of the saved view dict.
+Style consistently with the existing dashboard (Bootstrap dark theme, existing CSS).
+Read the existing app entry point and layout structure first to understand how to attach the panel and dcc.Store without breaking existing callbacks.
+
+Adjust the component-type map or styling details before sending if needed.
 
 
 
 # PROCESSING
 
-put Topic Area Details kpi boxes into two containers trad and some 
 
-i want the P6S4G1 Publications and Posts to have ticks every week not every month.
-
-
-Topic Areas Page:
-Add a side bar with base Maetric just like in other pages.
-Create a Tree map using bqtrad and bqsome as input. thee map shows number of publications divided by Topic areas and Themes. Add two buttons that allows switching between Trad, SoMe data, when both are selected the chart shows joined number of elements from two sources.
-
-look how narrative selection works in the P2S3T1 Narratives Overview Table, cells in the first row and text in this row are used as links. rest of the table is inactive. the selection style - just a small highlint of the cell. you will now implement the same mechanics in the P2S4T1 Angles table for angle column. 
-
-add a drop down in der the table with angles, additionaly this table should have "All"  at the top of the drop down list. 
-when iser select angle in the drop down or selects angle by clicking on it in the angles table -> this should trigger a filter in to P2S4T4 Top Publications / Posts table, for trad use dominant angle column for sSMe angle column.  
+here is an idea. User goes through the dasboard. Selects stuff, tweeks parameters. And get some sort of interesting results. Then he can click share button on the chart, a small manu ask to choose the platform with which the image of the chart will be shared. it can be a new email message, slack, whatsapp, or ather. What do you think about it? is it feasable? how does triggering of other aplications work in general through the browser, is it reliable, is it simple? 
 
 
 
-Campaigns page. Add a Campaign timeline chart, based on the bqsome and bqtrad. Attached you can see the timeline example. DO not imitate the style of the example just the idea for the layout. Use the dasboard style guide. 
+
+P2S4T4 Top Publications / Posts - the selection of the angles is not working well often a selected angle in the P2S4T1 Angles is hown as having multiple publications but the angles table remains empty. 
+
+P2S4T4 Top Publications / Posts - when a new angle is selected that do not have any contents in the table table that is currently dispalying, that is when I select angle thath is appearing only in the Some and my table is set to trad the table should switch to SoMe by itself. 
 
 
-angle drop down should be positioned outside of angles container, below it. 
-P2S4T4 Top Publications / Posts container should be in flat style. 
+
+P6S2G1 Publications by Media Source and Topic Area  data labesl in the light mode are bright with dropshadow - this is shit. make the starting blocks of the data strands thicker.
+
+discover page: results table
+the row selects but only after the details are loaded, I want the whole row to get selected all at once when i click on it. just like the cell get selected now instantly on the click.
+
+
+discover page: style article text, style reactions map in some details  ???
+
+
+move P6S4T2 Top Journalists to the rigth from P6S4T1 Top Topic Area Publishers.
 
 
 
-Topic Areas Page:
-under tree map place Topic Areas overview table. This table works the same as the P3S1T1 Overview Table but insted of narratives it has campaigns. same columns, data bars. same selection logic - Under the table create a Campaign selection dropdown, and a details section. When used click on the cell of name of the campaign in the table the selection transferst to the dropdown selector - just like in the publishers page. The table only has Sources dropdown filter (no TML or Media type filters here). folow the style guide and style of example table.
+lets investigate how different elements of the discovery page are reloading. it seems to me that some elements are reloading for no purpose. when I clik on the item in the results table the filter section reloads - this seems unnecessary. Exlopre the subject and tell if there are any improvements to be made on this front.
+
+
+
+
+
+
+here is an idea. 
+user selects a specific Publication, we can now take the embedding of this article. and look for all publications within certain distance to the selected one. If this would be computationally too expensive we can use u_map insted. what do you think? 
+the resulting articles will appear in the table below the article details box.
+
+
+
+throughout the dashboard there are tables with trad and some data (top publications mostly) analyze what columns are used in them what is the underlying columns name in the bq. show me the summary. 
+
+When reference is selected - single publication chosen by the user, this publication should get en extra symbol in the umap chart. let it be a small cross, keep the normal dot as well, and add the cross symbol. aditionaly a circle with the radius defined by the similarity slider should be drawn around this point. The circle works as aditional filter. The actual filtering logic do not need to pass throught the umap chart, the filter can be applied simply on the table using distance calculation in umap space. 
+
+
+P8 page: the items in this section do not conform to the namin convention with the use of items IDs - fix that.
+
+reference: change "No reference article selected. Use “Use as reference” on a publication's details." to "No reference article selected."
+
+Similarity slider: remove the value dispay of the slider that is dispalyed on the right side of the slider. 
+
+Publications details: for SoMe posts show full text, the same way it is shown for trad.
+
+
+in post details: add engagement donut chart for Some posts, look how mini donut charts are styled in the kpi sections in this dashboard. 
+
+when there is a selection made in in the P8S2G1 Narrative Clusters (UMAP) and user changes some filter in the filters section the P8S2G1 Narrative Clusters (UMAP) reloads thus loosing the selection. this is not the behavior we want. the chart can update its display of the datapoints but the selection region should stay unchanged. is this possible? also the position and zoom of the chart could stay unchaged when the update is triggered. that would keep it more user friendly. 
+
+
+P2S4G3 Publications Timeline by Media Type / Platform: fix the yellow lines doing from the top week, the line should not be yellow but have the same color as other arrows - grey. the outline around the text can stay yellow. 
+P2S4G3 Publications Timeline by Media Type / Platform:  the y=0 line should be gray same color as the x axis line but thicker- as thick as data lines.
+
+lets work on the discovery page. 
+add publications and posts table like the one at the bottom of all pages. with Trad SoMe switch. 
+above it you will ad a drop downs that allow for filtering by: Source, Sentiment, Publisher. 
+on the top of the chart add also a slider for selecting the time range. 
+
+
+look at P2S4G2 Publications Timeline by Sentiment.
+u will implement a new chart based on this one. 
+idea: x axis it for time in weekly buckets, y axis is divided into two sectinos, from zero up is for trad from zero down is for some. both up and down show positive values. the data is split by media type for trad and by platform for some. create 2 versions of the chart. 1. the lines are independed from each other. 2. chart is presented as stacked area chart 
+place the new charts under P2S4G2 Publications Timeline by Sentiment.
+
+
+you need to add special data labels to the chart. select 5 publications with highest rech for trad and 5 for some. create a fag labels for those datapoints. the flag should have: publisher / author, reach.
+
+discover page:
+in the publication detals box ( top right corner ) add a button "use as reference" with some nice icon.
+in the search box add to the right from the search bar a reference box where the reference article info will be displayed, there should also be clear option in this field. when user clicks on the artocles button use as reference the article short date, publisher and title should appear there. 
+below the reference box sould be a slider called "similarity" - it will be used de define the distance in the umap space but dont wire it for now just make the ui and the logic for selecting reference image. 
+style the Serach full text as a toggle not a checker box.
+
+REname the ID of the umap to apropiate value.
+I dont like thath between orange and blue the color appears to be gray.
+when color by time is on there should be another toggle called relative that switches if the gradient is adjuested to the currently selected time window or to the whole data range. 
+Color by narrative and time cannot be ON at the same time. 
+
+remove Similar Articles table.
+
+
+lets work on the discovery page. 
+add publications and posts table like the one at the bottom of all pages. with Trad SoMe switch. 
+above it you will add a drop downs that allow for filtering by: Source, Sentiment, Publisher. topic area, narrative
+on the top of the chart add also a slider for selecting the time range with the precision of one day.
+there should also be a search bar - user can type anyphrase and the results will show itels that has a matching phrases in ony of the fields - author, publisher title, main text/posts text
+think carefully how it all works, how results are updated when categories are added or removed from filtering, and so on. follow the style guide. 
+
+
+add a publication details section at the bottom of the discovery page.
+now when user clicks on a row in the table (or any text in this row except for a link text) the details section should display info about the publication or post. Use your brain to create a nice detail section. some kpi boxes, text summary, link to the website, publisher, date, journalist. 
+
+
+add to the u_map add timescale coloring, "Color by time" button next to color by narrative. Create a 3 color gradient that maps to the full time range of the data. and color the dots. create some sort of legend so thath the colors can be interpreted.
+
+Similarity slider: name the starting point close and the ending far. remove the inviger value dispaly.
+clear reference button is not worknig fix it. 
+Rename Reference Article to Reference Publication
+Search bar and Reference Article should split the width of the box 50-50.
+
+
+Look at discovery page. Rate the quality of the code and its structure. look for inefficient solution. look for dead code. look for places that are inconsistent, overkill abstractions. This code was developed chart by chart, and page by page, it means that many structural solutions might emerge as arbitrary amalgamation of small choices not a deliberate strategy, think about it. dont implement. give me analysis and change proposals. Take care also to analyze the style of the dashboard.
+
 
 #  future plans:
 influencer discovery and comparison tool
@@ -263,3 +377,20 @@ we unlock the AI analysis capabilities bacause we have the source of data that i
 
 Get-NetTCPConnection -LocalPort 8050
 Stop-Process -Id 23088 -Force
+
+
+
+here is the sequence of stills from a short animation that I want you to generate. 
+idea:
+1 single text / data point
+2. it gets enriched using AI - insights are added to the data point
+3. to simplify the animation the enrichment icon is added to the text to represent the text and its enrichment points
+4. there is many text that are enriched this way
+5. enriched data is clustered ( changing colors of the text icons)
+6. enriched data linked together (connections on the left side of the items columns)
+7. then there are further analysis drawn from the enriched and clustered data. 
+8. then there are ever further analysis that is drawn on both data and lower level analysis. 
+no audio - just video
+keep the background white
+smooth animation with pauses on each step.
+clean minimalistic style, you can preserve the handwritten style of the lines a bit.

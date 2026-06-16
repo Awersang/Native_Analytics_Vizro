@@ -5,12 +5,14 @@ from typing import Any
 
 import pandas as pd
 from dash import dcc, html
+from vizro.managers import data_manager
 
 import plotly.graph_objects as go
 
 from dashboards.amazon_2026.charts_archive import _archive_figure, _build_color_map
 from dashboards.amazon_2026.charts_shared import (
     SENTIMENT_COLORS,
+    SENTIMENT_OPTIONS,
     THEME_BORDER,
     THEME_SURFACE,
     THEME_TEXT,
@@ -25,10 +27,8 @@ from dashboards.amazon_2026.charts_shared import (
     build_top_publications_table,
     na_panel,
 )
-from dashboards.amazon_2026.data_common import SENTIMENT_ORDER
+from dashboards.amazon_2026.data_common import DISCOVER_ITEMS_KEY
 from dashboards.amazon_2026.dev_ids import ref_label
-
-SENTIMENT_OPTIONS = [{"label": value, "value": value} for value in SENTIMENT_ORDER]
 
 
 # ---------------------------------------------------------------------------
@@ -44,19 +44,32 @@ def discover_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
     min_date = dates.min()
     frame["_date_index"] = (dates - min_date).dt.days.fillna(0).astype(int)
     frame["_id"] = frame.index
-    frame["_search"] = (
-        frame["Publisher"].fillna("").astype(str)
-        + " "
-        + frame["Title"].fillna("").astype(str)
-        + " "
-        + frame["Summary"].fillna("").astype(str)
-    ).str.lower()
-    frame["_search_fulltext"] = (frame["_search"] + " " + frame["Full_Text"].fillna("").astype(str).str.lower())
     if "umap_x" in frame.columns:
         frame["umap_x"] = pd.to_numeric(frame["umap_x"], errors="coerce")
     if "umap_y" in frame.columns:
         frame["umap_y"] = pd.to_numeric(frame["umap_y"], errors="coerce")
     return [_json_safe(row) for row in frame.to_dict("records")]
+
+
+_server_cache: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]] | None = None
+
+
+def _server_discover_data() -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
+    """Return (records, cluster_records, color_map) from a server-side cache.
+
+    Called by both @capture panels and callbacks — records stay in server memory
+    instead of being serialised into a browser dcc.Store and round-tripped on
+    every filter interaction.  Populated once via data_manager on first call.
+    """
+    global _server_cache
+    if _server_cache is not None:
+        return _server_cache
+    df = data_manager[DISCOVER_ITEMS_KEY].load()
+    records = discover_records(df)
+    cluster_records = discover_cluster_records(records)
+    color_map = _build_color_map(pd.DataFrame(cluster_records)) if cluster_records else {}
+    _server_cache = (records, cluster_records, color_map)
+    return _server_cache
 
 
 def discover_date_bounds(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -104,6 +117,17 @@ def discover_filter_options(records: list[dict[str, Any]]) -> dict[str, list[dic
 # ---------------------------------------------------------------------------
 
 
+def _record_matches_search(record: dict[str, Any], search: str, fulltext: bool) -> bool:
+    parts = [
+        str(record.get("Publisher", "")),
+        str(record.get("Title", "")),
+        str(record.get("Summary", "")),
+    ]
+    if fulltext:
+        parts.append(str(record.get("Full_Text", "")))
+    return search in " ".join(parts).lower()
+
+
 def filter_discover_records(
     records: list[dict[str, Any]],
     *,
@@ -126,7 +150,6 @@ def filter_discover_records(
     narratives = set(narrative_filter or [])
     selected_id_set = set(selected_ids) if selected_ids else None
     search = (search_text or "").strip().lower()
-    search_field = "_search_fulltext" if search_fulltext else "_search"
 
     if date_range and len(date_range) == 2:
         date_lo, date_hi = int(date_range[0]), int(date_range[1])
@@ -152,7 +175,7 @@ def filter_discover_records(
             index = int(record.get("_date_index", 0))
             if index < date_lo or index > date_hi:
                 continue
-        if search and search not in str(record.get(search_field, "")):
+        if search and not _record_matches_search(record, search, search_fulltext):
             continue
         if selected_id_set is not None and record.get("_id") not in selected_id_set:
             continue
@@ -207,6 +230,41 @@ def discover_some_table_data(records: list[dict[str, Any]]) -> list[dict[str, An
         for record in records
         if record.get("Source") == "SoMe"
     ]
+
+
+def discover_split_table_data(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return (trad_data, some_data) in a single pass — avoids two O(n) scans."""
+    trad_data: list[dict[str, Any]] = []
+    some_data: list[dict[str, Any]] = []
+    for record in records:
+        source = record.get("Source")
+        if source == "Trad":
+            trad_data.append({
+                "_id": record.get("_id"),
+                "Date": record.get("Date", ""),
+                "Media_Type": record.get("Media_Type", ""),
+                "Publication": record.get("Publisher", ""),
+                "Title": record.get("Title", ""),
+                "Summary": record.get("Summary", ""),
+                "URL": f"[Open]({record['URL']})" if record.get("URL") else "",
+                "Sentiment": record.get("Sentiment", ""),
+                "Reach": record.get("Reach", 0),
+            })
+        elif source == "SoMe":
+            some_data.append({
+                "_id": record.get("_id"),
+                "Date": record.get("Date", ""),
+                "Platform": record.get("Media_Type", ""),
+                "Author": record.get("Publisher", ""),
+                "Post_Content": record.get("Title", ""),
+                "URL": f"[Open]({record['URL']})" if record.get("URL") else "",
+                "Sentiment": record.get("Sentiment", ""),
+                "Reach": record.get("Reach", 0),
+                "Engagement": record.get("Engagement", 0),
+            })
+    return trad_data, some_data
 
 
 # ---------------------------------------------------------------------------
@@ -398,123 +456,126 @@ def discover_cluster_records(records: list[dict[str, Any]]) -> list[dict[str, An
     return out
 
 
-def discover_color_map(records: list[dict[str, Any]]) -> dict[str, str]:
-    cluster_records = discover_cluster_records(records)
-    df = pd.DataFrame(cluster_records)
-    return _build_color_map(df) if not df.empty else {}
-
-
 def build_discover_stores_section(
-    records: list[dict[str, Any]],
     date_bounds: dict[str, Any],
     color_map: dict[str, str],
 ) -> html.Div:
     """Hidden panel holding all dcc.Stores for the Discover page.
 
-    Isolating stores here prevents the visible filter/clusters panels from
-    showing a loading overlay when callbacks write to these stores (e.g.
-    writing to detail-id on row click no longer flashes the filter panel).
+    Records are NOT stored here — they live in _server_discover_data() so
+    callbacks read from server memory rather than round-tripping the full
+    dataset through the browser on every filter change.
     """
     return html.Div(
         style={"display": "none"},
         children=[
-            dcc.Store(id="amazon-2026-discover-data", data=records),
             dcc.Store(id="amazon-2026-discover-bounds", data=date_bounds),
             dcc.Store(id="amazon-2026-discover-detail-id", data=None),
             dcc.Store(id="amazon-2026-discover-reference-data", data=None),
             dcc.Store(id="amazon-2026-discover-selected-ids", data=None),
             dcc.Store(id="amazon-2026-discover-clusters-selections", data=None),
             dcc.Store(id="amazon-2026-discover-clusters-colormap", data=color_map),
-            dcc.Store(id="amazon-2026-discover-trad-base-style", data=TOP_PUBLICATIONS_STYLE_DATA_CONDITIONAL),
-            dcc.Store(id="amazon-2026-discover-some-base-style", data=TOP_POSTS_STYLE_DATA_CONDITIONAL),
+            dcc.Store(id="amazon-2026-discover-umap-open", data=False),
         ],
     )
 
 
-def build_discover_clusters_section(records: list[dict[str, Any]]) -> html.Div:
-    cluster_records = discover_cluster_records(records)
-    df = pd.DataFrame(cluster_records)
-    color_map = _build_color_map(df) if not df.empty else {}
+def build_discover_clusters_section(
+    cluster_records: list[dict[str, Any]],
+    color_map: dict[str, str],
+) -> html.Div:
     initial_fig = _archive_figure(cluster_records, color_map, color_on=True, show_kde=False)
-
+    toggle_btn = html.Button(
+        "Show",
+        id="amazon-2026-discover-umap-toggle",
+        n_clicks=0,
+        className="amazon-discover-umap-toggle",
+    )
     return na_panel(
         ref_label("Narrative Clusters (UMAP)", "P8S2G1"),
         [
             html.Div(
-                className="amazon-publishers-chart-controls",
-                children=[
-                    dcc.Checklist(
-                        id="amazon-2026-discover-clusters-color-toggle",
-                        options=[{"label": "Color by narrative", "value": "color"}],
-                        value=["color"],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                    dcc.Checklist(
-                        id="amazon-2026-discover-clusters-kde-toggle",
-                        options=[{"label": "KDE", "value": "kde"}],
-                        value=[],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                    dcc.Checklist(
-                        id="amazon-2026-discover-clusters-time-toggle",
-                        options=[{"label": "Color by time", "value": "time"}],
-                        value=[],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                    dcc.Checklist(
-                        id="amazon-2026-discover-clusters-relative-toggle",
-                        options=[{"label": "Relative to selected range", "value": "relative"}],
-                        value=[],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                        style={"display": "none"},
-                    ),
-                    html.Div(
-                        id="amazon-2026-discover-time-legend",
-                        className="amazon-discover-time-legend",
-                        style={"display": "none"},
-                        children=[
-                            html.Span("Older"),
-                            html.Div(className="amazon-discover-time-legend-bar"),
-                            html.Span("Newer"),
-                        ],
-                    ),
-                ],
-            ),
-            html.Div(
-                id="amazon-2026-discover-selection-banner",
-                className="amazon-discover-selection-banner",
+                id="amazon-2026-discover-umap-container",
                 style={"display": "none"},
                 children=[
-                    html.Span(id="amazon-2026-discover-selection-text"),
-                    html.Button(
-                        [html.Span("close", className="material-symbols-outlined"), "Clear selection"],
-                        id="amazon-2026-discover-selection-clear",
-                        className="amazon-discover-selection-clear",
-                        n_clicks=0,
+                    html.Div(
+                        className="amazon-publishers-chart-controls",
+                        children=[
+                            dcc.Checklist(
+                                id="amazon-2026-discover-clusters-color-toggle",
+                                options=[{"label": "Color by narrative", "value": "color"}],
+                                value=["color"],
+                                inline=True,
+                                className="amazon-publishers-radio",
+                            ),
+                            dcc.Checklist(
+                                id="amazon-2026-discover-clusters-kde-toggle",
+                                options=[{"label": "KDE", "value": "kde"}],
+                                value=[],
+                                inline=True,
+                                className="amazon-publishers-radio",
+                            ),
+                            dcc.Checklist(
+                                id="amazon-2026-discover-clusters-time-toggle",
+                                options=[{"label": "Color by time", "value": "time"}],
+                                value=[],
+                                inline=True,
+                                className="amazon-publishers-radio",
+                            ),
+                            dcc.Checklist(
+                                id="amazon-2026-discover-clusters-relative-toggle",
+                                options=[{"label": "Relative to selected range", "value": "relative"}],
+                                value=[],
+                                inline=True,
+                                className="amazon-publishers-radio",
+                                style={"display": "none"},
+                            ),
+                            html.Div(
+                                id="amazon-2026-discover-time-legend",
+                                className="amazon-discover-time-legend",
+                                style={"display": "none"},
+                                children=[
+                                    html.Span("Older"),
+                                    html.Div(className="amazon-discover-time-legend-bar"),
+                                    html.Span("Newer"),
+                                ],
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        id="amazon-2026-discover-selection-banner",
+                        className="amazon-discover-selection-banner",
+                        style={"display": "none"},
+                        children=[
+                            html.Span(id="amazon-2026-discover-selection-text"),
+                            html.Button(
+                                [html.Span("close", className="material-symbols-outlined"), "Clear selection"],
+                                id="amazon-2026-discover-selection-clear",
+                                className="amazon-discover-selection-clear",
+                                n_clicks=0,
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        "Tip: use the lasso or box-select tool in the chart toolbar above to pick points and "
+                        "filter the results table to that selection.",
+                        className="amazon-discover-selection-hint",
+                    ),
+                    dcc.Graph(
+                        id="amazon-2026-discover-clusters-graph",
+                        figure=initial_fig,
+                        config={
+                            "displayModeBar": True,
+                            "displaylogo": False,
+                            "responsive": True,
+                            "toImageButtonOptions": {"format": "svg", "filename": "amazon_2026_discover_umap"},
+                        },
+                        style={"height": "800px"},
                     ),
                 ],
             ),
-            html.Div(
-                "Tip: use the lasso or box-select tool in the chart toolbar above to pick points and "
-                "filter the results table to that selection.",
-                className="amazon-discover-selection-hint",
-            ),
-            dcc.Graph(
-                id="amazon-2026-discover-clusters-graph",
-                figure=initial_fig,
-                config={
-                    "displayModeBar": True,
-                    "displaylogo": False,
-                    "responsive": True,
-                    "toImageButtonOptions": {"format": "svg", "filename": "amazon_2026_discover_umap"},
-                },
-                style={"height": "800px"},
-            ),
         ],
+        controls=toggle_btn,
     )
 
 
@@ -600,19 +661,17 @@ def discover_detail_placeholder() -> html.Div:
 
 
 def find_discover_record(records: list[dict[str, Any]], record_id: Any) -> dict[str, Any] | None:
-    if record_id is None:
+    if record_id is None or not records:
         return None
+    # _id equals the original DataFrame row index — try O(1) direct access first
+    if isinstance(record_id, int) and 0 <= record_id < len(records):
+        candidate = records[record_id]
+        if candidate.get("_id") == record_id:
+            return candidate
     for record in records:
         if record.get("_id") == record_id:
             return record
     return None
-
-
-# ---------------------------------------------------------------------------
-# Similar articles (UMAP nearest neighbours)
-# ---------------------------------------------------------------------------
-
-SIMILAR_ITEMS_LIMIT = 10
 
 
 def _umap_point(record: dict[str, Any]) -> tuple[float, float] | None:
@@ -623,49 +682,6 @@ def _umap_point(record: dict[str, Any]) -> tuple[float, float] | None:
         return float(x), float(y)
     except (TypeError, ValueError):
         return None
-
-
-def find_similar_discover_records(
-    records: list[dict[str, Any]],
-    record: dict[str, Any] | None,
-    limit: int = SIMILAR_ITEMS_LIMIT,
-) -> list[dict[str, Any]]:
-    if not record:
-        return []
-    origin = _umap_point(record)
-    if origin is None:
-        return []
-    x0, y0 = origin
-
-    candidates: list[tuple[float, dict[str, Any]]] = []
-    for other in records:
-        if other.get("_id") == record.get("_id"):
-            continue
-        point = _umap_point(other)
-        if point is None:
-            continue
-        x, y = point
-        distance = ((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
-        candidates.append((distance, other))
-
-    candidates.sort(key=lambda item: item[0])
-    return [other for _, other in candidates[:limit]]
-
-
-def discover_similar_table_data(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "_id": record.get("_id"),
-            "Source": record.get("Source", ""),
-            "Date": record.get("Date", ""),
-            "Publisher": record.get("Publisher", ""),
-            "Title": record.get("Title", ""),
-            "URL": f"[Open]({record['URL']})" if record.get("URL") else "",
-            "Sentiment": record.get("Sentiment", ""),
-            "Reach": record.get("Reach", 0),
-        }
-        for record in records
-    ]
 
 
 _DONUT_GRAPH_HEIGHT = 160

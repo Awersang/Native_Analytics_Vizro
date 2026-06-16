@@ -33,6 +33,15 @@ ARCHIVE_NARRATIVE_COLORS = [
 ]
 ARCHIVE_GRAYSCALE = "#9aa4b2"
 ARCHIVE_NOISE_COLOR = "#5b6472"
+REFERENCE_MARKER_COLOR = "#ffffff"
+REFERENCE_CIRCLE_COLOR = "#c8d0da"
+TIME_COLORSCALE = [
+    [0.0, "#2f7dd1"],
+    [0.25, "#35a66b"],
+    [0.5, "#d9c23a"],
+    [0.75, "#e07040"],
+    [1.0, "#c84e5a"],
+]
 
 
 def _records_from_frame(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -87,11 +96,77 @@ def _kde_density(sub: pd.DataFrame, grid_x: np.ndarray, grid_y: np.ndarray) -> n
     return density
 
 
+def _point_customdata(sub: pd.DataFrame) -> np.ndarray | pd.Series | None:
+    """Build customdata for a scatter trace, including ``_id`` (for lasso/box
+    selection round-tripping) alongside the ``source`` shown on hover."""
+    if "_id" in sub.columns:
+        if "source" in sub.columns:
+            return sub[["_id", "source"]].to_numpy()
+        return sub[["_id"]].to_numpy()
+    return sub["source"] if "source" in sub.columns else None
+
+
+def _hover_field(sub: pd.DataFrame) -> str:
+    return "%{customdata[1]}" if "_id" in sub.columns and "source" in sub.columns else "%{customdata}"
+
+
+def umap_distance_bounds(records: list[dict[str, Any]]) -> float:
+    """Return bounding-box diagonal of the UMAP cloud — used to scale the similarity slider to data-space radius."""
+    xs = [float(r["umap_x"]) for r in records if r.get("umap_x") is not None]
+    ys = [float(r["umap_y"]) for r in records if r.get("umap_y") is not None]
+    if not xs or not ys:
+        return 1.0
+    return max(((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5, 0.01)
+
+
+def _add_reference_overlay(
+    fig: go.Figure,
+    reference_point: tuple[float, float] | None,
+    reference_radius: float | None,
+) -> None:
+    if not reference_point:
+        return
+    x0, y0 = reference_point
+    if reference_radius:
+        fig.add_shape(
+            type="circle",
+            xref="x", yref="y",
+            x0=x0 - reference_radius,
+            x1=x0 + reference_radius,
+            y0=y0 - reference_radius,
+            y1=y0 + reference_radius,
+            line=dict(color=REFERENCE_CIRCLE_COLOR, width=1.5, dash="dash"),
+            fillcolor="rgba(0,0,0,0)",
+            layer="above",
+        )
+    fig.add_trace(
+        go.Scattergl(
+            x=[x0],
+            y=[y0],
+            mode="markers",
+            name="Reference",
+            marker=dict(
+                symbol="cross",
+                size=14,
+                color=REFERENCE_MARKER_COLOR,
+                line=dict(color=REFERENCE_MARKER_COLOR, width=2.5),
+                opacity=1.0,
+            ),
+            hovertemplate="Reference<extra></extra>",
+            showlegend=True,
+        )
+    )
+
+
 def _archive_figure(
     records: list[dict[str, Any]],
     color_map: dict[str, str],
     color_on: bool,
     show_kde: bool,
+    time_on: bool = False,
+    date_bounds: dict[str, Any] | None = None,
+    reference_point: tuple[float, float] | None = None,
+    reference_radius: float | None = None,
 ) -> go.Figure:
     df = pd.DataFrame(records)
     fig = go.Figure()
@@ -103,6 +178,55 @@ def _archive_figure(
             showarrow=False,
             font=dict(color=THEME_TEXT_MUTED, size=13),
         )
+        _apply_archive_layout(fig)
+        return fig
+
+    if time_on and "_date_index" in df.columns:
+        date_bounds = date_bounds or {}
+        min_date = date_bounds.get("min_date") or ""
+        max_date = date_bounds.get("max_date") or ""
+        min_index = float(date_bounds.get("min_index", 0))
+        max_index = float(date_bounds.get("max_index", df["_date_index"].max())) or 1.0
+        mid_label = ""
+        try:
+            mid = pd.to_datetime(min_date) + (pd.to_datetime(max_date) - pd.to_datetime(min_date)) / 2
+            mid_label = mid.strftime("%d %b %Y")
+        except (ValueError, TypeError):
+            pass
+        fig.add_trace(
+            go.Scattergl(
+                x=df["umap_x"],
+                y=df["umap_y"],
+                mode="markers",
+                name="By date",
+                marker=dict(
+                    size=5,
+                    opacity=0.65,
+                    line=dict(width=0),
+                    color=df["_date_index"],
+                    colorscale=TIME_COLORSCALE,
+                    cmin=min_index,
+                    cmax=max_index,
+                    showscale=True,
+                    colorbar=dict(
+                        title=None,
+                        thickness=12,
+                        len=0.6,
+                        x=1.0,
+                        tickmode="array",
+                        tickvals=[min_index, (min_index + max_index) / 2, max_index],
+                        ticktext=[min_date, mid_label, max_date],
+                        outlinewidth=0,
+                        bgcolor=THEME_SURFACE,
+                        tickfont=dict(color=THEME_TEXT, size=10),
+                    ),
+                ),
+                customdata=_point_customdata(df),
+                hovertemplate=f"{_hover_field(df)}<extra></extra>",
+                showlegend=False,
+            )
+        )
+        _add_reference_overlay(fig, reference_point, reference_radius)
         _apply_archive_layout(fig)
         return fig
 
@@ -162,19 +286,21 @@ def _archive_figure(
                 name=label,
                 marker=dict(size=5, color=color, opacity=0.55, line=dict(width=0)),
                 hovertemplate=f"<b>{label}</b><extra></extra>" if not color_on else (
-                    f"<b>{label}</b><br>%{{customdata}}<extra></extra>"
+                    f"<b>{label}</b><br>{_hover_field(sub)}<extra></extra>"
                 ),
-                customdata=sub["source"] if "source" in sub.columns else None,
+                customdata=_point_customdata(sub),
                 showlegend=color_on,
             )
         )
 
+    _add_reference_overlay(fig, reference_point, reference_radius)
     _apply_archive_layout(fig)
     return fig
 
 
 def _apply_archive_layout(fig: go.Figure) -> None:
     fig.update_layout(
+        uirevision="amazon-2026-umap",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=THEME_TEXT),

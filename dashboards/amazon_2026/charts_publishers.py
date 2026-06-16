@@ -22,9 +22,9 @@ from dashboards.amazon_2026.charts_shared import (
     THEME_SURFACE_ALT,
     THEME_TEXT,
     THEME_TEXT_MUTED,
-    TRAD_SOME_OPTIONS,
     _as_list,
     _coerce_float,
+    _detail_metric_values,
     _filter_trad_some,
     _hex_to_rgba,
     _json_safe,
@@ -39,9 +39,11 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_available_sources,
     _timeline_chart_title,
     _timeline_figure,
+    _timeline_records_from_frame,
     build_overview_table_section,
     build_top_items_panel,
     topic_area_color_map,
+    trad_some_controls,
 )
 from dashboards.amazon_2026.dev_ids import is_enabled, ref_badge, ref_label
 
@@ -241,22 +243,8 @@ def _records_from_frame(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
     df["publisher_uid"] = df["publisher_uid"].fillna("").astype(str)
     df.loc[df["publisher_uid"].eq(""), "publisher_uid"] = df.loc[df["publisher_uid"].eq(""), "display_name"]
     df["tml_labels"] = df.apply(_publisher_tml_labels, axis=1)
-    df["publisher_type"] = df.apply(_publisher_type, axis=1)
     df = df.sort_values(["total_items", "display_name"], ascending=[False, True]).reset_index(drop=True)
     return [_json_safe(record) for record in df.to_dict("records")]
-
-
-
-def _publisher_type(row: pd.Series) -> str:
-    has_trad = float(row.get("trad_article_count", 0) or 0) > 0
-    has_some = float(row.get("some_post_count", 0) or 0) > 0
-    if has_trad and has_some:
-        return "Trad+SoMe"
-    if has_trad:
-        return "Trad"
-    if has_some:
-        return "SoMe"
-    return "Unknown"
 
 
 def _publisher_tml_labels(row: pd.Series) -> str:
@@ -474,13 +462,13 @@ def _data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict[str, A
         },
         {
             "if": {"state": "active"},
-            "backgroundColor": "var(--bs-primary-bg-subtle)",
-            "border": "1px solid var(--bs-primary-bg-subtle)",
+            "backgroundColor": "transparent",
+            "border": f"1px solid {THEME_BORDER}",
         },
         {
             "if": {"state": "selected"},
-            "backgroundColor": "var(--bs-primary-bg-subtle)",
-            "border": "1px solid var(--bs-primary-bg-subtle)",
+            "backgroundColor": "transparent",
+            "border": f"1px solid {THEME_BORDER}",
         },
     ]
     if _has_source_divider(columns):
@@ -547,12 +535,17 @@ def _cell_width_styles() -> list[dict[str, Any]]:
 
 
 def _kpi_cards(records: list[dict[str, Any]], source_filter: str) -> html.Div:
-    total_publishers = len(records)
-    trad_publishers = sum(1 for row in records if _num(row, "trad_article_count") > 0)
-    some_publishers = sum(1 for row in records if _num(row, "some_post_count") > 0)
-    linked_publishers = sum(
-        1 for row in records if _num(row, "trad_article_count") > 0 and _num(row, "some_post_count") > 0
-    )
+    total_publishers = 0
+    trad_publishers = 0
+    some_publishers = 0
+    linked_publishers = 0
+    for row in records:
+        total_publishers += 1
+        has_trad = _num(row, "trad_article_count") > 0
+        has_some = _num(row, "some_post_count") > 0
+        trad_publishers += int(has_trad)
+        some_publishers += int(has_some)
+        linked_publishers += int(has_trad and has_some)
     return html.Div(
         className="amazon-publishers-kpis",
         children=[
@@ -576,7 +569,6 @@ def _kpi_cards(records: list[dict[str, Any]], source_filter: str) -> html.Div:
                 records,
                 "trad_dominant_media_type",
                 "Media type split",
-                "media type",
                 lambda row: _num(row, "trad_article_count") > 0,
             ),
             _distribution_panel(
@@ -586,7 +578,6 @@ def _kpi_cards(records: list[dict[str, Any]], source_filter: str) -> html.Div:
                 records,
                 "some_dominant_platform",
                 "Platform split",
-                "platform",
                 lambda row: _num(row, "some_post_count") > 0,
             ),
         ],
@@ -601,10 +592,9 @@ def _distribution_panel(
     records: list[dict[str, Any]],
     category_key: str,
     chart_title: str,
-    category_label: str,
     row_filter,
 ) -> html.Div:
-    donut = _mini_donut_chart(records, category_key, chart_title, category_label, row_filter)
+    donut = _mini_donut_chart(records, category_key, chart_title, row_filter)
     return html.Div(
         className="amazon-publishers-kpi-panel",
         children=[
@@ -621,7 +611,6 @@ def _mini_donut_chart(
     records: list[dict[str, Any]],
     category_key: str,
     chart_title: str,
-    category_label: str,
     row_filter,
 ) -> html.Div:
     distribution = _category_distribution(records, category_key, row_filter)
@@ -948,11 +937,11 @@ def _detail_kpis(record: dict[str, Any]) -> list[html.Div]:
 
 def _profile_block(record: dict[str, Any]) -> html.Div:
     profile_text = _normalize_profile_text(record.get("profile_description", ""))
-    top_narratives = _top_narratives(record.get("combined_top_narratives", ""))
     if not profile_text:
+        has_narratives = bool(_parsed_top_narratives(record.get("combined_top_narratives", "")))
         profile_text = (
             "Top narrative coverage is concentrated in the topics below."
-            if top_narratives
+            if has_narratives
             else "No publisher profile description available."
         )
     return html.Div(className="amazon-publishers-profile-summary", children=[html.P(profile_text)])
@@ -1041,14 +1030,6 @@ def _timeline_panel(
     }
     available_sources = _timeline_available_sources(timeline_data)
     selected_sources = _normalize_sources(available_sources, available_sources)
-    options = [
-        {
-            "label": option["label"],
-            "value": option["value"],
-            "disabled": option["value"] not in available_sources,
-        }
-        for option in TRAD_SOME_OPTIONS
-    ]
     return na_panel(
         _timeline_panel_title(selected_sources, trad_metric, some_metric),
         [
@@ -1060,17 +1041,12 @@ def _timeline_panel(
                 className="amazon-publishers-timeline-graph",
             ),
         ],
-        controls=html.Div(
-            className="amazon-publishers-chart-controls",
-            children=[
-                dcc.Checklist(
-                    id="amazon-2026-publisher-timeline-source",
-                    options=options,
-                    value=selected_sources,
-                    inline=True,
-                    className="amazon-publishers-radio",
-                )
-            ],
+        controls=trad_some_controls(
+            "amazon-2026-publisher-timeline-source",
+            available_sources,
+            selected_sources,
+            disable_unavailable=True,
+            hide_when_single=False,
         ),
     )
 
@@ -1110,18 +1086,10 @@ def _topic_area_panel(
     selected_sources = _normalize_sources(available_sources, available_sources)
     panel_title = ref_label("Publications by Topic Area", "P3S2G4")
     rows = _topic_area_rows(payload, selected_sources)
-    controls = html.Div(
-        className="amazon-publishers-chart-controls",
-        style={"display": "none"} if len(available_sources) <= 1 else None,
-        children=[
-            dcc.Checklist(
-                id="amazon-2026-publisher-topic-area-source",
-                options=TRAD_SOME_OPTIONS,
-                value=selected_sources,
-                inline=True,
-                className="amazon-publishers-radio",
-            )
-        ],
+    controls = trad_some_controls(
+        "amazon-2026-publisher-topic-area-source",
+        available_sources,
+        selected_sources,
     )
     data_child = (
         html.Div("No topic area data available.", className="amazon-publishers-empty")
@@ -1249,18 +1217,10 @@ def _narratives_table(rows: list[dict[str, Any]]) -> html.Div:
     title = ref_label("Top Narratives", "P3S2T1")
     available_sources = _narrative_available_sources(rows)
     selected_sources = _normalized_narrative_sources(available_sources, available_sources)
-    controls = html.Div(
-        className="amazon-publishers-chart-controls",
-        style={"display": "none"} if len(available_sources) <= 1 else None,
-        children=[
-            dcc.Checklist(
-                id="amazon-2026-publisher-narratives-source",
-                options=TRAD_SOME_OPTIONS,
-                value=selected_sources,
-                inline=True,
-                className="amazon-publishers-radio",
-            )
-        ],
+    controls = trad_some_controls(
+        "amazon-2026-publisher-narratives-source",
+        available_sources,
+        selected_sources,
     )
     table_rows = _narratives_table_rows(rows, selected_sources)
     table_cols = _narratives_table_columns(selected_sources)
@@ -1456,16 +1416,14 @@ def _combined_narratives_from_record(record: dict[str, Any]) -> list[dict[str, A
 def _top_items_panel(selected: dict[str, Any], top_publications: list[dict[str, Any]]) -> html.Div:
     publisher_uid = str(selected.get("publisher_uid", ""))
 
-    trad_rows = sorted(
-        [r for r in top_publications if str(r.get("publisher_uid", "")) == publisher_uid and str(r.get("Source", "")) == "Trad"],
-        key=lambda r: _num(r, "Reach"),
-        reverse=True,
-    )[:50]
-    some_rows = sorted(
-        [r for r in top_publications if str(r.get("publisher_uid", "")) == publisher_uid and str(r.get("Source", "")) == "SoMe"],
-        key=lambda r: (_num(r, "Engagement"), _num(r, "Reach")),
-        reverse=True,
-    )[:50]
+    trad_rows = [
+        r for r in top_publications
+        if str(r.get("publisher_uid", "")) == publisher_uid and str(r.get("Source", "")) == "Trad"
+    ][:50]
+    some_rows = [
+        r for r in top_publications
+        if str(r.get("publisher_uid", "")) == publisher_uid and str(r.get("Source", "")) == "SoMe"
+    ][:50]
 
     trad_table_data = [
         {
@@ -1517,30 +1475,6 @@ def _dev_inline_label(ref: str, label: str = "") -> html.Div | None:
 # ---------------------------------------------------------------------------
 # Narrative data helpers
 # ---------------------------------------------------------------------------
-
-
-def _top_narratives(value: Any) -> list[dict[str, Any]]:
-    if not value:
-        return []
-    decoded = _decode_jsonish_value(value)
-    if isinstance(decoded, str):
-        return [{"label": decoded, "count": 0}]
-    if not isinstance(decoded, list):
-        return []
-    items = []
-    for item in decoded:
-        if not isinstance(item, dict):
-            continue
-        label = str(item.get("label") or item.get("narrative_label") or item.get("narrative_id") or "").strip()
-        if not label:
-            continue
-        items.append(
-            {
-                "label": label,
-                "count": _coerce_float(item.get("publications", item.get("posts", 0))),
-            }
-        )
-    return items
 
 
 def _parsed_top_narratives(value: Any) -> list[dict[str, Any]]:

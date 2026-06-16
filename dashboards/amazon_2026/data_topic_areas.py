@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from dashboards.amazon_2026.data_common import (
+    NON_CAMPAIGN_VALUES,
     _coalesce_string_expr,
     _optional_numeric_expr,
     _optional_string_expr,
@@ -14,9 +15,7 @@ from dashboards.amazon_2026.fixtures import (
     _topic_area_breakdown_fixture,
     _topic_area_campaigns_fixture,
     _topic_area_media_fixture,
-    _topic_area_narratives_fixture,
     _topic_area_overview_fixture,
-    _topic_area_profile_fixture,
     _topic_area_some_sentiment_timeline_fixture,
     _topic_area_some_weekly_engagement_fixture,
     _topic_area_top_journalists_fixture,
@@ -26,8 +25,6 @@ from dashboards.amazon_2026.fixtures import (
     _topic_area_weekly_reach_fixture,
 )
 from data_sources.bq import safe_query
-
-_NON_CAMPAIGN_VALUES = "('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')"
 
 
 def load_topic_area_breakdown() -> pd.DataFrame:
@@ -132,7 +129,7 @@ def load_topic_area_campaigns() -> pd.DataFrame:
         ) AS trad_negative_pct
       FROM {_table('amazon_2026_trad')} AS t
       WHERE {trad_campaign_expr} IS NOT NULL
-        AND TRIM(LOWER(CAST({trad_campaign_expr} AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+        AND TRIM(LOWER(CAST({trad_campaign_expr} AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
       GROUP BY campaign
     ),
     some_base AS (
@@ -155,7 +152,7 @@ def load_topic_area_campaigns() -> pd.DataFrame:
         SUM({some_engagement_neutral_expr}) AS some_engagement_neutral
       FROM {_table('amazon_2026_some')} AS s
       WHERE {some_campaign_expr} IS NOT NULL
-        AND TRIM(LOWER(CAST({some_campaign_expr} AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+        AND TRIM(LOWER(CAST({some_campaign_expr} AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
       GROUP BY campaign
     )
     SELECT
@@ -459,7 +456,7 @@ def load_topic_area_top_publications() -> pd.DataFrame:
     some_topic_area_expr = _optional_string_expr("s", some_columns, ["Topic_Area"])
     trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Description", "Main_Text", "Post_Content", "Text", "Content"])
+    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
     trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle"])
     some_angle_expr = _optional_string_expr("s", some_columns, ["angle", "dominant_angle"])
 
@@ -526,34 +523,3 @@ def load_topic_area_top_publications() -> pd.DataFrame:
     ORDER BY topic_area, Source, COALESCE(Reach, 0) DESC, COALESCE(Engagement, 0) DESC
     """
     return safe_query(sql, fallback=_topic_area_top_publications_fixture())
-
-
-def load_topic_area_profile() -> pd.DataFrame:
-    """Topic area profile descriptions and key takeaways from the topic areas table."""
-    sql = f"""
-    SELECT
-      topic_area_name AS topic_area,
-      profile,
-      takeaway_1,
-      takeaway_2,
-      takeaway_3
-    FROM {_table('amazon_2026_topic_areas')}
-    """
-    return safe_query(sql, fallback=_topic_area_profile_fixture())
-
-
-def load_topic_area_narratives() -> pd.DataFrame:
-    """Narratives associated with each topic area, from the topic_area_narratives table."""
-    sql = f"""
-    SELECT
-      ta.topic_area_name AS topic_area,
-      n.narrative_id,
-      n.narrative_label,
-      n.connection,
-      n.rationale
-    FROM {_table('amazon_2026_topic_area_narratives')} AS n
-    JOIN {_table('amazon_2026_topic_areas')} AS ta
-      ON n.topic_area_uid = ta.topic_area_uid
-    ORDER BY ta.topic_area_name, n.narrative_id
-    """
-    return safe_query(sql, fallback=_topic_area_narratives_fixture())

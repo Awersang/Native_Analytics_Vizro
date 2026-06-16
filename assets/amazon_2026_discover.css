@@ -1,0 +1,706 @@
+
+#amazon-2026-discover .figure-container {
+  width: 100%;
+}
+
+/* -----------------------------------------------------------------------
+   UMAP collapsible toggle button
+----------------------------------------------------------------------- */
+
+.amazon-discover-umap-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 6px;
+  background: var(--amazon-publishers-surface-alt);
+  color: var(--amazon-publishers-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.amazon-discover-umap-toggle:hover {
+  border-color: var(--amazon-publishers-link);
+  color: var(--amazon-publishers-link);
+}
+
+/* -----------------------------------------------------------------------
+   Search bar
+----------------------------------------------------------------------- */
+
+.amazon-discover-search-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.amazon-discover-search-col {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .amazon-discover-search-row {
+    flex-direction: column;
+  }
+}
+
+.amazon-discover-search {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-dropdown-bg);
+  color: var(--amazon-publishers-text);
+  font-size: 13px;
+}
+
+.amazon-discover-search::placeholder {
+  color: var(--amazon-publishers-text-muted);
+}
+
+.amazon-discover-search:focus {
+  outline: none;
+  border-color: var(--amazon-publishers-link);
+}
+
+.amazon-discover-search-fulltext {
+  display: flex;
+}
+
+/* Render the "Search full text" checkbox as a toggle switch: the native
+   checkbox is kept (for accessibility/callbacks) but made invisible and
+   stretched over the track area; the track/thumb are drawn with label
+   pseudo-elements via :has(). */
+.amazon-discover-search-fulltext label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 40px;
+  min-height: 20px;
+  color: var(--amazon-publishers-text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.amazon-discover-search-fulltext input[type="checkbox"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.amazon-discover-search-fulltext label::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 32px;
+  height: 18px;
+  background: var(--amazon-publishers-border);
+  border-radius: 9px;
+  transform: translateY(-50%);
+  transition: background-color 0.15s ease;
+}
+
+.amazon-discover-search-fulltext label::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--amazon-publishers-surface);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  transition: left 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.amazon-discover-search-fulltext label:has(input:checked)::before {
+  background: var(--amazon-publishers-link);
+}
+
+.amazon-discover-search-fulltext label:has(input:checked)::after {
+  left: 16px;
+}
+
+/* -----------------------------------------------------------------------
+   Filter dropdowns row
+----------------------------------------------------------------------- */
+
+.amazon-discover-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1300px) {
+  .amazon-discover-controls {
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .amazon-discover-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Date range slider
+----------------------------------------------------------------------- */
+
+.amazon-discover-date-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.amazon-discover-date-label {
+  color: var(--amazon-publishers-text-soft);
+  font-size: 12px;
+}
+
+.amazon-discover-rangeslider {
+  padding: 4px 48px 28px;
+}
+
+/* Hide the raw day-index numeric inputs — the month/date marks below the
+   rail are the readable representation of the selected range. */
+.amazon-discover-rangeslider .dash-range-slider-min-input,
+.amazon-discover-rangeslider .dash-range-slider-max-input {
+  display: none !important;
+}
+
+.amazon-discover-rangeslider .rc-slider-rail {
+  background: var(--amazon-publishers-border);
+}
+
+.amazon-discover-rangeslider .rc-slider-track {
+  background: var(--amazon-publishers-link);
+}
+
+.amazon-discover-rangeslider .rc-slider-handle {
+  border-color: var(--amazon-publishers-link);
+  background: var(--amazon-publishers-surface);
+  opacity: 1;
+}
+
+.amazon-discover-rangeslider .rc-slider-handle:focus-visible,
+.amazon-discover-rangeslider .rc-slider-handle:hover {
+  border-color: var(--amazon-publishers-link);
+  box-shadow: 0 0 0 4px var(--amazon-publishers-surface-hover);
+}
+
+.amazon-discover-rangeslider .rc-slider-mark-text {
+  color: var(--amazon-publishers-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* -----------------------------------------------------------------------
+   Time gradient legend (UMAP "Color by time")
+----------------------------------------------------------------------- */
+
+.amazon-discover-time-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  color: var(--amazon-publishers-text-soft);
+  font-size: 11px;
+}
+
+.amazon-discover-time-legend-bar {
+  width: 120px;
+  height: 8px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 4px;
+  background: linear-gradient(to right, #2f7dd1, #35a66b, #d9c23a, #e07040, #c84e5a);
+}
+
+/* -----------------------------------------------------------------------
+   Narrative clusters selection (lasso/box-select filtering)
+----------------------------------------------------------------------- */
+
+.amazon-discover-selection-hint {
+  margin-top: 8px;
+  color: var(--amazon-publishers-text-muted);
+  font-size: 11px;
+}
+
+.amazon-discover-selection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--amazon-publishers-link);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface-alt);
+  color: var(--amazon-publishers-text);
+  font-size: 12px;
+}
+
+.amazon-discover-selection-clear {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface);
+  color: var(--amazon-publishers-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.amazon-discover-selection-clear .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.amazon-discover-selection-clear:hover {
+  border-color: var(--amazon-publishers-link);
+  color: var(--amazon-publishers-link);
+}
+
+/* -----------------------------------------------------------------------
+   Results panel
+----------------------------------------------------------------------- */
+
+.amazon-discover-results-count {
+  margin-bottom: 12px;
+  color: var(--amazon-publishers-text-soft);
+  font-size: 12px;
+}
+
+#amazon-2026-discover-top-publications .dash-table-container,
+#amazon-2026-discover-top-posts .dash-table-container {
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#amazon-2026-discover-top-publications td.cell--changed,
+#amazon-2026-discover-top-publications td.cell--changed *,
+#amazon-2026-discover-top-posts td.cell--changed,
+#amazon-2026-discover-top-posts td.cell--changed * {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  border-top-color: transparent !important;
+  border-bottom-color: transparent !important;
+  border-left-color: transparent !important;
+  border-right-color: transparent !important;
+  animation: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* -----------------------------------------------------------------------
+   Pagination — applies to every dash_table on this page so the current-page
+   digit, arrows and pagination bar always follow --na-text (never pure
+   black/white). Scoped via .dash-table-container so new tables inherit it
+   automatically — do not add per-table-id pagination overrides.
+----------------------------------------------------------------------- */
+
+#amazon-2026-discover .dash-table-container .current-page {
+  color: var(--amazon-publishers-text) !important;
+  background: var(--amazon-publishers-surface) !important;
+  border-color: var(--amazon-publishers-border) !important;
+}
+
+#amazon-2026-discover .dash-table-container .current-page input,
+#amazon-2026-discover .dash-table-container .current-page-shadow,
+#amazon-2026-discover .dash-table-container .current-page-container input,
+#amazon-2026-discover .dash-table-container .page-number,
+#amazon-2026-discover .dash-table-container .page-number *,
+#amazon-2026-discover .dash-table-container .dash-table-pagination,
+#amazon-2026-discover .dash-table-container .dash-table-pagination *,
+#amazon-2026-discover .dash-table-container input.current-page {
+  color: var(--amazon-publishers-text) !important;
+  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  opacity: 1 !important;
+}
+
+#amazon-2026-discover .dash-table-container .first-page,
+#amazon-2026-discover .dash-table-container .previous-page,
+#amazon-2026-discover .dash-table-container .next-page,
+#amazon-2026-discover .dash-table-container .last-page {
+  color: var(--amazon-publishers-text) !important;
+}
+
+/* -----------------------------------------------------------------------
+   Publication details panel
+----------------------------------------------------------------------- */
+
+.amazon-discover-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(360px, 1.6fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .amazon-discover-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.amazon-discover-detail-kpis {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.amazon-discover-detail-kpis-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 480px) {
+  .amazon-discover-detail-kpis-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.amazon-discover-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface-alt);
+}
+
+.amazon-discover-detail-body h3 {
+  margin: 0;
+  color: var(--amazon-publishers-text);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.amazon-discover-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 24px;
+  margin-top: 4px;
+}
+
+.amazon-discover-detail-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.amazon-discover-detail-meta-value {
+  overflow: hidden;
+  color: var(--amazon-publishers-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amazon-discover-detail-fulltext {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface-alt);
+}
+
+.amazon-discover-detail-fulltext summary {
+  color: var(--amazon-publishers-link);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.amazon-discover-detail-fulltext summary::-webkit-details-marker {
+  display: none;
+}
+
+.amazon-discover-detail-fulltext summary::before {
+  content: "▸ ";
+}
+
+.amazon-discover-detail-fulltext[open] summary::before {
+  content: "▾ ";
+}
+
+.amazon-discover-detail-fulltext p {
+  margin: 10px 0 0;
+  color: var(--amazon-publishers-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* -----------------------------------------------------------------------
+   SoMe post body layout
+----------------------------------------------------------------------- */
+
+.amazon-discover-some-post-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.amazon-discover-some-post-author-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.amazon-discover-some-post-author-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.amazon-discover-some-post-author {
+  color: var(--amazon-publishers-text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.amazon-discover-some-post-platform {
+  font-size: 11px;
+}
+
+.amazon-discover-some-post-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.amazon-discover-some-post-date,
+.amazon-discover-some-post-followers {
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+}
+
+.amazon-discover-some-post-content {
+  color: var(--amazon-publishers-text);
+  font-size: 17px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 12px 0;
+  border-top: 1px solid var(--amazon-publishers-border);
+  border-bottom: 1px solid var(--amazon-publishers-border);
+}
+
+.amazon-discover-some-post-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.amazon-discover-some-post-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.amazon-discover-some-post-tag .amazon-publishers-kpi-label {
+  min-width: 72px;
+  flex-shrink: 0;
+}
+
+.amazon-discover-some-post-link {
+  color: var(--amazon-publishers-link);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  align-self: flex-start;
+}
+
+.amazon-discover-some-post-link:hover {
+  text-decoration: underline;
+}
+
+/* -----------------------------------------------------------------------
+   "Use as reference" button (Publication Details panel header)
+----------------------------------------------------------------------- */
+
+.amazon-discover-reference-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-surface-alt);
+  color: var(--amazon-publishers-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.amazon-discover-reference-btn .material-symbols-outlined {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.amazon-discover-reference-btn:hover {
+  border-color: var(--amazon-publishers-link);
+  color: var(--amazon-publishers-link);
+}
+
+/* -----------------------------------------------------------------------
+   Reference article box + similarity slider (next to the search bar)
+----------------------------------------------------------------------- */
+
+.amazon-discover-reference-col {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.amazon-discover-reference-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--amazon-publishers-border);
+  border-radius: 8px;
+  background: var(--amazon-publishers-dropdown-bg);
+}
+
+.amazon-discover-reference-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.amazon-discover-reference-empty {
+  overflow: hidden;
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amazon-discover-reference-item {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.amazon-discover-reference-date {
+  flex: 0 0 auto;
+  color: var(--amazon-publishers-text-muted);
+  font-size: 12px;
+}
+
+.amazon-discover-reference-publisher {
+  flex: 0 0 auto;
+  color: var(--amazon-publishers-text-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.amazon-discover-reference-title {
+  overflow: hidden;
+  color: var(--amazon-publishers-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amazon-discover-reference-clear {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--amazon-publishers-text-muted);
+  cursor: pointer;
+}
+
+.amazon-discover-reference-clear .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.amazon-discover-reference-clear:hover {
+  background: var(--amazon-publishers-surface-hover);
+  color: var(--amazon-publishers-text);
+}
+
+.amazon-discover-similarity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.amazon-discover-similarity-slider {
+  padding: 0 6px 18px;
+}
+
+.amazon-discover-similarity-slider .rc-slider-mark-text {
+  color: var(--amazon-publishers-text-muted);
+  font-size: 11px;
+}
+
+.amazon-discover-similarity-slider .rc-slider-rail {
+  background: var(--amazon-publishers-border);
+}
+
+.amazon-discover-similarity-slider .rc-slider-track {
+  background: var(--amazon-publishers-link);
+}
+
+.amazon-discover-similarity-slider .rc-slider-handle {
+  border-color: var(--amazon-publishers-link);
+  background: var(--amazon-publishers-surface);
+  opacity: 1;
+}
+
+.amazon-discover-similarity-slider .rc-slider-handle:focus-visible,
+.amazon-discover-similarity-slider .rc-slider-handle:hover {
+  border-color: var(--amazon-publishers-link);
+  box-shadow: 0 0 0 4px var(--amazon-publishers-surface-hover);
+}
+
+.amazon-discover-similarity-slider .dash-slider-input,
+.amazon-discover-similarity-slider input[type="number"] {
+  display: none !important;
+}

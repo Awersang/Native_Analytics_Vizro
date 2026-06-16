@@ -355,7 +355,7 @@ def _topic_area_media_sankey_figure(
                 "label": nodes,
                 "color": node_colors,
                 "pad": 14,
-                "thickness": 16,
+                "thickness": 24,
                 "line": {"color": THEME_SURFACE_ALT, "width": 0},
                 "hovertemplate": f"%{{label}}<br>{value_label}: %{{value:,.0f}}<extra></extra>",
             },
@@ -392,7 +392,7 @@ def _topic_area_media_sankey_figure(
     return fig
 
 
-def build_topic_area_media_sankey_section(records: list[dict[str, Any]], basic_metric: str = "publications") -> html.Div:
+def build_topic_area_media_sankey_section(records: list[dict[str, Any]]) -> html.Div:
     available_sources = _topic_area_media_available_sources(records)
     selected_sources = _normalize_sources(available_sources, available_sources)
     controls = html.Div(
@@ -414,7 +414,7 @@ def build_topic_area_media_sankey_section(records: list[dict[str, Any]], basic_m
             dcc.Store(id="amazon-2026-topic-area-media-data", data=records),
             dcc.Graph(
                 id="amazon-2026-topic-area-media-sankey",
-                figure=_topic_area_media_sankey_figure(records, selected_sources, basic_metric),
+                figure=_topic_area_media_sankey_figure(records, selected_sources, "publications"),
                 config={"displayModeBar": False, "responsive": True},
                 className="amazon-publishers-timeline-graph",
             ),

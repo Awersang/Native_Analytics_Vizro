@@ -1,0 +1,119 @@
+<style>
+.demo-bg {
+  background: #1a1f2e;
+  border-radius: 12px;
+  padding: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 40px;
+}
+.label {
+  color: #6b7280;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  margin-bottom: 8px;
+  text-align: center;
+}
+</style>
+
+<div class="demo-bg">
+  <div class="label">single instance</div>
+  <svg width="240" height="130" viewBox="0 0 300 162" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <!-- Clip 1: slides UP, extends 2px PAST centre line into shape2 territory -->
+      <clipPath id="w8c1" clipPathUnits="userSpaceOnUse">
+        <rect x="0" y="162" width="94" height="0">
+          <animate attributeName="y"      values="162;162;0;0;0"   keyTimes="0;0.1;0.5;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.1;0.5;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect>
+      </clipPath>
+      <!-- Clip 2: slides DOWN, starts 2px BEFORE centre line into shape1 territory -->
+      <clipPath id="w8c2" clipPathUnits="userSpaceOnUse">
+        <rect x="90" y="0" width="94" height="0">
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.2;0.6;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect>
+      </clipPath>
+      <clipPath id="w8c3" clipPathUnits="userSpaceOnUse">
+        <rect x="208" y="162" width="92" height="0">
+          <animate attributeName="y"      values="162;162;116;116;116" keyTimes="0;0.35;0.75;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;46;46;46"       keyTimes="0;0.35;0.75;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect>
+      </clipPath>
+    </defs>
+    <g>
+      <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.85;0.95;1" dur="2s" repeatCount="indefinite"/>
+      <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#w8c1)"/>
+      <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#w8c2)"/>
+      <path d="M208,162 A46,46 0 0,1 300,162 Z" fill="white" clip-path="url(#w8c3)"/>
+    </g>
+  </svg>
+
+  <div class="label">three instances (like Vizro)</div>
+  <div style="display:flex; gap:36px; align-items:center;">
+
+    <svg width="120" height="65" viewBox="0 0 300 162" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="a1c1" clipPathUnits="userSpaceOnUse"><rect x="0" y="162" width="94" height="0">
+          <animate attributeName="y"      values="162;162;0;0;0"   keyTimes="0;0.1;0.5;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.1;0.5;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+        <clipPath id="a1c2" clipPathUnits="userSpaceOnUse"><rect x="90" y="0" width="94" height="0">
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.2;0.6;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+        <clipPath id="a1c3" clipPathUnits="userSpaceOnUse"><rect x="208" y="162" width="92" height="0">
+          <animate attributeName="y"      values="162;162;116;116;116" keyTimes="0;0.35;0.75;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;46;46;46"       keyTimes="0;0.35;0.75;0.85;1" dur="2s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+      </defs>
+      <g><animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.85;0.95;1" dur="2s" repeatCount="indefinite"/>
+        <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#a1c1)"/>
+        <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#a1c2)"/>
+        <path d="M208,162 A46,46 0 0,1 300,162 Z" fill="white" clip-path="url(#a1c3)"/>
+      </g>
+    </svg>
+
+    <svg width="120" height="65" viewBox="0 0 300 162" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="a2c1" clipPathUnits="userSpaceOnUse"><rect x="0" y="162" width="94" height="0">
+          <animate attributeName="y"      values="162;162;0;0;0"   keyTimes="0;0.1;0.5;0.85;1" dur="2s" begin="0.35s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.1;0.5;0.85;1" dur="2s" begin="0.35s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+        <clipPath id="a2c2" clipPathUnits="userSpaceOnUse"><rect x="90" y="0" width="94" height="0">
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.2;0.6;0.85;1" dur="2s" begin="0.35s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+        <clipPath id="a2c3" clipPathUnits="userSpaceOnUse"><rect x="208" y="162" width="92" height="0">
+          <animate attributeName="y"      values="162;162;116;116;116" keyTimes="0;0.35;0.75;0.85;1" dur="2s" begin="0.35s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;46;46;46"       keyTimes="0;0.35;0.75;0.85;1" dur="2s" begin="0.35s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+      </defs>
+      <g><animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.85;0.95;1" dur="2s" begin="0.35s" repeatCount="indefinite"/>
+        <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#a2c1)"/>
+        <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#a2c2)"/>
+        <path d="M208,162 A46,46 0 0,1 300,162 Z" fill="white" clip-path="url(#a2c3)"/>
+      </g>
+    </svg>
+
+    <svg width="120" height="65" viewBox="0 0 300 162" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="a3c1" clipPathUnits="userSpaceOnUse"><rect x="0" y="162" width="94" height="0">
+          <animate attributeName="y"      values="162;162;0;0;0"   keyTimes="0;0.1;0.5;0.85;1" dur="2s" begin="0.7s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.1;0.5;0.85;1" dur="2s" begin="0.7s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+        <clipPath id="a3c2" clipPathUnits="userSpaceOnUse"><rect x="90" y="0" width="94" height="0">
+          <animate attributeName="height" values="0;0;162;162;162" keyTimes="0;0.2;0.6;0.85;1" dur="2s" begin="0.7s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+        <clipPath id="a3c3" clipPathUnits="userSpaceOnUse"><rect x="208" y="162" width="92" height="0">
+          <animate attributeName="y"      values="162;162;116;116;116" keyTimes="0;0.35;0.75;0.85;1" dur="2s" begin="0.7s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+          <animate attributeName="height" values="0;0;46;46;46"       keyTimes="0;0.35;0.75;0.85;1" dur="2s" begin="0.7s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 0.2 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1"/>
+        </rect></clipPath>
+      </defs>
+      <g><animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.85;0.95;1" dur="2s" begin="0.7s" repeatCount="indefinite"/>
+        <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#a3c1)"/>
+        <path d="M0,162 L0,46 A46,46 0 0,1 92,46 L92,0 L184,0 L184,116 A46,46 0 0,1 92,116 L92,162 Z" fill="white" clip-path="url(#a3c2)"/>
+        <path d="M208,162 A46,46 0 0,1 300,162 Z" fill="white" clip-path="url(#a3c3)"/>
+      </g>
+    </svg>
+
+  </div>
+</div>

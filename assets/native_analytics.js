@@ -16,6 +16,7 @@
 (function () {
   var COLLAPSE_STORAGE_KEY = "na-nav-collapsed";
   var collapseSyncing = false;
+  var manualToggleInProgress = false;
 
   function isNavCollapsed() {
     try {
@@ -38,12 +39,18 @@
   // icon so the real Dash callback (and its width animation) restores the
   // collapsed state, keeping it in sync across page navigation.
   function syncNavCollapseState() {
-    if (collapseSyncing) {
+    if (collapseSyncing || manualToggleInProgress) {
       return;
     }
     var collapseEl = document.getElementById("collapse-left-side");
     var icon = document.getElementById("collapse-icon");
     if (!collapseEl || !icon) {
+      return;
+    }
+    // Ignore mid-transition mutations: Bootstrap adds a transient "collapsing"
+    // class while animating, during which "show" is briefly absent/present
+    // and doesn't reflect the settled state yet.
+    if (collapseEl.classList.contains("collapsing")) {
       return;
     }
     var isOpen = collapseEl.classList.contains("show");
@@ -132,6 +139,24 @@
     };
     return true;
   }
+
+  // A genuine user click on the collapse icon kicks off Bootstrap's collapse
+  // transition. Suppress syncNavCollapseState() for the duration so it
+  // doesn't see the transient mid-animation state and replay a click that
+  // would cancel the user's toggle out.
+  document.addEventListener(
+    "click",
+    function (event) {
+      var icon = document.getElementById("collapse-icon");
+      if (icon && (event.target === icon || icon.contains(event.target))) {
+        manualToggleInProgress = true;
+        setTimeout(function () {
+          manualToggleInProgress = false;
+        }, 400);
+      }
+    },
+    true
+  );
 
   var lastPath = window.location.pathname;
   var observeNav = function () {

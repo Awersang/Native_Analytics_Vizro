@@ -1,6 +1,7 @@
 """Publishers page — thin wiring layer. All components live in charts_publishers."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pandas as pd
@@ -11,23 +12,14 @@ from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_publishers import (
     _data_bar_styles,
-    _detail_metric_values,
     _details_content,
     _filter_records,
     _header_divider_styles,
     _kpi_cards,
     _narrative_available_sources,
-    _narrative_data_bar_styles,
-    _narrative_header_divider_styles,
-    _narratives_table_columns,
     _narratives_table_rows,
-    _normalized_narrative_sources,
-    _normalize_sources,
     _table_columns,
     _table_records,
-    _timeline_available_sources,
-    _timeline_figure,
-    _timeline_records_from_frame,
     _topic_area_available_sources,
     _topic_area_records_from_frame,
     _topic_area_treemap_figure,
@@ -35,7 +27,20 @@ from dashboards.amazon_2026.charts_publishers import (
     build_publishers_details_section,
     build_publishers_overview_section,
 )
+from dashboards.amazon_2026.charts_shared import (
+    _detail_metric_values,
+    _narrative_data_bar_styles,
+    _narrative_header_divider_styles,
+    _narratives_table_columns,
+    _normalize_sources,
+    _normalized_narrative_sources,
+    _timeline_available_sources,
+    _timeline_figure,
+    _timeline_records_from_frame,
+    register_top_items_callback,
+)
 from dashboards.amazon_2026.data_common import (
+    PARAM_SINK_KEY,
     PUBLISHER_SOME_TIMELINE_KEY,
     PUBLISHER_SOME_TOPIC_AREAS_KEY,
     PUBLISHER_TOPIC_AREAS_KEY,
@@ -43,7 +48,6 @@ from dashboards.amazon_2026.data_common import (
     PUBLISHER_TRAD_TIMELINE_KEY,
     PUBLISHERS_KEY,
 )
-from dashboards.amazon_2026.charts_shared import register_top_items_callback
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
     build_overview_table_response,
@@ -77,7 +81,7 @@ def build_publishers_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-publisher-basic-metric-sink",
-                figure=publisher_basic_metric_sink(data_frame=PUBLISHERS_KEY),
+                figure=publisher_basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
         layout=vm.Flex(direction="column", gap="20px"),
@@ -173,14 +177,20 @@ def _update_author_details(
     some_topic_areas = []
     top_publications = []
     if selected_uid:
-        trad_timeline = _timeline_records_from_frame(_uid_rows(data_manager[PUBLISHER_TRAD_TIMELINE_KEY].load(), selected_uid))
-        some_timeline = _timeline_records_from_frame(_uid_rows(data_manager[PUBLISHER_SOME_TIMELINE_KEY].load(), selected_uid))
-        topic_areas = _topic_area_records_from_frame(_uid_rows(data_manager[PUBLISHER_TOPIC_AREAS_KEY].load(), selected_uid))
-        some_topic_areas = _topic_area_records_from_frame(
-            _uid_rows(data_manager[PUBLISHER_SOME_TOPIC_AREAS_KEY].load(), selected_uid),
-            value_column="post_count",
-        )
-        top_publications = _top_publications_from_frame(_uid_rows(data_manager[PUBLISHER_TOP_PUBLICATIONS_KEY].load(), selected_uid))
+        detail_keys = [
+            PUBLISHER_TRAD_TIMELINE_KEY,
+            PUBLISHER_SOME_TIMELINE_KEY,
+            PUBLISHER_TOPIC_AREAS_KEY,
+            PUBLISHER_SOME_TOPIC_AREAS_KEY,
+            PUBLISHER_TOP_PUBLICATIONS_KEY,
+        ]
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            loaded = list(executor.map(lambda k: _uid_rows(data_manager[k].load(), selected_uid), detail_keys))
+        trad_timeline = _timeline_records_from_frame(loaded[0])
+        some_timeline = _timeline_records_from_frame(loaded[1])
+        topic_areas = _topic_area_records_from_frame(loaded[2])
+        some_topic_areas = _topic_area_records_from_frame(loaded[3], value_column="post_count")
+        top_publications = _top_publications_from_frame(loaded[4])
     return _details_content(
         records or [],
         selected_uid,

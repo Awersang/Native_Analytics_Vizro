@@ -351,30 +351,132 @@ def _top_articles_fixture() -> pd.DataFrame:
     )
 
 
-def _narrative_sentiment_fixture() -> pd.DataFrame:
-    df = _narratives_fixture()
-    rows: list[dict[str, object]] = []
-    for _, row in df.iterrows():
-        rows.extend(
-            [
-                {
-                    "narrative_label": row["narrative_label"],
-                    "sentiment": "positive",
-                    "pct": float(row["positive_pct"]),
-                },
-                {
-                    "narrative_label": row["narrative_label"],
-                    "sentiment": "neutral",
-                    "pct": float(row["neutral_pct"]),
-                },
-                {
-                    "narrative_label": row["narrative_label"],
-                    "sentiment": "negative",
-                    "pct": float(row["negative_pct"]),
-                },
-            ]
-        )
-    return pd.DataFrame(rows)
+def _discover_items_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-16",
+                "Source": "Trad",
+                "Sentiment": "Neutral",
+                "Publisher": "Polskie Radio",
+                "Topic_Area": "Logistics",
+                "Narrative": "Delivery Speed",
+                "Media_Type": "Radio",
+                "Title": "Wiadomosci",
+                "Summary": "This radio report mentions a major global outage affecting Amazon services.",
+                "URL": "https://example.com/article-1",
+                "Reach": 2195000,
+                "Engagement": 0,
+                "Engagement_Positive": 0,
+                "Engagement_Negative": 0,
+                "Engagement_Neutral": 0,
+                "Followers": 0,
+                "Journalist": "Anna Kowalska",
+                "Full_Text": (
+                    "Polskie Radio reports that a major global cloud outage disrupted Amazon Web "
+                    "Services for several hours overnight, affecting retail, streaming, and "
+                    "logistics platforms worldwide. The broadcast notes that Amazon engineers "
+                    "restored service gradually and issued a statement attributing the disruption "
+                    "to a configuration error in one of its European data centres."
+                ),
+                "umap_x": 1.2,
+                "umap_y": 3.4,
+            },
+            {
+                "Date": "2026-03-10",
+                "Source": "Trad",
+                "Sentiment": "Negative",
+                "Publisher": "TVN",
+                "Topic_Area": "Workplace",
+                "Narrative": "Worker Conditions",
+                "Media_Type": "TV",
+                "Title": "Wstawaj, szkoda dnia",
+                "Summary": "Coverage references high-profile public events and Amazon leadership.",
+                "URL": "https://example.com/article-4",
+                "Reach": 1426000,
+                "Engagement": 0,
+                "Engagement_Positive": 0,
+                "Engagement_Negative": 0,
+                "Engagement_Neutral": 0,
+                "Followers": 0,
+                "Journalist": "Piotr Zalewski",
+                "Full_Text": (
+                    "TVN's morning show discusses recent public appearances by Amazon leadership, "
+                    "framing the segment around how executives are responding to ongoing scrutiny "
+                    "of workplace conditions at fulfillment centres across Poland. Guests debate "
+                    "whether recently announced benefits go far enough to address worker concerns."
+                ),
+                "umap_x": -2.6,
+                "umap_y": 0.8,
+            },
+            {
+                "Date": "2026-02-09",
+                "Source": "SoMe",
+                "Sentiment": "Neutral",
+                "Publisher": "Bezprawnik",
+                "Topic_Area": "Logistics",
+                "Narrative": "Delivery Speed",
+                "Media_Type": "facebook",
+                "Title": "FedEx w InPost to jest bardzo szybka opcja dostawy.",
+                "Summary": "",
+                "URL": "https://example.com/post-1",
+                "Reach": 45000,
+                "Engagement": 33915,
+                "Engagement_Positive": 18200,
+                "Engagement_Negative": 4100,
+                "Engagement_Neutral": 11615,
+                "Followers": 128000,
+                "Journalist": "",
+                "Full_Text": "FedEx w InPost to jest bardzo szybka opcja dostawy.",
+                "umap_x": 1.5,
+                "umap_y": 3.1,
+            },
+            {
+                "Date": "2026-01-13",
+                "Source": "SoMe",
+                "Sentiment": "Negative",
+                "Publisher": "Weronika",
+                "Topic_Area": "Pricing",
+                "Narrative": "Prime Subscription Value",
+                "Media_Type": "twitter",
+                "Title": "koniec ery Amazon Prime za darmo, podwyzki cen.",
+                "Summary": "",
+                "URL": "https://example.com/post-2",
+                "Reach": 5200,
+                "Engagement": 3228,
+                "Engagement_Positive": 410,
+                "Engagement_Negative": 2190,
+                "Engagement_Neutral": 628,
+                "Followers": 12400,
+                "Journalist": "",
+                "Full_Text": "koniec ery Amazon Prime za darmo, podwyzki cen.",
+                "umap_x": -3.0,
+                "umap_y": -1.5,
+            },
+            {
+                "Date": "2025-12-16",
+                "Source": "SoMe",
+                "Sentiment": "Neutral",
+                "Publisher": "Krzysztof Stanowski",
+                "Topic_Area": "Brand",
+                "Narrative": "Public Perception",
+                "Media_Type": "twitter",
+                "Title": "Albo @RBrzoska przed chwila ogloszenia o ekspansji.",
+                "Summary": "",
+                "URL": "https://example.com/post-3",
+                "Reach": 89000,
+                "Engagement": 2863,
+                "Engagement_Positive": 1540,
+                "Engagement_Negative": 320,
+                "Engagement_Neutral": 1003,
+                "Followers": 310000,
+                "Journalist": "",
+                "Full_Text": "Albo @RBrzoska przed chwila ogloszenia o ekspansji.",
+                "umap_x": -2.4,
+                "umap_y": 1.2,
+            },
+        ]
+    )
 
 
 def _publishers_fixture() -> pd.DataFrame:
@@ -588,49 +690,6 @@ def _publisher_some_timeline_fixture() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _publisher_narratives_fixture() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "publisher_uid": "p1",
-                "narrative_label": "Prime value and convenience",
-                "trad_publications": 26,
-                "trad_reach": 220000,
-                "some_posts": 34,
-                "some_reach": 142000,
-                "total_reach": 362000,
-            },
-            {
-                "publisher_uid": "p1",
-                "narrative_label": "Seller experience and fees",
-                "trad_publications": 14,
-                "trad_reach": 99000,
-                "some_posts": 12,
-                "some_reach": 44000,
-                "total_reach": 143000,
-            },
-            {
-                "publisher_uid": "p2",
-                "narrative_label": "Seller experience and fees",
-                "trad_publications": 18,
-                "trad_reach": 121000,
-                "some_posts": 19,
-                "some_reach": 62000,
-                "total_reach": 183000,
-            },
-            {
-                "publisher_uid": "p3",
-                "narrative_label": "Marketplace reliability",
-                "trad_publications": 11,
-                "trad_reach": 380000,
-                "some_posts": 0,
-                "some_reach": 0,
-                "total_reach": 380000,
-            },
-        ]
-    )
-
-
 def _publisher_topic_areas_fixture() -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -824,45 +883,60 @@ def _angles_fixture() -> pd.DataFrame:
             {
                 "narrative_id": "n2",
                 "narrative_label": "Seller experience and fees",
+                "angle_id": "a-seller-pricing",
                 "angle_label": "Prime Day pricing debate",
                 "target_sentiment": "Negative",
                 "publications": 34,
+                "trad_publications": 28,
+                "some_posts": 6,
                 "reach": 3_400_000,
                 "popularity": 81.7,
             },
             {
                 "narrative_id": "n2",
                 "narrative_label": "Seller experience and fees",
+                "angle_id": "a-seller-fee-transparency",
                 "angle_label": "Fee transparency complaints",
                 "target_sentiment": "Negative",
                 "publications": 22,
+                "trad_publications": 16,
+                "some_posts": 6,
                 "reach": 1_900_000,
                 "popularity": 54.5,
             },
             {
                 "narrative_id": "n2",
                 "narrative_label": "Seller experience and fees",
+                "angle_id": "a-seller-policy-updates",
                 "angle_label": "Marketplace policy updates",
                 "target_sentiment": "Neutral",
                 "publications": 14,
+                "trad_publications": 9,
+                "some_posts": 5,
                 "reach": 980_000,
                 "popularity": 33.5,
             },
             {
                 "narrative_id": "n1",
                 "narrative_label": "Prime value and convenience",
+                "angle_id": "a-prime-delivery",
                 "angle_label": "Fast delivery reliability",
                 "target_sentiment": "Positive",
                 "publications": 29,
+                "trad_publications": 22,
+                "some_posts": 7,
                 "reach": 2_900_000,
                 "popularity": 63.0,
             },
             {
                 "narrative_id": "n1",
                 "narrative_label": "Prime value and convenience",
+                "angle_id": "a-prime-membership",
                 "angle_label": "Membership value perception",
                 "target_sentiment": "Positive",
                 "publications": 18,
+                "trad_publications": 5,
+                "some_posts": 13,
                 "reach": 1_560_000,
                 "popularity": 51.7,
             },
@@ -872,6 +946,8 @@ def _angles_fixture() -> pd.DataFrame:
                 "angle_label": "Subscription cost concerns",
                 "target_sentiment": "Negative",
                 "publications": 9,
+                "trad_publications": 4,
+                "some_posts": 5,
                 "reach": 410_000,
                 "popularity": 23.0,
             },
@@ -1032,6 +1108,74 @@ def _narrative_trad_sentiment_timeline_fixture() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _narrative_trad_media_type_timeline_fixture() -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    narrative_values = {
+        "Prime value and convenience": {
+            "Online": [20, 18, 24, 22],
+            "Print": [6, 5, 7, 6],
+            "TV": [3, 4, 2, 3],
+        },
+        "Seller experience and fees": {
+            "Online": [14, 16, 12, 15],
+            "Newswire": [5, 6, 4, 5],
+            "Radio": [2, 3, 2, 3],
+        },
+        "Logistics and delivery": {
+            "Online": [9, 11, 8, 10],
+            "Print": [3, 2, 4, 3],
+            "Podcast": [1, 2, 1, 2],
+        },
+    }
+    week_starts = pd.date_range("2026-01-05", periods=4, freq="W-MON")
+    for narrative_label, media_values in narrative_values.items():
+        for media_type, weekly_values in media_values.items():
+            for week_start, publications in zip(week_starts, weekly_values):
+                rows.append(
+                    {
+                        "narrative_label": narrative_label,
+                        "week_start": week_start.date().isoformat(),
+                        "media_type": media_type,
+                        "publications": publications,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _narrative_some_platform_timeline_fixture() -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    narrative_values = {
+        "Prime value and convenience": {
+            "twitter": [28, 24, 30, 26],
+            "facebook": [10, 12, 9, 11],
+            "instagram": [6, 7, 5, 8],
+        },
+        "Seller experience and fees": {
+            "twitter": [16, 18, 14, 17],
+            "facebook": [9, 8, 10, 9],
+            "instagram": [4, 5, 3, 4],
+        },
+        "AWS and cloud services": {
+            "twitter": [8, 7, 9, 10],
+            "facebook": [3, 4, 2, 3],
+            "instagram": [2, 3, 2, 3],
+        },
+    }
+    week_starts = pd.date_range("2026-01-05", periods=4, freq="W-MON")
+    for narrative_label, platform_values in narrative_values.items():
+        for platform, weekly_values in platform_values.items():
+            for week_start, posts in zip(week_starts, weekly_values):
+                rows.append(
+                    {
+                        "narrative_label": narrative_label,
+                        "week_start": week_start.date().isoformat(),
+                        "platform": platform,
+                        "posts": posts,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def _archive_scatter_fixture() -> pd.DataFrame:
     narratives = [
         "Prime value and convenience",
@@ -1150,6 +1294,7 @@ def _narrative_top_publications_fixture() -> pd.DataFrame:
                 "Sentiment": "Positive",
                 "Reach": 2_400_000,
                 "Engagement": 0,
+                "Angle_ID": "a-prime-delivery",
                 "Angle": "Fast delivery reliability",
             },
             {
@@ -1165,6 +1310,7 @@ def _narrative_top_publications_fixture() -> pd.DataFrame:
                 "Sentiment": "Positive",
                 "Reach": 540_000,
                 "Engagement": 15_800,
+                "Angle_ID": "a-prime-membership",
                 "Angle": "Membership value perception",
             },
             {
@@ -1180,6 +1326,7 @@ def _narrative_top_publications_fixture() -> pd.DataFrame:
                 "Sentiment": "Negative",
                 "Reach": 1_900_000,
                 "Engagement": 0,
+                "Angle_ID": "a-seller-pricing",
                 "Angle": "Prime Day pricing debate",
             },
             {
@@ -1195,6 +1342,7 @@ def _narrative_top_publications_fixture() -> pd.DataFrame:
                 "Sentiment": "Negative",
                 "Reach": 2_100_000,
                 "Engagement": 0,
+                "Angle_ID": "",
                 "Angle": "",
             },
             {
@@ -1210,6 +1358,7 @@ def _narrative_top_publications_fixture() -> pd.DataFrame:
                 "Sentiment": "Negative",
                 "Reach": 760_000,
                 "Engagement": 22_400,
+                "Angle_ID": "",
                 "Angle": "",
             },
         ]
@@ -2043,43 +2192,3 @@ def _campaign_narratives_fixture() -> pd.DataFrame:
     )
 
 
-def _topic_area_profile_fixture() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "topic_area": "Prime",
-                "profile": "Prime coverage centers on membership value, delivery speed, and exclusive perks, anchoring Amazon's loyalty narrative across traditional and social media.",
-                "takeaway_1": "Membership value messaging drove strong positive sentiment across publishers.",
-                "takeaway_2": "Delivery speed remained a recurring theme in both traditional and social coverage.",
-                "takeaway_3": "Social media amplified Prime benefits during peak campaign periods.",
-            },
-            {
-                "topic_area": "Marketplace",
-                "profile": "Marketplace coverage focuses on seller policies, third-party seller experience, and platform fairness debates.",
-                "takeaway_1": "Seller policy changes generated mixed sentiment among traditional outlets.",
-                "takeaway_2": "Marketplace fairness remained a recurring topic across social platforms.",
-                "takeaway_3": "Coverage volume was highest among traditional media compared to social.",
-            },
-        ]
-    )
-
-
-def _topic_area_narratives_fixture() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "topic_area": "Prime",
-                "narrative_id": "T001",
-                "narrative_label": "Amazon Under Labor Scrutiny in Poland",
-                "connection": "Negative",
-                "rationale": "Prime's delivery speed messaging contrasts with ongoing scrutiny of warehouse labor conditions supporting that speed.",
-            },
-            {
-                "topic_area": "Marketplace",
-                "narrative_id": "T002",
-                "narrative_label": "Amazon's Pricing Practices Under Scrutiny",
-                "connection": "Negative",
-                "rationale": "Marketplace seller policy coverage may reinforce broader scrutiny of Amazon's pricing and competitive practices.",
-            },
-        ]
-    )

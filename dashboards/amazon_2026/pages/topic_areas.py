@@ -52,8 +52,6 @@ from dashboards.amazon_2026.data_common import (
     TOPIC_AREA_TOP_PUBLISHERS_KEY,
     TOPIC_AREA_TRAD_SENTIMENT_TIMELINE_KEY,
     TOPIC_AREA_WEEKLY_REACH_KEY,
-    TOPIC_AREA_PROFILE_KEY,
-    TOPIC_AREA_NARRATIVES_KEY,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
@@ -230,10 +228,9 @@ def _update_topic_area_details(selected_topic_area: str | None, records: list[di
         top_publishers_key=TOPIC_AREA_TOP_PUBLISHERS_KEY,
         top_journalists_key=TOPIC_AREA_TOP_JOURNALISTS_KEY,
         top_publications_key=TOPIC_AREA_TOP_PUBLICATIONS_KEY,
-        profile_key=TOPIC_AREA_PROFILE_KEY,
-        profile_narratives_key=TOPIC_AREA_NARRATIVES_KEY,
         empty_label="Select a topic area to see details.",
         top_publishers_title="Top Topic Area Publishers",
+        show_top_journalists_inline=True,
         show_profile=False,
     )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from dashboards.amazon_2026.data_common import (
+    PUBLISHER_SEED_CTE,
     _coalesce_string_expr,
     _optional_json_string_expr,
     _optional_numeric_expr,
@@ -11,7 +12,6 @@ from dashboards.amazon_2026.data_common import (
     _table_column_map,
 )
 from dashboards.amazon_2026.fixtures import (
-    _publisher_narratives_fixture,
     _publisher_some_topic_areas_fixture,
     _publisher_some_timeline_fixture,
     _publisher_topic_areas_fixture,
@@ -81,13 +81,7 @@ def load_publishers() -> pd.DataFrame:
     some_engagement_neutral_expr = _optional_numeric_expr("s", some_columns, ["engagement_neutral"])
 
     sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    ),
+    WITH {PUBLISHER_SEED_CTE},
     some_engagement_sentiment AS (
       SELECT
         COALESCE(
@@ -157,13 +151,7 @@ def load_publishers() -> pd.DataFrame:
 
 def load_publisher_trad_timeline() -> pd.DataFrame:
     sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    ),
+    WITH {PUBLISHER_SEED_CTE},
     base AS (
       SELECT
         DATE_TRUNC(DATE(Published_At), WEEK(MONDAY)) AS week_start,
@@ -207,13 +195,7 @@ def load_publisher_some_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
     sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    ),
+    WITH {PUBLISHER_SEED_CTE},
     base AS (
       SELECT
         DATE_TRUNC(DATE(Published_At), WEEK(MONDAY)) AS week_start,
@@ -254,98 +236,12 @@ def load_publisher_some_timeline() -> pd.DataFrame:
     return safe_query(sql, fallback=_publisher_some_timeline_fixture())
 
 
-def load_publisher_narratives() -> pd.DataFrame:
-    trad_columns = _table_column_map("amazon_2026_trad")
-    some_columns = _table_column_map("amazon_2026_some")
-    trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
-    some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
-
-    sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    ),
-    trad_base AS (
-      SELECT
-        COALESCE(
-          NULLIF(TRIM(CAST(t.publisher_uid AS STRING)), ''),
-          p.publisher_uid,
-          TO_HEX(MD5(LOWER(COALESCE(NULLIF(TRIM(CAST(t.publisher_display AS STRING)), ''), NULLIF(TRIM(t.Publisher), ''), 'Unknown'))))
-        ) AS publisher_uid,
-        NULLIF(TRIM({trad_label_expr}), '') AS narrative_label,
-        COUNT(*) AS trad_publications,
-        SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS trad_reach
-      FROM {_table('amazon_2026_trad')} AS t
-      LEFT JOIN publisher_seed AS p
-        ON LOWER(COALESCE(NULLIF(TRIM(CAST(t.publisher_display AS STRING)), ''), NULLIF(TRIM(t.Publisher), ''), 'Unknown')) = p.display_key
-      WHERE NULLIF(TRIM({trad_label_expr}), '') IS NOT NULL
-      GROUP BY 1, 2
-    ),
-    some_base AS (
-      SELECT
-        COALESCE(
-          NULLIF(TRIM(CAST(s.publisher_uid AS STRING)), ''),
-          p.publisher_uid,
-          TO_HEX(MD5(LOWER(COALESCE(NULLIF(TRIM(CAST(s.publisher_display AS STRING)), ''), NULLIF(TRIM(s.Author), ''), 'Unknown'))))
-        ) AS publisher_uid,
-        NULLIF(TRIM({some_label_expr}), '') AS narrative_label,
-        COUNT(*) AS some_posts,
-        SUM(CAST(COALESCE(s.Reach, 0) AS INT64)) AS some_reach
-      FROM {_table('amazon_2026_some')} AS s
-      LEFT JOIN publisher_seed AS p
-        ON LOWER(COALESCE(NULLIF(TRIM(CAST(s.publisher_display AS STRING)), ''), NULLIF(TRIM(s.Author), ''), 'Unknown')) = p.display_key
-      WHERE NULLIF(TRIM({some_label_expr}), '') IS NOT NULL
-      GROUP BY 1, 2
-    ),
-    combined AS (
-      SELECT
-        publisher_uid,
-        narrative_label,
-        trad_publications,
-        trad_reach,
-        0 AS some_posts,
-        0 AS some_reach
-      FROM trad_base
-      UNION ALL
-      SELECT
-        publisher_uid,
-        narrative_label,
-        0 AS trad_publications,
-        0 AS trad_reach,
-        some_posts,
-        some_reach
-      FROM some_base
-    )
-    SELECT
-      publisher_uid,
-      narrative_label,
-      SUM(trad_publications) AS trad_publications,
-      SUM(trad_reach) AS trad_reach,
-      SUM(some_posts) AS some_posts,
-      SUM(some_reach) AS some_reach,
-      SUM(trad_reach + some_reach) AS total_reach
-    FROM combined
-    GROUP BY publisher_uid, narrative_label
-    ORDER BY total_reach DESC, trad_publications DESC, some_posts DESC, narrative_label
-    """
-    return safe_query(sql, fallback=_publisher_narratives_fixture())
-
-
 def load_publisher_topic_areas() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     topic_area_expr = _optional_string_expr("t", trad_columns, ["Topic Area", "topic_area"])
 
     sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    )
+    WITH {PUBLISHER_SEED_CTE}
     SELECT
       COALESCE(
         NULLIF(TRIM(CAST(t.publisher_uid AS STRING)), ''),
@@ -368,13 +264,7 @@ def load_publisher_some_topic_areas() -> pd.DataFrame:
     topic_area_expr = _optional_string_expr("s", some_columns, ["Topic Area", "topic_area"])
 
     sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    )
+    WITH {PUBLISHER_SEED_CTE}
     SELECT
       COALESCE(
         NULLIF(TRIM(CAST(s.publisher_uid AS STRING)), ''),
@@ -402,16 +292,10 @@ def load_publisher_top_publications() -> pd.DataFrame:
     some_pub_uid_expr = _optional_string_expr("s", some_columns, ["publisher_uid"])
     some_pub_display_expr = _optional_string_expr("s", some_columns, ["publisher_display", "Publisher_Display"])
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Description", "Main_Text", "Post_Content", "Text", "Content"])
+    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
 
     sql = f"""
-    WITH publisher_seed AS (
-      SELECT
-        LOWER(COALESCE(NULLIF(TRIM(display_name), ''), publisher_uid)) AS display_key,
-        ANY_VALUE(publisher_uid) AS publisher_uid
-      FROM {_table('amazon_2026_publishers')}
-      GROUP BY display_key
-    ),
+    WITH {PUBLISHER_SEED_CTE},
     trad_pubs AS (
       SELECT
         COALESCE(

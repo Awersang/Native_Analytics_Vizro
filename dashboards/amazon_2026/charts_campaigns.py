@@ -1,6 +1,7 @@
 """Campaigns page — campaign timeline chart and campaign details section."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -20,8 +21,6 @@ from dashboards.amazon_2026.charts_publishers import (
     _table_records,
 )
 from dashboards.amazon_2026.charts_narratives import (
-    _TOP_TABLE_STYLE_CELL,
-    _TOP_TABLE_STYLE_HEADER,
     _TOP_TABLES_PAGE_SIZE,
     _build_shared_x_range,
     _narrative_detail_combined_weekly_figure,
@@ -34,10 +33,13 @@ from dashboards.amazon_2026.charts_narratives import (
 )
 from dashboards.amazon_2026.charts_shared import (
     ACCENT_SOME,
+    ACCENT_TRAD,
     TABLE_STYLE_CELL,
     TABLE_STYLE_DATA,
     TABLE_STYLE_DATA_CONDITIONAL,
     TABLE_STYLE_HEADER,
+    TOP_TABLE_STYLE_CELL,
+    TOP_TABLE_STYLE_HEADER,
     THEME_BORDER,
     THEME_GRID,
     THEME_SURFACE,
@@ -53,7 +55,9 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_records_from_frame,
     build_overview_table_section,
     build_top_items_panel,
+    load_and_filter,
     na_panel,
+    trad_some_controls,
 )
 from dashboards.amazon_2026.data_common import (
     CAMPAIGN_NARRATIVES_KEY,
@@ -72,7 +76,26 @@ from dashboards.amazon_2026.dev_ids import ref_label
 
 MIN_BAR_SPAN_DAYS = 4
 ROW_HEIGHT_PX = 36
-CHART_PADDING_PX = 90
+CHART_PADDING_PX = 110
+
+# Campaign timeline bars are colored by which source drove most of the
+# campaign's reach: Trad-led (blue), SoMe-led (orange), or Mixed (neither
+# side has a clear majority) — a third accent distinct from ACCENT_TRAD/SOME.
+ACCENT_MIXED = "#8c6fc9"
+_MIXED_SHARE_BAND = (0.35, 0.65)
+
+
+def _campaign_bar_color(trad_reach: float, some_reach: float) -> str:
+    total = trad_reach + some_reach
+    if total <= 0:
+        return ACCENT_MIXED
+    trad_share = trad_reach / total
+    low, high = _MIXED_SHARE_BAND
+    if trad_share >= high:
+        return ACCENT_TRAD
+    if trad_share <= low:
+        return ACCENT_SOME
+    return ACCENT_MIXED
 
 
 def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
@@ -101,10 +124,15 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
     df["start_date"] = pd.to_datetime(df["start_date"])
     df["end_date"] = pd.to_datetime(df["end_date"])
     df["total_reach"] = pd.to_numeric(df.get("total_reach", 0), errors="coerce").fillna(0)
+    df["trad_reach"] = pd.to_numeric(df.get("trad_reach", 0), errors="coerce").fillna(0)
+    df["some_reach"] = pd.to_numeric(df.get("some_reach", 0), errors="coerce").fillna(0)
     df = df.sort_values("start_date")
 
     min_span = pd.Timedelta(days=MIN_BAR_SPAN_DAYS)
     span = (df["end_date"] - df["start_date"]).clip(lower=min_span)
+    bar_colors = [
+        _campaign_bar_color(row["trad_reach"], row["some_reach"]) for _, row in df.iterrows()
+    ]
 
     fig.add_trace(
         go.Bar(
@@ -112,8 +140,12 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
             x=span.dt.total_seconds() * 1000,
             y=df["campaign"],
             orientation="h",
-            marker=dict(color=ACCENT_SOME),
-            text=[f"reach: {value:,.0f}" for value in df["total_reach"]],
+            marker=dict(
+                color=bar_colors,
+                line=dict(color=THEME_SURFACE, width=1),
+                cornerradius=6,
+            ),
+            text=[f"{value:,.0f}" for value in df["total_reach"]],
             textposition="outside",
             textfont=dict(color=THEME_TEXT, size=12),
             customdata=df.apply(
@@ -121,23 +153,54 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
                     row["start_date"].strftime("%d %b %Y"),
                     row["end_date"].strftime("%d %b %Y"),
                     row["total_reach"],
+                    row["trad_reach"],
+                    row["some_reach"],
                 ],
                 axis=1,
             ).tolist(),
             hovertemplate=(
                 "<b>%{y}</b><br>"
                 "%{customdata[0]} – %{customdata[1]}<br>"
-                "Reach: %{customdata[2]:,.0f}<extra></extra>"
+                "Reach: %{customdata[2]:,.0f}"
+                " (Trad %{customdata[3]:,.0f} / SoMe %{customdata[4]:,.0f})"
+                "<extra></extra>"
             ),
+            showlegend=False,
         )
     )
+
+    legend_entries = [
+        ("Trad-led", ACCENT_TRAD),
+        ("SoMe-led", ACCENT_SOME),
+        ("Mixed", ACCENT_MIXED),
+    ]
+    for name, color in legend_entries:
+        fig.add_trace(
+            go.Bar(
+                x=[None],
+                y=[None],
+                name=name,
+                marker=dict(color=color),
+                showlegend=True,
+                hoverinfo="skip",
+            )
+        )
 
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=THEME_TEXT),
-        margin=dict(l=12, r=80, t=12, b=12),
-        showlegend=False,
+        margin=dict(l=12, r=80, t=36, b=12),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(color=THEME_TEXT, size=12),
+            bgcolor="rgba(0,0,0,0)",
+        ),
         bargap=0.35,
         xaxis=dict(
             type="date",
@@ -313,15 +376,7 @@ def _campaign_associated_narratives_table(
     filter_column: str = "campaign",
     narratives_key: str = CAMPAIGN_NARRATIVES_KEY,
 ) -> html.Div:
-    try:
-        df = data_manager[narratives_key].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and filter_column in df.columns:
-        df = df[df[filter_column] == selected_campaign]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(narratives_key, filter_column, selected_campaign)
 
     if df.empty:
         return html.Div("No associated narratives available.", className="amazon-publishers-empty")
@@ -439,6 +494,7 @@ def _campaign_detail_content(
     empty_label: str = "Select a campaign to see details.",
     top_publishers_title: str = "Top Campaign Publishers",
     show_top_journalists: bool = True,
+    show_top_journalists_inline: bool = False,
     show_profile: bool = True,
 ) -> html.Div:
     if not selected_campaign:
@@ -452,14 +508,34 @@ def _campaign_detail_content(
             kpi_groups.append(html.Div(className="amazon-publishers-detail-kpis", children=trad_kpis))
         if some_kpis:
             kpi_groups.append(html.Div(className="amazon-publishers-detail-kpis", children=some_kpis))
+    top_publishers_panel = _campaign_top_publishers_section(
+        selected_campaign,
+        id_prefix,
+        ref_prefix,
+        filter_column=filter_column,
+        top_publishers_key=top_publishers_key,
+        title=top_publishers_title,
+    )
+    top_journalists_panel = (
+        _campaign_top_journalists_section(
+            selected_campaign,
+            id_prefix,
+            ref_prefix,
+            filter_column=filter_column,
+            top_journalists_key=top_journalists_key,
+        )
+        if show_top_journalists
+        else None
+    )
+
     summary_children = [
         *kpi_groups,
-        _campaign_top_publishers_section(
-            selected_campaign, id_prefix, ref_prefix,
-            filter_column=filter_column,
-            top_publishers_key=top_publishers_key,
-            title=top_publishers_title,
-        ),
+        html.Div(
+            className="amazon-narrative-tables-row",
+            children=[top_publishers_panel, top_journalists_panel],
+        )
+        if show_top_journalists_inline and top_journalists_panel is not None
+        else top_publishers_panel,
     ]
     if show_profile:
         children.append(
@@ -500,12 +576,8 @@ def _campaign_detail_content(
                 some_sentiment_key=some_sentiment_key,
                 narratives_key=narratives_key,
             ),
-            _campaign_top_journalists_section(
-                selected_campaign, id_prefix, ref_prefix,
-                filter_column=filter_column,
-                top_journalists_key=top_journalists_key,
-            )
-            if show_top_journalists
+            top_journalists_panel
+            if show_top_journalists and not show_top_journalists_inline
             else None,
             _campaign_top_items_panel(
                 selected_campaign, id_prefix, ref_prefix,
@@ -526,23 +598,8 @@ def _campaign_detail_timeline_section(
     weekly_reach_key: str = CAMPAIGN_WEEKLY_REACH_KEY,
     some_weekly_engagement_key: str = CAMPAIGN_SOME_WEEKLY_ENGAGEMENT_KEY,
 ) -> html.Div:
-    try:
-        trad_df = data_manager[weekly_reach_key].load()
-    except Exception:
-        trad_df = pd.DataFrame()
-    try:
-        some_df = data_manager[some_weekly_engagement_key].load()
-    except Exception:
-        some_df = pd.DataFrame()
-
-    if not trad_df.empty and filter_column in trad_df.columns:
-        trad_df = trad_df[trad_df[filter_column] == selected_campaign]
-    else:
-        trad_df = pd.DataFrame()
-    if not some_df.empty and filter_column in some_df.columns:
-        some_df = some_df[some_df[filter_column] == selected_campaign]
-    else:
-        some_df = pd.DataFrame()
+    trad_df = load_and_filter(weekly_reach_key, filter_column, selected_campaign)
+    some_df = load_and_filter(some_weekly_engagement_key, filter_column, selected_campaign)
 
     x_range = _build_shared_x_range(trad_df, some_df)
 
@@ -554,27 +611,12 @@ def _campaign_detail_timeline_section(
         x_range=x_range, dtick=7 * 24 * 60 * 60 * 1000,
     )
 
-    return html.Div(
-        className="na-panel",
-        children=[
-            html.Div(
-                style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "flexWrap": "wrap", "gap": "8px"},
-                children=[
-                    html.H3(
-                        id=f"{id_prefix}-detail-timeline-title",
-                        children=ref_label("Publications and Posts", f"{ref_prefix}G1"),
-                        className="na-element-title",
-                        style={"margin": "0"},
-                    ),
-                    dcc.Checklist(
-                        id=f"{id_prefix}-detail-timeline-source",
-                        options=TRAD_SOME_OPTIONS,
-                        value=["Trad", "SoMe"],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                ],
-            ),
+    available_sources = _timeline_available_sources({"has_trad": not trad_df.empty, "has_some": not some_df.empty})
+    selected_sources = _normalize_sources(available_sources, available_sources)
+
+    return na_panel(
+        html.Span(id=f"{id_prefix}-detail-timeline-title", children=ref_label("Publications and Posts", f"{ref_prefix}G1")),
+        [
             dcc.Store(
                 id=f"{id_prefix}-detail-timeline-store",
                 data={
@@ -590,7 +632,22 @@ def _campaign_detail_timeline_section(
                 style={"height": "360px"},
             ),
         ],
+        controls=trad_some_controls(
+            f"{id_prefix}-detail-timeline-source",
+            available_sources,
+            selected_sources,
+            disable_unavailable=True,
+            hide_when_single=False,
+        ),
     )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_narrative_label(label: Any) -> str:
+    """Normalize a narrative label for case/whitespace-insensitive matching across datasets."""
+    return str(label).strip().casefold()
 
 
 def _campaign_associated_narrative_labels(
@@ -599,14 +656,11 @@ def _campaign_associated_narrative_labels(
     filter_column: str = "campaign",
     narratives_key: str = CAMPAIGN_NARRATIVES_KEY,
 ) -> list[str]:
-    try:
-        df = data_manager[narratives_key].load()
-    except Exception:
-        df = pd.DataFrame()
-    if df.empty or filter_column not in df.columns or "narrative_label" not in df.columns:
+    df = load_and_filter(narratives_key, filter_column, selected_campaign)
+    if df.empty or "narrative_label" not in df.columns:
         return []
     labels = (
-        df[df[filter_column] == selected_campaign]["narrative_label"]
+        df["narrative_label"]
         .dropna()
         .astype(str)
         .str.strip()
@@ -624,23 +678,8 @@ def _campaign_sentiment_timeline_section(
     some_sentiment_key: str = CAMPAIGN_SOME_SENTIMENT_TIMELINE_KEY,
     narratives_key: str | None = None,
 ) -> html.Div:
-    try:
-        trad_df = data_manager[trad_sentiment_key].load()
-    except Exception:
-        trad_df = pd.DataFrame()
-    try:
-        some_df = data_manager[some_sentiment_key].load()
-    except Exception:
-        some_df = pd.DataFrame()
-
-    if not trad_df.empty and filter_column in trad_df.columns:
-        trad_df = trad_df[trad_df[filter_column] == selected_campaign]
-    else:
-        trad_df = pd.DataFrame()
-    if not some_df.empty and filter_column in some_df.columns:
-        some_df = some_df[some_df[filter_column] == selected_campaign]
-    else:
-        some_df = pd.DataFrame()
+    trad_df = load_and_filter(trad_sentiment_key, filter_column, selected_campaign)
+    some_df = load_and_filter(some_sentiment_key, filter_column, selected_campaign)
 
     trad_metric, some_metric = "publications", "posts"
     timeline_data = {
@@ -659,6 +698,7 @@ def _campaign_sentiment_timeline_section(
             selected_campaign, filter_column=filter_column, narratives_key=narratives_key
         )
     if narrative_labels:
+        normalized_labels = {_normalize_narrative_label(label) for label in narrative_labels}
         try:
             narrative_trad_df = data_manager[NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY].load()
         except Exception:
@@ -667,20 +707,49 @@ def _campaign_sentiment_timeline_section(
             narrative_some_df = data_manager[NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY].load()
         except Exception:
             narrative_some_df = pd.DataFrame()
+
         if not narrative_trad_df.empty and "narrative_label" in narrative_trad_df.columns:
-            narrative_trad_df = narrative_trad_df[narrative_trad_df["narrative_label"].isin(narrative_labels)]
+            trad_matches = narrative_trad_df["narrative_label"].map(_normalize_narrative_label).isin(
+                normalized_labels
+            )
+            matched_trad_df = narrative_trad_df[trad_matches]
         else:
-            narrative_trad_df = pd.DataFrame()
+            matched_trad_df = pd.DataFrame()
+
         if not narrative_some_df.empty and "narrative_label" in narrative_some_df.columns:
-            narrative_some_df = narrative_some_df[narrative_some_df["narrative_label"].isin(narrative_labels)]
+            some_matches = narrative_some_df["narrative_label"].map(_normalize_narrative_label).isin(
+                normalized_labels
+            )
+            matched_some_df = narrative_some_df[some_matches]
         else:
-            narrative_some_df = pd.DataFrame()
+            matched_some_df = pd.DataFrame()
+
+        if matched_trad_df.empty and matched_some_df.empty:
+            available_trad_labels = (
+                sorted(narrative_trad_df["narrative_label"].dropna().unique().tolist())
+                if not narrative_trad_df.empty and "narrative_label" in narrative_trad_df.columns
+                else []
+            )
+            available_some_labels = (
+                sorted(narrative_some_df["narrative_label"].dropna().unique().tolist())
+                if not narrative_some_df.empty and "narrative_label" in narrative_some_df.columns
+                else []
+            )
+            logger.warning(
+                "Campaign %r: associated narrative labels %r did not match any narrative sentiment "
+                "timeline rows. Available trad labels: %r. Available some labels: %r.",
+                selected_campaign,
+                narrative_labels,
+                available_trad_labels,
+                available_some_labels,
+            )
+
         timeline_data["narrative_labels"] = narrative_labels
         timeline_data["narrative_trad_timeline"] = _timeline_records_from_frame(
-            narrative_trad_df, id_field="narrative_label"
+            matched_trad_df, id_field="narrative_label"
         )
         timeline_data["narrative_some_timeline"] = _timeline_records_from_frame(
-            narrative_some_df, id_field="narrative_label"
+            matched_some_df, id_field="narrative_label"
         )
 
     available_sources = _timeline_available_sources(timeline_data)
@@ -731,15 +800,7 @@ def _campaign_top_publishers_section(
     top_publishers_key: str = CAMPAIGN_TOP_PUBLISHERS_KEY,
     title: str = "Top Campaign Publishers",
 ) -> html.Div:
-    try:
-        df = data_manager[top_publishers_key].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and filter_column in df.columns:
-        df = df[df[filter_column] == selected_campaign]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(top_publishers_key, filter_column, selected_campaign)
 
     records = [_json_safe(row) for row in df.to_dict("records")]
     table_rows = _top_publishers_table_rows(records, "Trad")
@@ -759,8 +820,8 @@ def _campaign_top_publishers_section(
                 cell_selectable=False,
                 style_as_list_view=True,
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell=_TOP_TABLE_STYLE_CELL,
-                style_header=_TOP_TABLE_STYLE_HEADER,
+                style_cell=TOP_TABLE_STYLE_CELL,
+                style_header=TOP_TABLE_STYLE_HEADER,
                 style_data_conditional=_top_publishers_data_bar_styles(table_rows),
                 css=[{"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"}],
             ),
@@ -791,15 +852,7 @@ def _campaign_top_journalists_section(
     filter_column: str = "campaign",
     top_journalists_key: str = CAMPAIGN_TOP_JOURNALISTS_KEY,
 ) -> html.Div:
-    try:
-        df = data_manager[top_journalists_key].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and filter_column in df.columns:
-        df = df[df[filter_column] == selected_campaign]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(top_journalists_key, filter_column, selected_campaign)
 
     records = [_json_safe(row) for row in df.to_dict("records")]
     table_rows = _top_journalists_table_rows(records)
@@ -818,8 +871,8 @@ def _campaign_top_journalists_section(
                 cell_selectable=False,
                 style_as_list_view=True,
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell=_TOP_TABLE_STYLE_CELL,
-                style_header=_TOP_TABLE_STYLE_HEADER,
+                style_cell=TOP_TABLE_STYLE_CELL,
+                style_header=TOP_TABLE_STYLE_HEADER,
                 style_data_conditional=_top_journalists_data_bar_styles(table_rows),
                 css=[{"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"}],
             ),
@@ -838,15 +891,7 @@ def _campaign_top_items_panel(
     filter_column: str = "campaign",
     top_publications_key: str = CAMPAIGN_TOP_PUBLICATIONS_KEY,
 ) -> html.Div:
-    try:
-        df = data_manager[top_publications_key].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and filter_column in df.columns:
-        df = df[df[filter_column] == selected_campaign]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(top_publications_key, filter_column, selected_campaign)
 
     records = [_json_safe(row) for row in df.to_dict("records")]
     trad_rows = [r for r in records if str(r.get("Source", "")) == "Trad"]

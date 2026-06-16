@@ -33,7 +33,7 @@ def build_all_pages(
     _ctx: BuildContext,
     base_path: str,
 ) -> list[vm.Page]:
-    set_dev_mode(False)
+    set_dev_mode(True)
     return [
         build_overview_page(base_path),
         build_topic_areas_page(base_path),

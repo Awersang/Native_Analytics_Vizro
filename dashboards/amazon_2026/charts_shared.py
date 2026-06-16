@@ -206,6 +206,7 @@ def topic_area_color_map(topic_areas: list[str]) -> dict[str, str]:
 
 TOOLTIP_CSS = [
     {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
+    {"selector": "td.focused, td.focused *", "rule": "box-shadow: none !important; outline: none !important; border-color: inherit !important;"},
     {
         "selector": ".dash-header",
         "rule": "white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;",
@@ -451,13 +452,13 @@ def _narrative_data_bar_styles(table_data: list[dict[str, Any]], columns: list[d
         },
         {
             "if": {"state": "active"},
-            "backgroundColor": "var(--bs-primary-bg-subtle)",
-            "border": "1px solid var(--bs-primary-bg-subtle)",
+            "backgroundColor": "transparent",
+            "border": f"1px solid {THEME_BORDER}",
         },
         {
             "if": {"state": "selected"},
-            "backgroundColor": "var(--bs-primary-bg-subtle)",
-            "border": "1px solid var(--bs-primary-bg-subtle)",
+            "backgroundColor": "transparent",
+            "border": f"1px solid {THEME_BORDER}",
         },
     ]
     first_some_column = _first_narrative_some_column(columns)
@@ -505,6 +506,8 @@ TRAD_SOME_OPTIONS = [
     {"label": "Trad", "value": "Trad"},
     {"label": "SoMe", "value": "SoMe"},
 ]
+
+SENTIMENT_OPTIONS = [{"label": value, "value": value} for value in SENTIMENT_ORDER]
 
 
 def trad_some_controls(
@@ -1473,8 +1476,17 @@ TABLE_STYLE_DATA_CONDITIONAL = [
     {"if": {"row_index": "odd"}, "backgroundColor": THEME_ROW_ODD},
     {
         "if": {"state": "active"},
-        "backgroundColor": "var(--bs-primary-bg-subtle)",
-        "border": "1px solid var(--bs-primary-bg-subtle)",
+        "backgroundColor": "transparent",
+        "border": f"1px solid {THEME_BORDER}",
+        "boxShadow": "none",
+        "outline": "none",
+    },
+    {
+        "if": {"state": "selected"},
+        "backgroundColor": "transparent",
+        "border": f"1px solid {THEME_BORDER}",
+        "boxShadow": "none",
+        "outline": "none",
     },
 ]
 
@@ -1488,7 +1500,7 @@ TOP_POSTS_STYLE_DATA_CONDITIONAL = TABLE_STYLE_DATA_CONDITIONAL + [
 ]
 
 ROW_SELECTED_STYLE = {
-    "backgroundColor": "var(--bs-primary-bg-subtle)",
+    "backgroundColor": "transparent",
 }
 
 

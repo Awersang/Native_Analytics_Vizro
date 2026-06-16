@@ -1,38 +1,3 @@
-/* -----------------------------------------------------------------------
-   Topic Areas page — CSS variable scope.
-   The --amazon-publishers-* variables are defined on the publishers page
-   only, so we re-declare them here so the shared Python components
-   (na_panel, chart controls, treemap theming, etc.) resolve correctly.
------------------------------------------------------------------------ */
-
-/* Token aliases — values are defined once (light + dark) in
-   assets/native_analytics.css as --na-*. Kept under the
-   --amazon-publishers-* names here so existing component classes/Python
-   style dicts on this page keep working unchanged. */
-#amazon-2026-topic-areas {
-  --amazon-publishers-text: var(--na-text);
-  --amazon-publishers-text-muted: var(--na-text-muted);
-  --amazon-publishers-text-soft: var(--na-text-soft);
-  --amazon-publishers-border: var(--na-border);
-  --amazon-publishers-surface: var(--na-surface);
-  --amazon-publishers-surface-alt: var(--na-surface-alt);
-  --amazon-publishers-surface-hover: var(--na-surface-hover);
-  --amazon-publishers-row-even: var(--na-row-even);
-  --amazon-publishers-row-odd: var(--na-row-odd);
-  --amazon-publishers-header-bg: var(--na-header-bg);
-  --amazon-publishers-grid: var(--na-grid);
-  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
-  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
-  --amazon-publishers-link: var(--na-link);
-  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
-  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
-  --amazon-publishers-bar-positive: var(--na-bar-positive);
-  --amazon-publishers-bar-negative: var(--na-bar-negative);
-  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
-  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
-  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
-  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
-}
 
 #amazon-2026-topic-areas .figure-container {
   width: 100%;
@@ -41,4 +6,18 @@
 .loading-container:has(#amazon-2026-topic-area-basic-metric-sink),
 #amazon-2026-topic-area-basic-metric-sink {
   display: none !important;
+}
+
+/* Plotly hardcodes sankey node labels to white text with a dark halo,
+   ignoring the trace textfont. That reads fine on the dark theme but is
+   a glaring white-on-light glow in the light theme, so override both
+   the fill and the halo for light mode and just drop the halo in dark
+   mode. */
+#amazon-2026-topic-area-media-sankey-section .node-label {
+  text-shadow: none !important;
+}
+
+:root:not([data-bs-theme="dark"]) #amazon-2026-topic-area-media-sankey-section .node-label {
+  fill: var(--na-text) !important;
+  fill-opacity: 1 !important;
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import _coalesce_string_expr, _optional_string_expr, _table, _table_column_map
+from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, _coalesce_string_expr, _optional_string_expr, _table, _table_column_map
 from dashboards.amazon_2026.fixtures import (
     _campaign_narratives_fixture,
     _campaign_profile_fixture,
@@ -16,8 +16,6 @@ from dashboards.amazon_2026.fixtures import (
     _campaign_weekly_reach_fixture,
 )
 from data_sources.bq import safe_query
-
-_NON_CAMPAIGN_VALUES = "('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')"
 
 
 def load_campaign_timeline() -> pd.DataFrame:
@@ -63,7 +61,7 @@ def load_campaign_timeline() -> pd.DataFrame:
       COUNT(*) AS items
     FROM combined
     WHERE campaign IS NOT NULL
-      AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+      AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     GROUP BY campaign
     HAVING SUM(reach) >= 2000
     ORDER BY start_date, campaign
@@ -90,7 +88,7 @@ def load_campaign_weekly_reach() -> pd.DataFrame:
         SELECT DISTINCT campaign
         FROM all_weekly
         WHERE campaign IS NOT NULL
-          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ),
     all_weeks AS (
         SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
@@ -132,7 +130,7 @@ def load_campaign_some_weekly_engagement() -> pd.DataFrame:
         SELECT DISTINCT campaign
         FROM all_weekly
         WHERE campaign IS NOT NULL
-          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ),
     all_weeks AS (
         SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
@@ -178,7 +176,7 @@ def load_campaign_trad_sentiment_timeline() -> pd.DataFrame:
         SELECT DISTINCT campaign
         FROM all_weekly
         WHERE campaign IS NOT NULL
-          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ),
     all_weeks AS (
         SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
@@ -236,7 +234,7 @@ def load_campaign_some_sentiment_timeline() -> pd.DataFrame:
         SELECT DISTINCT campaign
         FROM all_weekly
         WHERE campaign IS NOT NULL
-          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ),
     all_weeks AS (
         SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
@@ -308,11 +306,11 @@ def load_campaign_top_publishers() -> pd.DataFrame:
     )
     SELECT 'Trad' AS source, campaign, publisher, media_type_platform, reach, publications
     FROM trad_base
-    WHERE TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+    WHERE TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     UNION ALL
     SELECT 'SoMe' AS source, campaign, publisher, media_type_platform, reach, publications
     FROM some_base
-    WHERE TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+    WHERE TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ORDER BY campaign, source, reach DESC
     """
     return safe_query(sql, fallback=_campaign_top_publishers_fixture())
@@ -334,7 +332,7 @@ def load_campaign_top_journalists() -> pd.DataFrame:
         SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS reach
       FROM {_table('amazon_2026_trad')} AS t
       WHERE {trad_campaign_expr} IS NOT NULL
-        AND TRIM(LOWER(CAST({trad_campaign_expr} AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+        AND TRIM(LOWER(CAST({trad_campaign_expr} AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
       GROUP BY 1, 2
     )
     SELECT campaign, journalist, publications, reach
@@ -357,7 +355,7 @@ def load_campaign_top_publications() -> pd.DataFrame:
     )
     trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Description", "Main_Text", "Post_Content", "Text", "Content"])
+    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
     trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle"])
     some_angle_expr = _optional_string_expr("s", some_columns, ["angle", "dominant_angle"])
 
@@ -384,7 +382,7 @@ def load_campaign_top_publications() -> pd.DataFrame:
       FROM {_table('amazon_2026_trad')} AS t
       WHERE t.Published_At IS NOT NULL
         AND {trad_campaign_expr} IS NOT NULL
-        AND TRIM(LOWER(CAST({trad_campaign_expr} AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+        AND TRIM(LOWER(CAST({trad_campaign_expr} AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ),
     some_pubs AS (
       SELECT
@@ -408,7 +406,7 @@ def load_campaign_top_publications() -> pd.DataFrame:
       FROM {_table('amazon_2026_some')} AS s
       WHERE s.Published_At IS NOT NULL
         AND {some_campaign_expr} IS NOT NULL
-        AND TRIM(LOWER(CAST({some_campaign_expr} AS STRING))) NOT IN {_NON_CAMPAIGN_VALUES}
+        AND TRIM(LOWER(CAST({some_campaign_expr} AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
     ),
     combined AS (
       SELECT * FROM trad_pubs

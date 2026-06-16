@@ -1,38 +1,3 @@
-/* -----------------------------------------------------------------------
-   Narratives page — CSS variable scope + table styling
-   The --amazon-publishers-* variables are defined on the publishers page
-   only, so we re-declare them here so the shared Python components
-   (data-bar gradients, separators, etc.) resolve correctly.
------------------------------------------------------------------------ */
-
-/* Token aliases — values are defined once (light + dark) in
-   assets/native_analytics.css as --na-*. Kept under the
-   --amazon-publishers-* names here so existing component classes/Python
-   style dicts on this page keep working unchanged. */
-#amazon-2026-narratives {
-  --amazon-publishers-text: var(--na-text);
-  --amazon-publishers-text-muted: var(--na-text-muted);
-  --amazon-publishers-text-soft: var(--na-text-soft);
-  --amazon-publishers-border: var(--na-border);
-  --amazon-publishers-surface: var(--na-surface);
-  --amazon-publishers-surface-alt: var(--na-surface-alt);
-  --amazon-publishers-surface-hover: var(--na-surface-hover);
-  --amazon-publishers-row-even: var(--na-row-even);
-  --amazon-publishers-row-odd: var(--na-row-odd);
-  --amazon-publishers-header-bg: var(--na-header-bg);
-  --amazon-publishers-grid: var(--na-grid);
-  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
-  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
-  --amazon-publishers-link: var(--na-link);
-  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
-  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
-  --amazon-publishers-bar-positive: var(--na-bar-positive);
-  --amazon-publishers-bar-negative: var(--na-bar-negative);
-  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
-  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
-  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
-  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
-}
 
 /* -----------------------------------------------------------------------
    Table container — rounded border matching publishers table
@@ -168,6 +133,22 @@
   gap: 24px;
 }
 
+/* Mirrored media-split timeline (P2S4G3) — height is set inline per-instance
+   (computed from the data + flag stacking in media_split_timeline_figure), so
+   the plot area should fill that container exactly with no extra min-height. */
+.amazon-narrative-media-split-graph .js-plotly-plot,
+.amazon-narrative-media-split-graph .plot-container {
+  height: 100%;
+}
+
+/* Explicit y=0 line (drawn via add_shape so it stays visible above the
+   filled data traces) — match the gridline color instead of Plotly's
+   default black, since `var(...)` colors aren't resolved for shapes. */
+.amazon-narrative-media-split-graph .shapelayer path {
+  stroke: var(--na-border) !important;
+  stroke-opacity: 1 !important;
+}
+
 .amazon-narrative-profile {
   display: flex;
   flex-direction: column;
@@ -246,8 +227,8 @@
 }
 
 .amazon-narrative-insight-card {
-  background: var(--surface-2, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--na-surface-alt);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
   padding: 16px 18px;
   line-height: 1.6;

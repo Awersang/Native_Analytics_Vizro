@@ -33,23 +33,25 @@ from dashboards.amazon_2026.data_common import (
     CAMPAIGN_PROFILE_KEY,
     CAMPAIGN_NARRATIVES_KEY,
     DATASET_ID,
+    DISCOVER_ITEMS_KEY,
     MEDIA_TYPE_PERIOD_KEY,
     NARRATIVE_DETAIL_KPI_KEY,
     NARRATIVE_OVERVIEW_KEY,
     NARRATIVES_KEY,
-    NARRATIVE_SENTIMENT_KEY,
     NARRATIVE_WEEKLY_REACH_KEY,
     NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY,
     NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY,
     NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY,
+    NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY,
+    NARRATIVE_SOME_PLATFORM_TIMELINE_KEY,
     NARRATIVES_KPI_KEY,
     NARRATIVE_TOP_PUBLISHERS_KEY,
     NARRATIVE_TOP_JOURNALISTS_KEY,
     NARRATIVE_TOP_PUBLICATIONS_KEY,
     OVERVIEW_KEY,
     OVERVIEW_KPI_KEY,
+    PARAM_SINK_KEY,
     PUBLISHERS_KEY,
-    PUBLISHER_NARRATIVES_KEY,
     PUBLISHER_SOME_TIMELINE_KEY,
     PUBLISHER_SOME_TOPIC_AREAS_KEY,
     PUBLISHER_TOPIC_AREAS_KEY,
@@ -67,8 +69,6 @@ from dashboards.amazon_2026.data_common import (
     TOPIC_AREA_TOP_PUBLISHERS_KEY,
     TOPIC_AREA_TRAD_SENTIMENT_TIMELINE_KEY,
     TOPIC_AREA_WEEKLY_REACH_KEY,
-    TOPIC_AREA_PROFILE_KEY,
-    TOPIC_AREA_NARRATIVES_KEY,
     SOME_PLATFORM_KEY,
     SOURCE_SENTIMENT_MONTHLY_KEY,
     TOP_ARTICLES_KEY,
@@ -78,9 +78,10 @@ from dashboards.amazon_2026.data_common import (
 from dashboards.amazon_2026.data_narratives import (
     load_narrative_detail_kpis,
     load_narrative_overview,
-    load_narrative_sentiment,
+    load_narrative_some_platform_timeline,
     load_narrative_some_sentiment_timeline,
     load_narrative_some_weekly_engagement,
+    load_narrative_trad_media_type_timeline,
     load_narrative_trad_sentiment_timeline,
     load_narrative_weekly_reach,
     load_narrative_top_publishers,
@@ -100,7 +101,6 @@ from dashboards.amazon_2026.data_overview import (
     load_top_posts,
 )
 from dashboards.amazon_2026.data_publishers import (
-    load_publisher_narratives,
     load_publisher_some_topic_areas,
     load_publisher_topic_areas,
     load_publisher_top_publications,
@@ -108,13 +108,12 @@ from dashboards.amazon_2026.data_publishers import (
     load_publisher_trad_timeline,
     load_publishers,
 )
+from dashboards.amazon_2026.data_discover import load_discover_items
 from dashboards.amazon_2026.data_topic_areas import (
     load_topic_area_breakdown,
     load_topic_area_campaigns,
     load_topic_area_media,
-    load_topic_area_narratives,
     load_topic_area_overview,
-    load_topic_area_profile,
     load_topic_area_some_sentiment_timeline,
     load_topic_area_some_weekly_engagement,
     load_topic_area_top_journalists,
@@ -200,19 +199,20 @@ def _register_data_sources() -> None:
     data_manager[NARRATIVES_KEY] = load_narratives
     data_manager[NARRATIVES_KPI_KEY] = load_narratives_kpi
     data_manager[NARRATIVE_DETAIL_KPI_KEY] = load_narrative_detail_kpis
-    data_manager[NARRATIVE_SENTIMENT_KEY] = load_narrative_sentiment
     data_manager[NARRATIVE_OVERVIEW_KEY] = load_narrative_overview
     data_manager[NARRATIVE_WEEKLY_REACH_KEY] = load_narrative_weekly_reach
     data_manager[NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY] = load_narrative_some_weekly_engagement
     data_manager[NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY] = load_narrative_trad_sentiment_timeline
     data_manager[NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY] = load_narrative_some_sentiment_timeline
+    data_manager[NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY] = load_narrative_trad_media_type_timeline
+    data_manager[NARRATIVE_SOME_PLATFORM_TIMELINE_KEY] = load_narrative_some_platform_timeline
     data_manager[NARRATIVE_TOP_PUBLISHERS_KEY] = load_narrative_top_publishers
     data_manager[NARRATIVE_TOP_JOURNALISTS_KEY] = load_narrative_top_journalists
     data_manager[NARRATIVE_TOP_PUBLICATIONS_KEY] = load_narrative_top_publications
+    data_manager[PARAM_SINK_KEY] = lambda: pd.DataFrame()
     data_manager[PUBLISHERS_KEY] = load_publishers
     data_manager[PUBLISHER_TRAD_TIMELINE_KEY] = load_publisher_trad_timeline
     data_manager[PUBLISHER_SOME_TIMELINE_KEY] = load_publisher_some_timeline
-    data_manager[PUBLISHER_NARRATIVES_KEY] = load_publisher_narratives
     data_manager[PUBLISHER_TOPIC_AREAS_KEY] = load_publisher_topic_areas
     data_manager[PUBLISHER_SOME_TOPIC_AREAS_KEY] = load_publisher_some_topic_areas
     data_manager[PUBLISHER_TOP_PUBLICATIONS_KEY] = load_publisher_top_publications
@@ -227,8 +227,6 @@ def _register_data_sources() -> None:
     data_manager[TOPIC_AREA_TOP_PUBLISHERS_KEY] = load_topic_area_top_publishers
     data_manager[TOPIC_AREA_TOP_JOURNALISTS_KEY] = load_topic_area_top_journalists
     data_manager[TOPIC_AREA_TOP_PUBLICATIONS_KEY] = load_topic_area_top_publications
-    data_manager[TOPIC_AREA_PROFILE_KEY] = load_topic_area_profile
-    data_manager[TOPIC_AREA_NARRATIVES_KEY] = load_topic_area_narratives
     data_manager[ANGLES_KEY] = load_angles
     data_manager[ARCHIVE_SCATTER_KEY] = load_archive_scatter
     data_manager[CAMPAIGN_TIMELINE_KEY] = load_campaign_timeline
@@ -241,6 +239,7 @@ def _register_data_sources() -> None:
     data_manager[CAMPAIGN_TOP_PUBLICATIONS_KEY] = load_campaign_top_publications
     data_manager[CAMPAIGN_PROFILE_KEY] = load_campaign_profile
     data_manager[CAMPAIGN_NARRATIVES_KEY] = load_campaign_narratives
+    data_manager[DISCOVER_ITEMS_KEY] = load_discover_items
 
 
 def build_pages(ctx: BuildContext) -> list[vm.Page]:

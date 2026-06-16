@@ -1,18 +1,3 @@
-/* Token aliases — values are defined once (light + dark) in
-   assets/native_analytics.css as --na-*. Kept under the
-   --amazon-publishers-* names here so shared Python components
-   (KPI cards, na_panel, etc.) resolve correctly on this page. */
-#amazon-2026-overview {
-  --amazon-publishers-text: var(--na-text);
-  --amazon-publishers-text-muted: var(--na-text-muted);
-  --amazon-publishers-text-soft: var(--na-text-soft);
-  --amazon-publishers-border: var(--na-border);
-  --amazon-publishers-surface: var(--na-surface);
-  --amazon-publishers-surface-alt: var(--na-surface-alt);
-  --amazon-publishers-surface-hover: var(--na-surface-hover);
-  --amazon-publishers-grid: var(--na-grid);
-  --amazon-publishers-kpi-group-bg: var(--na-kpi-group-bg);
-}
 
 /* -----------------------------------------------------------------------
    KPI row — "Traditional Media" (3 KPIs) and "Social Media" (2 KPIs)
@@ -29,8 +14,23 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* The "Traditional Media" panel sits in the 2fr column of a 2:1 split, so
+   its width is much smaller than the viewport. Override the shared
+   minmax(320px, 1fr) (tuned for the wider Publishers page) so the 3 KPI
+   cards shrink with their container instead of overflowing it. */
+#amazon-2026-overview .amazon-publishers-kpis {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 @media (max-width: 900px) {
   .amazon-overview-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  #amazon-2026-overview .amazon-publishers-kpis,
+  #amazon-2026-overview .amazon-publishers-kpis--2col {
     grid-template-columns: 1fr;
   }
 }

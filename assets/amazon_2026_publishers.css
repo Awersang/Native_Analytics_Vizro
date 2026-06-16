@@ -1,33 +1,3 @@
-/* Token aliases — values are defined once (light + dark) in
-   assets/native_analytics.css as --na-*. Kept under the
-   --amazon-publishers-* names here so existing component classes/Python
-   style dicts on this page keep working unchanged. */
-#amazon-2026-publishers {
-  --amazon-publishers-text: var(--na-text);
-  --amazon-publishers-text-muted: var(--na-text-muted);
-  --amazon-publishers-text-soft: var(--na-text-soft);
-  --amazon-publishers-border: var(--na-border);
-  --amazon-publishers-surface: var(--na-surface);
-  --amazon-publishers-surface-alt: var(--na-surface-alt);
-  --amazon-publishers-surface-hover: var(--na-surface-hover);
-  --amazon-publishers-row-even: var(--na-row-even);
-  --amazon-publishers-row-odd: var(--na-row-odd);
-  --amazon-publishers-header-bg: var(--na-header-bg);
-  --amazon-publishers-grid: var(--na-grid);
-  --amazon-publishers-dropdown-bg: var(--na-dropdown-bg);
-  --amazon-publishers-dropdown-hover: var(--na-dropdown-hover);
-  --amazon-publishers-link: var(--na-link);
-  --amazon-publishers-kpi-group-bg: var(--na-kpi-group-bg);
-  --amazon-publishers-avatar-bg: var(--na-avatar-bg);
-  --amazon-publishers-bar-trad-publications: var(--na-bar-trad-publications);
-  --amazon-publishers-bar-trad-reach: var(--na-bar-trad-reach);
-  --amazon-publishers-bar-positive: var(--na-bar-positive);
-  --amazon-publishers-bar-negative: var(--na-bar-negative);
-  --amazon-publishers-bar-some-posts: var(--na-bar-some-posts);
-  --amazon-publishers-bar-some-reach: var(--na-bar-some-reach);
-  --amazon-publishers-bar-some-engagement: var(--na-bar-some-engagement);
-  --amazon-publishers-bar-some-average: var(--na-bar-some-average);
-}
 
 #amazon-2026-publishers .figure-container {
   width: 100%;

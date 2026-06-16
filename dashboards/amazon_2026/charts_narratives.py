@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import dash_table, dcc, html
+from dash import Input, Output, State, callback, dash_table, dcc, html
 from plotly.subplots import make_subplots
 from dash.dash_table.Format import Format, Scheme
 
@@ -17,6 +17,8 @@ from dashboards.amazon_2026.charts_shared import (
     ACCENT_TRAD,
     NARRATIVE_SOME_COLUMNS,
     NARRATIVE_TRAD_COLUMNS,
+    OVERVIEW_TABLE_STYLE_CELL,
+    OVERVIEW_TABLE_STYLE_HEADER,
     SENTIMENT_COLORS,
     THEME_BORDER,
     THEME_GRID,
@@ -25,6 +27,8 @@ from dashboards.amazon_2026.charts_shared import (
     THEME_SURFACE,
     THEME_TEXT,
     THEME_TEXT_MUTED,
+    TOP_TABLE_STYLE_CELL,
+    TOP_TABLE_STYLE_HEADER,
     TRAD_SOME_OPTIONS,
     _hex_to_rgba,
     _json_safe,
@@ -34,20 +38,26 @@ from dashboards.amazon_2026.charts_shared import (
     _narratives_table_columns,
     _normalize_sources,
     _num,
+    load_and_filter,
     na_panel,
+    trad_some_controls,
     build_top_items_panel,
     _timeline_available_sources,
     _timeline_chart_title,
     _timeline_figure,
     _timeline_records_from_frame,
+    media_split_timeline_figure,
+    top_reach_flags,
 )
 from dashboards.amazon_2026.data_common import (
     ANGLES_KEY,
+    NARRATIVE_SOME_PLATFORM_TIMELINE_KEY,
     NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY,
     NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY,
     NARRATIVE_TOP_JOURNALISTS_KEY,
     NARRATIVE_TOP_PUBLISHERS_KEY,
     NARRATIVE_TOP_PUBLICATIONS_KEY,
+    NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY,
     NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY,
     NARRATIVE_WEEKLY_REACH_KEY,
     NARRATIVES_KEY,
@@ -59,6 +69,8 @@ NARRATIVES_SOURCE_OPTIONS = [
     {"label": "Trad", "value": "Trad"},
     {"label": "SoMe", "value": "SoMe"},
 ]
+
+NARRATIVE_MEDIA_SPLIT_HEIGHT_SCALE = 1.3
 
 
 def _norm_source(sf: str | list[str] | None) -> list[str]:
@@ -115,29 +127,8 @@ def build_narratives_overview_section(data_frame: pd.DataFrame) -> html.Div:
                 cell_selectable=True,
                 style_as_list_view=True,
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell={
-                    "backgroundColor": THEME_ROW_EVEN,
-                    "border": f"1px solid {THEME_BORDER}",
-                    "color": THEME_TEXT,
-                    "fontSize": "12px",
-                    "height": "38px",
-                    "padding": "5px 9px",
-                    "textAlign": "right",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
-                style_header={
-                    "backgroundColor": "var(--amazon-publishers-header-bg)",
-                    "border": f"1px solid {THEME_BORDER}",
-                    "color": THEME_TEXT,
-                    "fontWeight": "700",
-                    "height": "34px",
-                    "textAlign": "center",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
+                style_cell=OVERVIEW_TABLE_STYLE_CELL,
+                style_header=OVERVIEW_TABLE_STYLE_HEADER,
                 style_cell_conditional=_overview_cell_width_styles(),
                 style_header_conditional=_narrative_header_divider_styles(norm),
                 style_data_conditional=_narrative_data_bar_styles(table_rows, columns),
@@ -941,15 +932,7 @@ def _narrative_sentiment_donut(
 
 
 def _narrative_angles_overview(selected_label: str) -> tuple[int, float, float]:
-    try:
-        angles_df = data_manager[ANGLES_KEY].load()
-    except Exception:
-        angles_df = pd.DataFrame()
-
-    if not angles_df.empty and "narrative_label" in angles_df.columns:
-        angles_df = angles_df[angles_df["narrative_label"] == selected_label]
-    else:
-        angles_df = pd.DataFrame()
+    angles_df = load_and_filter(ANGLES_KEY, "narrative_label", selected_label)
 
     total = len(angles_df)
     if total == 0 or "target_sentiment" not in angles_df.columns:
@@ -1019,23 +1002,8 @@ def _narrative_source_panels(overview_record: dict[str, Any] | None) -> list[htm
 
 
 def _narrative_detail_timeline_section(selected_label: str) -> html.Div:
-    try:
-        trad_df = data_manager[NARRATIVE_WEEKLY_REACH_KEY].load()
-    except Exception:
-        trad_df = pd.DataFrame()
-    try:
-        some_df = data_manager[NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY].load()
-    except Exception:
-        some_df = pd.DataFrame()
-
-    if not trad_df.empty and "dominant_narrative" in trad_df.columns:
-        trad_df = trad_df[trad_df["dominant_narrative"] == selected_label]
-    else:
-        trad_df = pd.DataFrame()
-    if not some_df.empty and "dominant_narrative" in some_df.columns:
-        some_df = some_df[some_df["dominant_narrative"] == selected_label]
-    else:
-        some_df = pd.DataFrame()
+    trad_df = load_and_filter(NARRATIVE_WEEKLY_REACH_KEY, "dominant_narrative", selected_label)
+    some_df = load_and_filter(NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY, "dominant_narrative", selected_label)
 
     x_range = _build_shared_x_range(trad_df, some_df)
 
@@ -1044,27 +1012,12 @@ def _narrative_detail_timeline_section(selected_label: str) -> html.Div:
         source="Trad", x_range=x_range,
     )
 
-    return html.Div(
-        className="na-panel",
-        children=[
-            html.Div(
-                style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "flexWrap": "wrap", "gap": "8px"},
-                children=[
-                    html.H3(
-                        id="amazon-2026-narrative-detail-timeline-title",
-                        children=ref_label("Trad Publications", "P2S4G1"),
-                        className="na-element-title",
-                        style={"margin": "0"},
-                    ),
-                    dcc.Checklist(
-                        id="amazon-2026-narrative-detail-timeline-source",
-                        options=TRAD_SOME_OPTIONS,
-                        value=["Trad"],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                ],
-            ),
+    available_sources = _timeline_available_sources({"has_trad": not trad_df.empty, "has_some": not some_df.empty})
+    selected_sources = ["Trad"] if "Trad" in available_sources else available_sources
+
+    return na_panel(
+        html.Span(id="amazon-2026-narrative-detail-timeline-title", children=ref_label("Trad Publications", "P2S4G1")),
+        [
             dcc.Store(
                 id="amazon-2026-narrative-detail-timeline-store",
                 data={
@@ -1080,27 +1033,19 @@ def _narrative_detail_timeline_section(selected_label: str) -> html.Div:
                 style={"height": "360px"},
             ),
         ],
+        controls=trad_some_controls(
+            "amazon-2026-narrative-detail-timeline-source",
+            available_sources,
+            selected_sources,
+            disable_unavailable=True,
+            hide_when_single=False,
+        ),
     )
 
 
 def _narrative_sentiment_timeline_section(selected_label: str) -> html.Div:
-    try:
-        trad_df = data_manager[NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY].load()
-    except Exception:
-        trad_df = pd.DataFrame()
-    try:
-        some_df = data_manager[NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY].load()
-    except Exception:
-        some_df = pd.DataFrame()
-
-    if not trad_df.empty and "narrative_label" in trad_df.columns:
-        trad_df = trad_df[trad_df["narrative_label"] == selected_label]
-    else:
-        trad_df = pd.DataFrame()
-    if not some_df.empty and "narrative_label" in some_df.columns:
-        some_df = some_df[some_df["narrative_label"] == selected_label]
-    else:
-        some_df = pd.DataFrame()
+    trad_df = load_and_filter(NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY, "narrative_label", selected_label)
+    some_df = load_and_filter(NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY, "narrative_label", selected_label)
 
     trad_metric, some_metric = "publications", "posts"
     timeline_data = {
@@ -1114,14 +1059,6 @@ def _narrative_sentiment_timeline_section(selected_label: str) -> html.Div:
     }
     available_sources = _timeline_available_sources(timeline_data)
     selected_sources = _normalize_sources(available_sources, available_sources)
-    options = [
-        {
-            "label": option["label"],
-            "value": option["value"],
-            "disabled": option["value"] not in available_sources,
-        }
-        for option in TRAD_SOME_OPTIONS
-    ]
 
     return na_panel(
         ref_label(_timeline_chart_title(trad_metric, some_metric), "P2S4G2"),
@@ -1134,19 +1071,80 @@ def _narrative_sentiment_timeline_section(selected_label: str) -> html.Div:
                 className="amazon-publishers-timeline-graph",
             ),
         ],
-        controls=html.Div(
-            className="amazon-publishers-chart-controls",
-            children=[
-                dcc.Checklist(
-                    id="amazon-2026-narrative-sentiment-timeline-source",
-                    options=options,
-                    value=selected_sources,
-                    inline=True,
-                    className="amazon-publishers-radio",
-                ),
-            ],
+        controls=trad_some_controls(
+            "amazon-2026-narrative-sentiment-timeline-source",
+            available_sources,
+            selected_sources,
+            disable_unavailable=True,
+            hide_when_single=False,
         ),
     )
+
+
+def _narrative_media_split_timeline_section(selected_label: str) -> html.Div:
+    trad_df = load_and_filter(NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY, "narrative_label", selected_label)
+    some_df = load_and_filter(NARRATIVE_SOME_PLATFORM_TIMELINE_KEY, "narrative_label", selected_label)
+    top_publications_df = load_and_filter(NARRATIVE_TOP_PUBLICATIONS_KEY, "narrative_label", selected_label)
+
+    trad_flags = top_reach_flags(top_publications_df, "Trad")
+    some_flags = top_reach_flags(top_publications_df, "SoMe")
+
+    initial_fig, initial_height_px = media_split_timeline_figure(
+        trad_df, some_df, stacked=False, trad_flags=trad_flags, some_flags=some_flags
+    )
+    initial_height_px = int(initial_height_px * NARRATIVE_MEDIA_SPLIT_HEIGHT_SCALE)
+
+    return na_panel(
+        ref_label("Publications Timeline by Media Type / Platform", "P2S4G3"),
+        [
+            dcc.Store(
+                id="amazon-2026-narrative-media-split-store",
+                data={
+                    "trad": trad_df.to_dict("records") if not trad_df.empty else [],
+                    "some": some_df.to_dict("records") if not some_df.empty else [],
+                    "trad_flags": trad_flags,
+                    "some_flags": some_flags,
+                },
+            ),
+            dcc.Graph(
+                id="amazon-2026-narrative-media-split-graph",
+                figure=initial_fig,
+                config={"displayModeBar": False, "responsive": True},
+                style={"height": f"{initial_height_px}px"},
+                className="amazon-publishers-timeline-graph amazon-narrative-media-split-graph",
+            ),
+        ],
+        controls=dcc.Checklist(
+            id="amazon-2026-narrative-media-split-stacked",
+            options=[{"label": "Stacked", "value": "stacked"}],
+            value=[],
+            inline=True,
+            className="amazon-publishers-radio",
+        ),
+    )
+
+
+@callback(
+    Output("amazon-2026-narrative-media-split-graph", "figure"),
+    Output("amazon-2026-narrative-media-split-graph", "style"),
+    Input("amazon-2026-narrative-media-split-stacked", "value"),
+    State("amazon-2026-narrative-media-split-store", "data"),
+    prevent_initial_call=True,
+)
+def _update_narrative_media_split_figure(stacked_value: list[str] | None, store_data: dict | None) -> tuple[go.Figure, dict]:
+    data = store_data or {}
+    trad_df = pd.DataFrame(data.get("trad") or [])
+    some_df = pd.DataFrame(data.get("some") or [])
+    stacked = "stacked" in (stacked_value or [])
+    fig, height_px = media_split_timeline_figure(
+        trad_df,
+        some_df,
+        stacked=stacked,
+        trad_flags=data.get("trad_flags") or [],
+        some_flags=data.get("some_flags") or [],
+    )
+    height_px = int(height_px * NARRATIVE_MEDIA_SPLIT_HEIGHT_SCALE)
+    return fig, {"height": f"{height_px}px"}
 
 
 # ---------------------------------------------------------------------------
@@ -1160,7 +1158,8 @@ ANGLE_SENTIMENT_OPTIONS = [
 ]
 
 ANGLE_BAR_COLORS = {
-    "publications": "var(--amazon-publishers-bar-trad-publications)",
+    "trad_publications": "var(--amazon-publishers-bar-trad-publications)",
+    "some_posts": "var(--amazon-publishers-bar-some-posts)",
     "reach": "var(--amazon-publishers-bar-trad-reach)",
     "popularity": "var(--amazon-publishers-bar-some-engagement)",
 }
@@ -1171,8 +1170,14 @@ def _angles_table_columns() -> list[dict[str, Any]]:
         {"name": ["", "Angle"], "id": "angle_label"},
         {"name": ["", "Sentiment"], "id": "target_sentiment"},
         {
-            "name": ["", "Publications"],
-            "id": "publications",
+            "name": ["", "Trad"],
+            "id": "trad_publications",
+            "type": "numeric",
+            "format": Format(group=True, precision=0, scheme=Scheme.fixed),
+        },
+        {
+            "name": ["", "SoMe"],
+            "id": "some_posts",
             "type": "numeric",
             "format": Format(group=True, precision=0, scheme=Scheme.fixed),
         },
@@ -1201,13 +1206,17 @@ def _angles_table_rows(
         sentiment = str(record.get("target_sentiment") or "").strip().title()
         if sentiment not in selected:
             continue
+        angle_id = str(record.get("angle_id") or "").strip()
+        angle_label = record.get("angle_label", "")
         rows.append(
             {
-                "id": record.get("angle_label", ""),
+                "id": angle_id or angle_label,
                 "row_id": idx,
-                "angle_label": record.get("angle_label", ""),
+                "angle_id": angle_id,
+                "angle_label": angle_label,
                 "target_sentiment": sentiment,
-                "publications": _num(record, "publications"),
+                "trad_publications": _num(record, "trad_publications"),
+                "some_posts": _num(record, "some_posts"),
                 "reach": _num(record, "reach"),
                 "popularity": _num(record, "popularity") / 100,
             }
@@ -1231,13 +1240,13 @@ def _angles_data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict
         },
         {
             "if": {"state": "active"},
-            "backgroundColor": "var(--bs-primary-bg-subtle)",
-            "border": "1px solid var(--bs-primary-bg-subtle)",
+            "backgroundColor": "transparent",
+            "border": f"1px solid {THEME_BORDER}",
         },
         {
             "if": {"state": "selected"},
-            "backgroundColor": "var(--bs-primary-bg-subtle)",
-            "border": "1px solid var(--bs-primary-bg-subtle)",
+            "backgroundColor": "transparent",
+            "border": f"1px solid {THEME_BORDER}",
         },
     ]
     for column_id in [col for col in ANGLE_BAR_COLORS if col in visible_ids]:
@@ -1260,22 +1269,14 @@ def _angles_data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict
 
 
 def _narrative_angles_section(selected_label: str) -> html.Div:
-    try:
-        angles_df = data_manager[ANGLES_KEY].load()
-    except Exception:
-        angles_df = pd.DataFrame()
-
-    if not angles_df.empty and "narrative_label" in angles_df.columns:
-        angles_df = angles_df[angles_df["narrative_label"] == selected_label]
-    else:
-        angles_df = pd.DataFrame()
+    angles_df = load_and_filter(ANGLES_KEY, "narrative_label", selected_label)
 
     records = [_json_safe(row) for row in angles_df.to_dict("records")]
     selected_sentiments = [opt["value"] for opt in ANGLE_SENTIMENT_OPTIONS]
     table_rows = _angles_table_rows(records, selected_sentiments)
     table_cols = _angles_table_columns()
     angle_options = [{"label": "All", "value": "All"}] + [
-        {"label": r.get("angle_label", ""), "value": r.get("angle_label", "")}
+        {"label": r.get("angle_label", ""), "value": str(r.get("angle_id") or r.get("angle_label") or "")}
         for r in records
         if r.get("angle_label")
     ]
@@ -1382,32 +1383,6 @@ def _narrative_angles_table_panel(
 _TOP_TABLES_LIMIT = 25
 _TOP_TABLES_PAGE_SIZE = 9
 
-_TOP_TABLE_STYLE_CELL = {
-    "backgroundColor": THEME_ROW_EVEN,
-    "border": f"1px solid {THEME_BORDER}",
-    "color": THEME_TEXT,
-    "fontSize": "12px",
-    "height": "38px",
-    "padding": "5px 9px",
-    "textAlign": "right",
-    "whiteSpace": "nowrap",
-    "overflow": "hidden",
-    "textOverflow": "ellipsis",
-}
-
-_TOP_TABLE_STYLE_HEADER = {
-    "backgroundColor": "var(--amazon-publishers-header-bg)",
-    "border": f"1px solid {THEME_BORDER}",
-    "borderTop": "none",
-    "color": THEME_TEXT,
-    "fontWeight": "700",
-    "height": "34px",
-    "textAlign": "center",
-    "whiteSpace": "nowrap",
-    "overflow": "hidden",
-    "textOverflow": "ellipsis",
-}
-
 
 def _top_publishers_table_columns() -> list[dict[str, Any]]:
     return [
@@ -1501,15 +1476,7 @@ def _top_publishers_data_bar_styles(table_data: list[dict[str, Any]]) -> list[di
 
 
 def _narrative_top_publishers_section(selected_label: str) -> html.Div:
-    try:
-        df = data_manager[NARRATIVE_TOP_PUBLISHERS_KEY].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and "narrative_label" in df.columns:
-        df = df[df["narrative_label"] == selected_label]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(NARRATIVE_TOP_PUBLISHERS_KEY, "narrative_label", selected_label)
 
     records = [_json_safe(row) for row in df.to_dict("records")]
     table_rows = _top_publishers_table_rows(records, "Trad")
@@ -1529,8 +1496,8 @@ def _narrative_top_publishers_section(selected_label: str) -> html.Div:
                 cell_selectable=False,
                 style_as_list_view=True,
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell=_TOP_TABLE_STYLE_CELL,
-                style_header=_TOP_TABLE_STYLE_HEADER,
+                style_cell=TOP_TABLE_STYLE_CELL,
+                style_header=TOP_TABLE_STYLE_HEADER,
                 style_data_conditional=_top_publishers_data_bar_styles(table_rows),
                 css=[{"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"}],
             ),
@@ -1605,15 +1572,7 @@ def _top_journalists_data_bar_styles(table_data: list[dict[str, Any]]) -> list[d
 
 
 def _narrative_top_journalists_section(selected_label: str) -> html.Div:
-    try:
-        df = data_manager[NARRATIVE_TOP_JOURNALISTS_KEY].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and "narrative_label" in df.columns:
-        df = df[df["narrative_label"] == selected_label]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(NARRATIVE_TOP_JOURNALISTS_KEY, "narrative_label", selected_label)
 
     records = [_json_safe(row) for row in df.to_dict("records")]
     table_rows = _top_journalists_table_rows(records)
@@ -1632,8 +1591,8 @@ def _narrative_top_journalists_section(selected_label: str) -> html.Div:
                 cell_selectable=False,
                 style_as_list_view=True,
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell=_TOP_TABLE_STYLE_CELL,
-                style_header=_TOP_TABLE_STYLE_HEADER,
+                style_cell=TOP_TABLE_STYLE_CELL,
+                style_header=TOP_TABLE_STYLE_HEADER,
                 style_data_conditional=_top_journalists_data_bar_styles(table_rows),
                 css=[{"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"}],
             ),
@@ -1654,26 +1613,23 @@ def _narrative_top_tables_section(selected_label: str) -> html.Div:
     )
 
 
-def _filter_top_items_by_angle(records: list[dict[str, Any]], angle: str | None) -> list[dict[str, Any]]:
-    if not angle or angle == "All":
+def _filter_top_items_by_angle(records: list[dict[str, Any]], angle_filter: str | None) -> list[dict[str, Any]]:
+    if not angle_filter or angle_filter == "All":
         return records
-    # Trad/SoMe rows aren't classified by angle yet (no angle data in BigQuery) —
-    # don't blank the table out while that data is unavailable.
-    if not any(r.get("Angle") for r in records):
+    # If no records carry angle metadata at all, angle filtering is unavailable.
+    if not any(r.get("Angle_ID") or r.get("Angle") for r in records):
         return records
-    return [r for r in records if r.get("Angle") == angle]
+    filter_value = str(angle_filter).strip()
+    filtered = [
+        r for r in records
+        if str(r.get("Angle_ID") or "").strip() == filter_value
+        or str(r.get("Angle") or "").strip() == filter_value
+    ]
+    return filtered
 
 
 def _narrative_top_items_panel(selected_label: str) -> html.Div:
-    try:
-        df = data_manager[NARRATIVE_TOP_PUBLICATIONS_KEY].load()
-    except Exception:
-        df = pd.DataFrame()
-
-    if not df.empty and "narrative_label" in df.columns:
-        df = df[df["narrative_label"] == selected_label]
-    else:
-        df = pd.DataFrame()
+    df = load_and_filter(NARRATIVE_TOP_PUBLICATIONS_KEY, "narrative_label", selected_label)
 
     records = [_json_safe(row) for row in df.to_dict("records")]
     trad_rows = [r for r in records if str(r.get("Source", "")) == "Trad"]
@@ -1689,6 +1645,7 @@ def _narrative_top_items_panel(selected_label: str) -> html.Div:
             "URL": f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
             "Sentiment": str(r.get("Sentiment", "")),
             "Reach": _num(r, "Reach"),
+            "Angle_ID": str(r.get("Angle_ID", "") or ""),
             "Angle": str(r.get("Angle", "") or ""),
         }
         for r in trad_rows
@@ -1703,6 +1660,7 @@ def _narrative_top_items_panel(selected_label: str) -> html.Div:
             "Sentiment": str(r.get("Sentiment", "")),
             "Reach": _num(r, "Reach"),
             "Engagement": _num(r, "Engagement"),
+            "Angle_ID": str(r.get("Angle_ID", "") or ""),
             "Angle": str(r.get("Angle", "") or ""),
         }
         for r in some_rows
@@ -1815,6 +1773,7 @@ def _narrative_detail_content(
             ),
             _narrative_detail_timeline_section(selected_label),
             _narrative_sentiment_timeline_section(selected_label),
+            _narrative_media_split_timeline_section(selected_label),
             _narrative_angles_section(selected_label),
             _narrative_top_items_panel(selected_label),
         ],
