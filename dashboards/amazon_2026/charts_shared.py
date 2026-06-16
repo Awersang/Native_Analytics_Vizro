@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy.interpolate import PchipInterpolator
 from plotly.subplots import make_subplots
 from dash import Input, Output, State, callback, dash_table, dcc, html
 from dash.dash_table.Format import Format, Scheme
+from vizro.managers import data_manager
 
 from dashboards.amazon_2026.data_common import SENTIMENT_ORDER
 
@@ -20,6 +24,18 @@ THEME_SURFACE = "var(--amazon-publishers-surface)"
 THEME_SURFACE_ALT = "var(--amazon-publishers-surface-alt)"
 THEME_ROW_EVEN = "var(--amazon-publishers-row-even)"
 THEME_ROW_ODD = "var(--amazon-publishers-row-odd)"
+
+
+def load_and_filter(key: str, filter_column: str, value: str) -> pd.DataFrame:
+    """Load a registered dataset and filter to rows matching `value`, tolerating missing data."""
+    try:
+        df = data_manager[key].load()
+    except Exception:
+        return pd.DataFrame()
+    if not df.empty and filter_column in df.columns:
+        return df[df[filter_column] == value]
+    return pd.DataFrame()
+
 
 NARRATIVE_TRAD_COLUMNS = [
     "trad_publications",
@@ -112,13 +128,13 @@ DONUT_COLORS = [
 # distinct, dark-mode-friendly color (see `TOPIC_AREA_COLOR_OVERRIDES`).
 TOPIC_AREA_PALETTE = [
     "#4C78A8",  # blue
-    "#F58518",  # orange
+    "#D1853C",  # orange (desaturated from #F58518 to match the Sentiment palette's ~55-65% saturation)
     "#54A24B",  # green
-    "#E45756",  # red
+    "#DA6160",  # red (desaturated from #E45756)
     "#72B7B2",  # teal
     "#B279A2",  # mauve
-    "#EECA3B",  # yellow
-    "#FF9DA6",  # pink
+    "#D3B745",  # yellow (desaturated from #EECA3B)
+    "#E5919A",  # pink (desaturated/darkened from #FF9DA6)
     "#9D755D",  # brown
     "#5254A3",  # indigo
     "#8CA252",  # olive
@@ -129,7 +145,7 @@ TOPIC_AREA_PALETTE = [
     "#637939",  # dark olive
     "#3A7CA5",  # steel blue
     "#A05195",  # orchid
-    "#5BA300",  # bright green
+    "#7BBA2C",  # bright green (desaturated from #5BA300, used by Amazon Haul)
     "#D4A017",  # gold
     "#2F4B7C",  # deep blue
     "#C2785C",  # terracotta
@@ -491,6 +507,43 @@ TRAD_SOME_OPTIONS = [
 ]
 
 
+def trad_some_controls(
+    control_id: str,
+    available_sources: list[str],
+    selected_sources: list[str],
+    *,
+    disable_unavailable: bool = False,
+    hide_when_single: bool = True,
+) -> html.Div:
+    """Shared Trad/SoMe source-toggle Checklist used by `na_panel(controls=...)`.
+
+    With `disable_unavailable=True`, all options are shown but unavailable
+    sources are disabled (timeline panel); otherwise only available sources
+    are offered and, with `hide_when_single=True` (default), the whole control
+    is hidden when there's nothing to toggle.
+    """
+    if disable_unavailable:
+        options = [
+            {**option, "disabled": option["value"] not in available_sources}
+            for option in TRAD_SOME_OPTIONS
+        ]
+    else:
+        options = TRAD_SOME_OPTIONS
+    return html.Div(
+        className="amazon-publishers-chart-controls",
+        style={"display": "none"} if hide_when_single and len(available_sources) <= 1 else None,
+        children=[
+            dcc.Checklist(
+                id=control_id,
+                options=options,
+                value=selected_sources,
+                inline=True,
+                className="amazon-publishers-radio",
+            )
+        ],
+    )
+
+
 def _detail_metric_values(basic_metric: str) -> tuple[str, str]:
     if basic_metric == "reach":
         return "reach", "engagement"
@@ -564,10 +617,16 @@ def _timeline_series_frame(
 def _timeline_date_bounds(timeline_data: dict[str, Any] | None, id_field: str = "publisher_uid") -> tuple[pd.Timestamp, pd.Timestamp] | None:
     payload = timeline_data or {}
     entity_id = str(payload.get(id_field, ""))
+    trad_metric = str(payload.get("trad_metric", "publications"))
+    some_metric = str(payload.get("some_metric", "posts"))
     frames = [
-        _timeline_metric_frame(payload.get("trad_timeline", []), entity_id, str(payload.get("trad_metric", "publications")), id_field),
-        _timeline_metric_frame(payload.get("some_timeline", []), entity_id, str(payload.get("some_metric", "posts")), id_field),
+        _timeline_metric_frame(payload.get("trad_timeline", []), entity_id, trad_metric, id_field),
+        _timeline_metric_frame(payload.get("some_timeline", []), entity_id, some_metric, id_field),
     ]
+    for label in payload.get("narrative_labels") or []:
+        narrative_label = str(label)
+        frames.append(_timeline_metric_frame(payload.get("narrative_trad_timeline", []), narrative_label, trad_metric, "narrative_label"))
+        frames.append(_timeline_metric_frame(payload.get("narrative_some_timeline", []), narrative_label, some_metric, "narrative_label"))
     dates = [frame["week_start"] for frame in frames if not frame.empty and "week_start" in frame]
     if not dates:
         return None
@@ -761,6 +820,414 @@ def _timeline_figure(
     return fig
 
 
+def _nice_axis_step(max_value: float, target_ticks: int = 4) -> float:
+    """Return a "nice" tick step (1/2/2.5/5 x10^n) covering `max_value` in ~`target_ticks` steps."""
+    if max_value <= 0:
+        return 1.0
+    raw_step = max_value / target_ticks
+    magnitude = 10 ** math.floor(math.log10(raw_step))
+    for multiple in (1, 2, 2.5, 5, 10):
+        step = multiple * magnitude
+        if step >= raw_step:
+            return step
+    return 10 * magnitude
+
+
+def _media_split_weekly_pivot(data_frame: pd.DataFrame, group_col: str, value_col: str) -> pd.DataFrame:
+    if data_frame is None or data_frame.empty:
+        return pd.DataFrame()
+    df = data_frame.copy()
+    df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+    df = df.dropna(subset=["week_start"])
+    if df.empty:
+        return pd.DataFrame()
+    pivot = df.pivot_table(index="week_start", columns=group_col, values=value_col, aggfunc="sum", fill_value=0)
+    return pivot.sort_index()
+
+
+def top_reach_flags(top_publications_df: pd.DataFrame, source: str, top_n: int = 5) -> list[dict[str, Any]]:
+    """Return the top `top_n` publications/posts for `source` ("Trad"/"SoMe") by reach.
+
+    Each flag dict has `label` (Publication for Trad, Author for SoMe), `value`
+    (the reach), `date` (ISO date string), and `kind="reach"` — used to render
+    flag annotations on `media_split_timeline_figure`.
+    """
+    if top_publications_df is None or top_publications_df.empty or "Source" not in top_publications_df.columns:
+        return []
+    subset = top_publications_df[top_publications_df["Source"] == source].copy()
+    if subset.empty:
+        return []
+    subset["Reach"] = pd.to_numeric(subset["Reach"], errors="coerce").fillna(0)
+    subset = subset.sort_values("Reach", ascending=False).head(top_n)
+    label_col = "Publication" if source == "Trad" else "Author"
+    flags = []
+    for _, row in subset.iterrows():
+        date = pd.to_datetime(row.get("Date"), errors="coerce")
+        if pd.isna(date):
+            continue
+        label = str(row.get(label_col) or "Unknown").strip() or "Unknown"
+        flags.append({"label": label, "value": float(row["Reach"]), "date": date.strftime("%Y-%m-%d"), "kind": "reach"})
+    return flags
+
+
+def _top_volume_week_flag(pivot: pd.DataFrame, stacked: bool, unit_label: str) -> dict[str, Any] | None:
+    """Return a flag dict marking the week with the highest total `unit_label`
+    (the same `totals` series used to anchor the reach flags), or `None` if
+    there's no positive data."""
+    if pivot.empty:
+        return None
+    totals = pivot.sum(axis=1) if stacked else pivot.max(axis=1)
+    if totals.empty:
+        return None
+    week_start = totals.idxmax()
+    value = float(totals.loc[week_start])
+    if value <= 0:
+        return None
+    return {
+        "label": f"Top week by {unit_label}",
+        "value": value,
+        "date": week_start.strftime("%Y-%m-%d"),
+        "kind": "volume",
+    }
+
+
+def _add_reach_flag_annotations(
+    fig: go.Figure,
+    flags: list[dict[str, Any]] | None,
+    pivot: pd.DataFrame,
+    side: str,
+    px_per_unit: float,
+    stacked: bool = False,
+) -> float:
+    """Add flag annotations for top datapoints — 🚩 reach flags (publisher/author
+    + reach) and ⭐ "top week by volume" flags (in `MEDIA_SPLIT_VOLUME_COLOR`).
+
+    Returns the largest pixel distance (from the zero line) spanned by any flag's
+    box, so callers can extend the axis range to keep every box inside the plot.
+    """
+    if not flags or pivot.empty:
+        return 0.0
+    week_index = pivot.index
+    totals = pivot.sum(axis=1) if stacked else pivot.max(axis=1)
+    sign = 1 if side == "trad" else -1
+    week_slot: dict[pd.Timestamp, int] = {}
+    placements: list[tuple[int, pd.Timestamp, float, dict[str, Any]]] = []
+    for flag in flags:
+        date = pd.to_datetime(flag.get("date"), errors="coerce")
+        if pd.isna(date):
+            continue
+        week_start = (date - pd.Timedelta(days=date.weekday())).normalize()
+        if week_start not in week_index:
+            idx = week_index.get_indexer([week_start], method="nearest")[0]
+            week_start = week_index[idx]
+        base = float(totals.get(week_start, 0))
+        slot = week_slot.get(week_start, 0)
+        week_slot[week_start] = slot + 1
+        placements.append((slot, week_start, base, flag))
+
+    # Draw the farther-offset (higher-slot) flags first so their longer arrows
+    # sit behind the closer flags' labels/arrows instead of covering them.
+    placements.sort(key=lambda p: p[0], reverse=True)
+    max_required_px = 0.0
+    for slot, week_start, base, flag in placements:
+        offset = 10 + slot * MEDIA_SPLIT_FLAG_SLOT_PX
+        if flag.get("kind") == "volume":
+            text = f"⭐ {flag['label']}: {flag['value']:,.0f}"
+            accent = MEDIA_SPLIT_VOLUME_COLOR
+            box_height = MEDIA_SPLIT_FLAG_BOX_HEIGHT_VOLUME
+        else:
+            text = f"\U0001F6A9 {flag['label']}<br>Reach: {flag['value']:,.0f}"
+            accent = THEME_BORDER
+            box_height = MEDIA_SPLIT_FLAG_BOX_HEIGHT_REACH
+        fig.add_annotation(
+            x=week_start,
+            y=sign * base,
+            text=text,
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=0.8,
+            arrowcolor="#444",
+            ax=0,
+            ay=-offset if side == "trad" else offset,
+            align="left",
+            font=dict(size=10, color=THEME_TEXT),
+            bgcolor=THEME_SURFACE,
+            bordercolor=accent,
+            borderwidth=1,
+            borderpad=4,
+            yanchor="bottom" if side == "trad" else "top",
+        )
+        required_px = abs(base) * px_per_unit + offset + box_height
+        max_required_px = max(max_required_px, required_px)
+    return max_required_px
+
+
+def _smooth_nonnegative_curve(
+    index: pd.DatetimeIndex, values: pd.Series, points_per_segment: int = 8
+) -> tuple[pd.DatetimeIndex, np.ndarray]:
+    """Upsample a weekly series with shape-preserving (PCHIP) interpolation so
+    the rendered line looks smooth without the overshoot a cardinal/spline
+    curve produces — e.g. dipping below zero between a zero week and a sharply
+    rising one. PCHIP never exceeds the local min/max of neighbouring points,
+    so a series that never goes negative stays non-negative once interpolated.
+    """
+    if len(values) < 3:
+        return index, values.to_numpy()
+    x_numeric = index.values.astype("datetime64[ns]").astype("int64")
+    interpolator = PchipInterpolator(x_numeric, values.to_numpy())
+    x_dense = np.linspace(x_numeric[0], x_numeric[-1], (len(x_numeric) - 1) * points_per_segment + 1)
+    return pd.to_datetime(x_dense, unit="ns"), interpolator(x_dense)
+
+
+MEDIA_SPLIT_AXIS_PIXELS_PER_TICK = 68
+MEDIA_SPLIT_MARGIN_TOP_BASE = 20
+MEDIA_SPLIT_MARGIN_BOTTOM_BASE = 40
+MEDIA_SPLIT_MARGIN_LEFT = 70
+MEDIA_SPLIT_MARGIN_RIGHT = 150
+MEDIA_SPLIT_FLAG_SLOT_PX = 50
+MEDIA_SPLIT_FLAG_BOX_HEIGHT_REACH = 38
+MEDIA_SPLIT_FLAG_BOX_HEIGHT_VOLUME = 24
+MEDIA_SPLIT_MIN_HEIGHT_PX = 480
+MEDIA_SPLIT_VOLUME_COLOR = "#D3B745"
+
+
+def media_split_timeline_figure(
+    trad_df: pd.DataFrame,
+    some_df: pd.DataFrame,
+    stacked: bool = False,
+    trad_flags: list[dict[str, Any]] | None = None,
+    some_flags: list[dict[str, Any]] | None = None,
+) -> tuple[go.Figure, int]:
+    """Mirrored weekly timeline: Trad media types stacked/lined above zero, SoMe
+    platforms below zero (plotted as negative but labelled/hover'd as positive).
+
+    Returns ``(figure, height_px)`` — the height is sized to the data actually
+    rendered (no leftover empty space at top/bottom) while keeping the same
+    pixels-per-unit step on both halves of the y-axis, so equal Trad/SoMe
+    values remain directly comparable even though their axis limits differ.
+    """
+    fig = go.Figure()
+
+    trad_pivot = _media_split_weekly_pivot(trad_df, "media_type", "publications")
+    some_pivot = _media_split_weekly_pivot(some_df, "platform", "posts")
+
+    trad_extent = 0.0
+    some_extent = 0.0
+
+    if trad_pivot.empty and some_pivot.empty:
+        fig.add_annotation(
+            text="No weekly data",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(color=THEME_TEXT_MUTED, size=13),
+        )
+    else:
+        all_weeks = pd.DatetimeIndex(sorted(set(trad_pivot.index) | set(some_pivot.index)))
+        if not trad_pivot.empty:
+            trad_pivot = trad_pivot.reindex(all_weeks, fill_value=0)
+        if not some_pivot.empty:
+            some_pivot = some_pivot.reindex(all_weeks, fill_value=0)
+
+        # Axis extent reflects what's actually drawn: the stacked total when
+        # `stacked`, or the tallest individual line otherwise.
+        if stacked:
+            trad_extent = float(trad_pivot.sum(axis=1).max()) if not trad_pivot.empty else 0.0
+            some_extent = float(some_pivot.sum(axis=1).max()) if not some_pivot.empty else 0.0
+        else:
+            trad_extent = float(trad_pivot.max().max()) if not trad_pivot.empty else 0.0
+            some_extent = float(some_pivot.max().max()) if not some_pivot.empty else 0.0
+
+        fill_mode = "tonexty" if stacked else "tozeroy"
+        fill_alpha = 0.28 if stacked else 0.12
+        stack_kwargs = {"stackgroup": "trad"} if stacked else {}
+
+        for media_type in trad_pivot.columns:
+            color = media_label_color(media_type, "Trad")
+            smooth_x, smooth_y = _smooth_nonnegative_curve(trad_pivot.index, trad_pivot[media_type])
+            fig.add_trace(
+                go.Scatter(
+                    x=smooth_x,
+                    y=smooth_y,
+                    name=f"Trad – {media_type}",
+                    legendgroup="Trad",
+                    mode="lines",
+                    line=dict(width=2, color=color, shape="linear"),
+                    fill=fill_mode,
+                    fillcolor=_hex_to_rgba(color, fill_alpha),
+                    hovertemplate=(
+                        f"<b>Trad – {media_type}</b><br>"
+                        "Week: %{x|%d %b %Y}<br>"
+                        "Publications: %{y:,.0f}<extra></extra>"
+                    ),
+                    **stack_kwargs,
+                )
+            )
+
+        stack_kwargs = {"stackgroup": "some"} if stacked else {}
+        for platform in some_pivot.columns:
+            color = media_label_color(platform, "SoMe")
+            smooth_x, smooth_y = _smooth_nonnegative_curve(some_pivot.index, -some_pivot[platform])
+            fig.add_trace(
+                go.Scatter(
+                    x=smooth_x,
+                    y=smooth_y,
+                    name=f"SoMe – {platform}",
+                    legendgroup="SoMe",
+                    mode="lines",
+                    line=dict(width=2, color=color, dash="dot", shape="linear"),
+                    fill=fill_mode,
+                    fillcolor=_hex_to_rgba(color, fill_alpha),
+                    customdata=-smooth_y,
+                    hovertemplate=(
+                        f"<b>SoMe – {platform}</b><br>"
+                        "Week: %{x|%d %b %Y}<br>"
+                        "Posts: %{customdata:,.0f}<extra></extra>"
+                    ),
+                    **stack_kwargs,
+                )
+            )
+
+    # Both halves use the same step (pixels-per-unit), so equal Trad/SoMe
+    # values sit the same distance from zero — but each half only extends as
+    # far as its own data needs, instead of forcing a shared axis limit.
+    step = _nice_axis_step(max(trad_extent, some_extent))
+    trad_tick_count = max(1, math.ceil(trad_extent / step)) if trad_extent > 0 else 1
+    some_tick_count = max(1, math.ceil(some_extent / step)) if some_extent > 0 else 1
+    tickvals = (
+        [-i * step for i in range(some_tick_count, 0, -1)]
+        + [0]
+        + [i * step for i in range(1, trad_tick_count + 1)]
+    )
+    ticktext = [f"{abs(v):,.0f}" for v in tickvals]
+
+    px_per_unit = MEDIA_SPLIT_AXIS_PIXELS_PER_TICK / step
+
+    trad_volume_flag = _top_volume_week_flag(trad_pivot, stacked, "pub.")
+    some_volume_flag = _top_volume_week_flag(some_pivot, stacked, "posts")
+    all_trad_flags = [*(trad_flags or []), *([trad_volume_flag] if trad_volume_flag else [])]
+    all_some_flags = [*(some_flags or []), *([some_volume_flag] if some_volume_flag else [])]
+
+    trad_required_px = _add_reach_flag_annotations(fig, all_trad_flags, trad_pivot, "trad", px_per_unit, stacked=stacked)
+    some_required_px = _add_reach_flag_annotations(fig, all_some_flags, some_pivot, "some", px_per_unit, stacked=stacked)
+
+    if trad_flags or some_flags:
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=dict(size=8, color=THEME_TEXT_MUTED, symbol="triangle-up"),
+                name="Top 5 pub. by reach",
+                showlegend=True,
+                hoverinfo="skip",
+            )
+        )
+    if trad_volume_flag or some_volume_flag:
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=dict(size=8, color=MEDIA_SPLIT_VOLUME_COLOR, symbol="star"),
+                name="Top week by pub.",
+                showlegend=True,
+                hoverinfo="skip",
+            )
+        )
+
+    # Flag stacks extend the axis range beyond the data extent so their boxes
+    # land inside the plot area instead of bleeding into the margins — that's
+    # what keeps margins (and thus `height_px`) tight while still leaving room
+    # for every flag.
+    trad_tick_px = trad_tick_count * step * 1.05 * px_per_unit
+    some_tick_px = some_tick_count * step * 1.05 * px_per_unit
+    top_extra_px = max(0.0, trad_required_px - trad_tick_px)
+    bottom_extra_px = max(0.0, some_required_px - some_tick_px)
+    trad_edge = trad_tick_count * step * 1.05 + top_extra_px / px_per_unit
+    some_edge = some_tick_count * step * 1.05 + bottom_extra_px / px_per_unit
+
+    margin_t = MEDIA_SPLIT_MARGIN_TOP_BASE
+    margin_b = MEDIA_SPLIT_MARGIN_BOTTOM_BASE
+    axis_height = (trad_tick_count + some_tick_count) * MEDIA_SPLIT_AXIS_PIXELS_PER_TICK + top_extra_px + bottom_extra_px
+    height_px = max(MEDIA_SPLIT_MIN_HEIGHT_PX, int(axis_height + margin_t + margin_b))
+
+    # Section labels replace the old single (misleading) axis title — one
+    # centred in the Trad half (above zero) and one in the SoMe half (below).
+    fig.add_annotation(
+        text="Trad publications",
+        xref="paper",
+        x=0,
+        xshift=-58,
+        yref="y",
+        y=trad_edge / 2,
+        showarrow=False,
+        textangle=-90,
+        font=dict(size=11, color=THEME_TEXT_MUTED),
+        xanchor="center",
+        yanchor="middle",
+    )
+    fig.add_annotation(
+        text="SoMe posts",
+        xref="paper",
+        x=0,
+        xshift=-58,
+        yref="y",
+        y=-some_edge / 2,
+        showarrow=False,
+        textangle=-90,
+        font=dict(size=11, color=THEME_TEXT_MUTED),
+        xanchor="center",
+        yanchor="middle",
+    )
+
+    # Explicit zero line drawn above the data traces — with many overlapping
+    # filled lines converging on zero, the axis's own zeroline gets lost
+    # underneath them, so draw a same-thickness gray line on top instead.
+    fig.add_shape(
+        type="line",
+        xref="paper",
+        x0=0,
+        x1=1,
+        yref="y",
+        y0=0,
+        y1=0,
+        line=dict(color=THEME_TEXT_MUTED, width=2),
+        layer="above",
+    )
+
+    fig.update_layout(
+        title=None,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=THEME_TEXT),
+        margin=dict(l=MEDIA_SPLIT_MARGIN_LEFT, r=MEDIA_SPLIT_MARGIN_RIGHT, t=margin_t, b=margin_b),
+        hovermode="x unified",
+        legend=dict(orientation="v", y=1, x=1.02, xanchor="left", yanchor="top", title=None, font=dict(size=11)),
+        xaxis=dict(
+            title=None,
+            tickformat="%d %b",
+            dtick=7 * 24 * 60 * 60 * 1000,
+            showgrid=True,
+            gridcolor=THEME_GRID,
+        ),
+        yaxis=dict(
+            title=None,
+            tickvals=tickvals,
+            ticktext=ticktext,
+            range=[-some_edge, trad_edge],
+            showgrid=True,
+            gridcolor=THEME_GRID,
+            zeroline=False,
+        ),
+        hoverlabel=dict(bgcolor=THEME_SURFACE, bordercolor=THEME_BORDER, font=dict(color=THEME_TEXT, size=13)),
+    )
+    return fig, height_px
+
+
 TIMELINE_BASE_HEIGHT_PX = 380
 _NARRATIVE_ROW_HEIGHT_PX = 130
 
@@ -819,7 +1286,8 @@ def _timeline_with_narratives_figure(
         else:
             cursor = bottom
     for row_index, domain in enumerate(row_domains):
-        fig.update_yaxes(domain=list(domain), row=row_index + 1, col=1, secondary_y=False)
+        clamped = [max(0.0, min(1.0, value)) for value in domain]
+        fig.update_yaxes(domain=clamped, row=row_index + 1, col=1, secondary_y=False)
 
     title_offset_frac = title_offset_px / total_plot_px
     for annotation, domain in zip(fig.layout.annotations, row_domains[1:]):
@@ -1010,6 +1478,25 @@ TABLE_STYLE_DATA_CONDITIONAL = [
     },
 ]
 
+TOP_PUBLICATIONS_STYLE_DATA_CONDITIONAL = TABLE_STYLE_DATA_CONDITIONAL + [
+    {"if": {"column_id": "Reach"}, "textAlign": "right"},
+]
+
+TOP_POSTS_STYLE_DATA_CONDITIONAL = TABLE_STYLE_DATA_CONDITIONAL + [
+    {"if": {"column_id": "Reach"}, "textAlign": "right"},
+    {"if": {"column_id": "Engagement"}, "textAlign": "right"},
+]
+
+ROW_SELECTED_STYLE = {
+    "backgroundColor": "var(--bs-primary-bg-subtle)",
+}
+
+
+def selected_row_style_data_conditional(base: list[dict], active_cell: dict | None) -> list[dict]:
+    if not active_cell:
+        return base
+    return base + [{"if": {"row_index": active_cell.get("row")}, **ROW_SELECTED_STYLE}]
+
 
 OVERVIEW_TABLE_STYLE_CELL = {
     "backgroundColor": THEME_ROW_EVEN,
@@ -1035,6 +1522,12 @@ OVERVIEW_TABLE_STYLE_HEADER = {
     "overflow": "hidden",
     "textOverflow": "ellipsis",
 }
+
+# "Top N" tables (Narratives/Campaigns top publishers/journalists/publications) share the
+# Overview table's cell style, but their headers sit directly under chart controls
+# rather than a panel title, so they drop the header's top border.
+TOP_TABLE_STYLE_CELL = OVERVIEW_TABLE_STYLE_CELL
+TOP_TABLE_STYLE_HEADER = {**OVERVIEW_TABLE_STYLE_HEADER, "borderTop": "none"}
 
 OVERVIEW_TABLE_CSS = [
     {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
@@ -1099,10 +1592,6 @@ def na_panel(title: Any, children: Any, *, box: str = "panel", controls: Any = N
     else:
         title_node = [html.Div(title, className="na-element-title")]
     return html.Div(className=class_name, children=[*title_node, *content])
-
-
-# Backward-compatible alias — `_analysis_card(title, children)` == `na_panel(title, children, box="panel")`.
-_analysis_card = na_panel
 
 
 def build_overview_table_section(
@@ -1208,7 +1697,7 @@ def build_top_publications_table(table_id: str, table_data: list[dict[str, Any]]
         style_cell=TABLE_STYLE_CELL,
         style_header=TABLE_STYLE_HEADER,
         style_data=TABLE_STYLE_DATA,
-        style_data_conditional=TABLE_STYLE_DATA_CONDITIONAL + [{"if": {"column_id": "Reach"}, "textAlign": "right"}],
+        style_data_conditional=TOP_PUBLICATIONS_STYLE_DATA_CONDITIONAL,
         style_cell_conditional=cell_widths,
         css=TOOLTIP_CSS,
     )
@@ -1270,11 +1759,7 @@ def build_top_posts_table(table_id: str, table_data: list[dict[str, Any]], show_
         style_cell=TABLE_STYLE_CELL,
         style_header=TABLE_STYLE_HEADER,
         style_data=TABLE_STYLE_DATA,
-        style_data_conditional=TABLE_STYLE_DATA_CONDITIONAL
-        + [
-            {"if": {"column_id": "Reach"}, "textAlign": "right"},
-            {"if": {"column_id": "Engagement"}, "textAlign": "right"},
-        ],
+        style_data_conditional=TOP_POSTS_STYLE_DATA_CONDITIONAL,
         style_cell_conditional=cell_widths,
         css=TOOLTIP_CSS,
     )
