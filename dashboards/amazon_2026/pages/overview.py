@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import vizro.models as vm
 
-from dashboards.amazon_2026.charts import (
+from dashboards.amazon_2026.charts_overview import (
     overview_kpi_panel,
     overview_top_items_panel,
     pubs_posts_reach_by_source_panel,

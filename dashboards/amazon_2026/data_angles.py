@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import _optional_string_expr, _table, _table_column_map
+from dashboards.amazon_2026.data_common import (
+    ANGLE_ID_CANDIDATES,
+    ANGLE_LABEL_CANDIDATES,
+    _optional_string_expr,
+    _table,
+    _table_column_map,
+)
 from dashboards.amazon_2026.fixtures import _angles_fixture
 from data_sources.bq import safe_query
 
@@ -12,10 +18,10 @@ def load_angles() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
     angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id", "id"])
-    trad_angle_id_expr = _optional_string_expr("t", trad_columns, ["dominant_angle_id", "angle_id"])
-    some_angle_id_expr = _optional_string_expr("s", some_columns, ["dominant_angle_id", "angle_id"])
-    trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle_label"])
-    some_angle_expr = _optional_string_expr("s", some_columns, ["dominant_angle_label"])
+    trad_angle_id_expr = _optional_string_expr("t", trad_columns, ANGLE_ID_CANDIDATES)
+    some_angle_id_expr = _optional_string_expr("s", some_columns, ANGLE_ID_CANDIDATES)
+    trad_angle_expr = _optional_string_expr("t", trad_columns, ANGLE_LABEL_CANDIDATES)
+    some_angle_expr = _optional_string_expr("s", some_columns, ANGLE_LABEL_CANDIDATES)
 
     sql = f"""
     WITH

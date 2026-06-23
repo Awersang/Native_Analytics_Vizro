@@ -26,12 +26,39 @@ THEME_ROW_EVEN = "var(--amazon-publishers-row-even)"
 THEME_ROW_ODD = "var(--amazon-publishers-row-odd)"
 
 
-def load_and_filter(key: str, filter_column: str, value: str) -> pd.DataFrame:
-    """Load a registered dataset and filter to rows matching `value`, tolerating missing data."""
+def _theme_hoverlabel(size: int = 13, **extra) -> dict:
+    return {
+        "bgcolor": THEME_SURFACE,
+        "bordercolor": THEME_BORDER,
+        "font": {"color": THEME_TEXT, "size": size},
+        **extra,
+    }
+
+
+def _add_empty_figure_annotation(fig: go.Figure, message: str, color: str = THEME_TEXT_MUTED) -> None:
+    """Center a "no data" message in an otherwise-empty figure."""
+    fig.add_annotation(
+        text=message,
+        x=0.5,
+        y=0.5,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        font=dict(color=color, size=13),
+    )
+
+
+def safe_load(key: str) -> pd.DataFrame:
+    """Load a registered dataset, tolerating missing data."""
     try:
-        df = data_manager[key].load()
+        return data_manager[key].load()
     except Exception:
         return pd.DataFrame()
+
+
+def load_and_filter(key: str, filter_column: str, value: str) -> pd.DataFrame:
+    """Load a registered dataset and filter to rows matching `value`, tolerating missing data."""
+    df = safe_load(key)
     if not df.empty and filter_column in df.columns:
         return df[df[filter_column] == value]
     return pd.DataFrame()
@@ -121,6 +148,10 @@ DONUT_COLORS = [
     "#b8a33e",
     "#5aa4b1",
 ]
+
+# DONUT_COLORS plus two extra hues — used wherever a cycling palette needs a
+# couple more distinct colors than the 8-color donut set provides.
+NARRATIVE_LINE_COLORS = DONUT_COLORS + ["#e07040", "#7b5ea7"]
 
 
 # Wide qualitative palette for Topic Areas — large and varied enough that the
@@ -291,6 +322,80 @@ def _kpi_card(
         children.append(html.Div(caption, className="amazon-publishers-kpi-caption"))
     class_name = "amazon-publishers-kpi amazon-publishers-kpi-compact" if compact else "amazon-publishers-kpi"
     return html.Div(className=class_name, children=children)
+
+
+def donut_figure(
+    labels: list[str],
+    values: list[float],
+    colors: list[str],
+    hovertemplate: str,
+    direction: str = "clockwise",
+) -> go.Figure:
+    """Build the half-donut Pie figure shared by every mini-donut panel in this dashboard."""
+    total = sum(values)
+    slice_text = [
+        f"{label}<br>{value / total:.1%}" if total and (value / total) >= 0.03 else ""
+        for label, value in zip(labels, values)
+    ]
+    fig = go.Figure(
+        go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.62,
+            domain={"x": [0.2, 0.8], "y": [0.12, 0.88]},
+            sort=False,
+            direction=direction,
+            marker={"colors": colors, "line": {"color": THEME_SURFACE, "width": 0.5}},
+            text=slice_text,
+            textinfo="text",
+            textposition="outside",
+            textfont={"color": THEME_TEXT, "size": 11},
+            automargin=True,
+            hovertemplate=hovertemplate,
+            hoverlabel={"bgcolor": THEME_SURFACE, "bordercolor": THEME_BORDER, "font": {"color": THEME_TEXT}},
+            showlegend=False,
+        )
+    )
+    fig.update_layout(
+        autosize=True,
+        width=None,
+        height=None,
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        uniformtext={"minsize": 10, "mode": "hide"},
+    )
+    return fig
+
+
+def donut_panel(title: str, figure: go.Figure, *, graph_height: int | None = None) -> html.Div:
+    """Wrap a donut_figure() in the mini-donut card shell used on Narratives/Publishers/Discover."""
+    graph_style = {"width": "100%", "minWidth": 0}
+    graph_style["height"] = f"{graph_height}px" if graph_height else "100%"
+    return html.Div(
+        className="amazon-publishers-mini-donut",
+        style={"minHeight": f"{graph_height + 28}px"} if graph_height else {},
+        children=[
+            html.Div(
+                className="amazon-publishers-mini-donut-header",
+                children=[html.Div(title, className="amazon-publishers-mini-title")],
+            ),
+            dcc.Graph(
+                figure=figure,
+                responsive=True,
+                config={"displayModeBar": False},
+                className="amazon-publishers-mini-donut-graph",
+                style=graph_style,
+            ),
+        ],
+    )
+
+
+def empty_donut_panel(message: str = "No data available") -> html.Div:
+    return html.Div(
+        className="amazon-publishers-mini-donut amazon-publishers-mini-donut-empty",
+        children=[html.Div(message, className="amazon-publishers-mini-empty")],
+    )
 
 
 def _as_list(value: list[str] | str | None) -> list[str]:
@@ -771,15 +876,7 @@ def _timeline_figure(
                 )
             )
     if not fig.data:
-        fig.add_annotation(
-            text="No weekly data",
-            x=0.5,
-            y=0.5,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No weekly data")
     primary_label = _timeline_axis_title(
         selected_sources[0] if selected_sources else None,
         str(timeline_data.get("trad_metric", "publications")),
@@ -802,7 +899,7 @@ def _timeline_figure(
             gridcolor=THEME_GRID,
         ),
         yaxis=dict(title=primary_label, tickformat=",", rangemode="tozero", showgrid=True, gridcolor=THEME_GRID),
-        hoverlabel=dict(bgcolor=THEME_SURFACE, bordercolor=THEME_BORDER, font=dict(color=THEME_TEXT, size=13)),
+        hoverlabel=_theme_hoverlabel(),
     )
     if combined_mode and not shared_count_scale:
         fig.update_layout(
@@ -1019,15 +1116,7 @@ def media_split_timeline_figure(
     some_extent = 0.0
 
     if trad_pivot.empty and some_pivot.empty:
-        fig.add_annotation(
-            text="No weekly data",
-            x=0.5,
-            y=0.5,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No weekly data")
     else:
         all_weeks = pd.DatetimeIndex(sorted(set(trad_pivot.index) | set(some_pivot.index)))
         if not trad_pivot.empty:
@@ -1226,7 +1315,7 @@ def media_split_timeline_figure(
             gridcolor=THEME_GRID,
             zeroline=False,
         ),
-        hoverlabel=dict(bgcolor=THEME_SURFACE, bordercolor=THEME_BORDER, font=dict(color=THEME_TEXT, size=13)),
+        hoverlabel=_theme_hoverlabel(),
     )
     return fig, height_px
 
@@ -1942,13 +2031,7 @@ def _apply_detail_weekly_layout(
             showgrid=True,
             gridcolor=THEME_GRID,
         ),
-        hoverlabel=dict(
-            bgcolor=THEME_SURFACE,
-            bordercolor=THEME_BORDER,
-            font=dict(color=THEME_TEXT, size=13),
-            namelength=-1,
-            align="left",
-        ),
+        hoverlabel=_theme_hoverlabel(namelength=-1, align="left"),
     )
 
 
@@ -1968,12 +2051,7 @@ def detail_weekly_figure(
     df = data_frame.copy() if data_frame is not None else pd.DataFrame()
     fig = go.Figure()
     if df.empty or "week_start" not in df.columns:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No data available")
         _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
         return fig
 
@@ -1982,12 +2060,7 @@ def detail_weekly_figure(
     df = df.dropna(subset=["week_start"]).sort_values("week_start")
 
     if df.empty:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No data available")
         _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
         return fig
 
@@ -2097,12 +2170,7 @@ def detail_combined_weekly_figure(
         )
 
     if not fig.data:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No data available")
 
     _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
     fig.update_layout(

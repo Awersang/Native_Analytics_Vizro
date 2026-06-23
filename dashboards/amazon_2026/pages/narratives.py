@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, html, no_update
+from dash import Input, Output, State, callback, no_update
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_narratives import (
@@ -14,9 +14,7 @@ from dashboards.amazon_2026.charts_narratives import (
     _angles_table_rows,
     _filter_top_items_by_angle,
     _narrative_data_bar_styles,
-    _narrative_detail_combined_weekly_figure,
     _narrative_detail_content,
-    _narrative_detail_weekly_figure,
     _narrative_header_divider_styles,
     _narrative_small_multiples_figure,
     _narrative_weekly_figure,
@@ -37,6 +35,8 @@ from dashboards.amazon_2026.charts_shared import (
     _normalize_sources,
     build_top_posts_table,
     build_top_publications_table,
+    detail_combined_weekly_figure,
+    detail_weekly_figure,
 )
 from dashboards.amazon_2026.data_common import (
     NARRATIVE_DETAIL_KPI_KEY,
@@ -47,6 +47,7 @@ from dashboards.amazon_2026.data_common import (
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
+    basic_metric_sink,
     build_detail_timeline_response,
     metric_parameter,
     select_active_table_value,
@@ -79,7 +80,7 @@ def build_narratives_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-narrative-basic-metric-sink",
-                figure=narrative_basic_metric_sink(data_frame=PARAM_SINK_KEY),
+                figure=basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
         controls=[
@@ -99,11 +100,6 @@ def narratives_overview_panel(data_frame: pd.DataFrame):
 @capture("figure")
 def _narratives_timeline_panel(data_frame: pd.DataFrame):
     return build_narratives_combined_timeline_section(data_frame)
-
-
-@capture("figure")
-def narrative_basic_metric_sink(data_frame: pd.DataFrame, basic_metric: str = "publications"):
-    return html.Div(basic_metric, className="amazon-publishers-control-sink")
 
 
 @capture("figure")
@@ -128,7 +124,6 @@ def _select_narrative_from_table(active_cell, viewport_rows, table_rows):
         row_id_first=True,
         value_keys=["narrative_label"],
     )
-    print(f"[NARR-DEBUG] _select_narrative_from_table active_cell={active_cell} -> {result!r}")
     return result
 
 
@@ -143,8 +138,6 @@ def _update_narrative_details(
     records: list[dict[str, Any]] | None,
     overview_records: list[dict[str, Any]] | None,
 ):
-    from dash import ctx
-    print(f"[NARR-DEBUG] _update_narrative_details selected_label={selected_label!r} triggered_id={ctx.triggered_id!r} triggered={ctx.triggered!r}")
     return _narrative_detail_content(records or [], selected_label, overview_records or [])
 
 
@@ -196,8 +189,8 @@ def _update_narrative_detail_timeline(source: list[str] | None, basic_metric: st
         store_data,
         ref_code="P2S4G1",
         make_ref_label=ref_label,
-        combined_builder=_narrative_detail_combined_weekly_figure,
-        single_builder=_narrative_detail_weekly_figure,
+        combined_builder=detail_combined_weekly_figure,
+        single_builder=detail_weekly_figure,
     )
 
 

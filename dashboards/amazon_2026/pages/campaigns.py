@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, html, no_update
+from dash import Input, Output, State, callback, no_update
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_campaigns import (
@@ -43,6 +43,7 @@ from dashboards.amazon_2026.data_common import (
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
+    basic_metric_sink,
     build_detail_timeline_response,
     build_overview_table_response,
     metric_parameter,
@@ -72,7 +73,7 @@ def build_campaigns_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-campaign-basic-metric-sink",
-                figure=campaign_basic_metric_sink(data_frame=PARAM_SINK_KEY),
+                figure=basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
         controls=[
@@ -97,11 +98,6 @@ def campaign_campaigns_panel(data_frame: pd.DataFrame):
 @capture("figure")
 def campaign_details_panel(data_frame: pd.DataFrame):
     return build_campaign_details_section(data_frame)
-
-
-@capture("figure")
-def campaign_basic_metric_sink(data_frame: pd.DataFrame, basic_metric: str = "publications"):
-    return html.Div(basic_metric, className="amazon-publishers-control-sink")
 
 
 @callback(

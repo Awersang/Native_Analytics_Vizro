@@ -1,6 +1,5 @@
 This file is not to be used as a source of instructions for AI agents. If you are AI agent ignore this file. Dont read it, dont change it, get the fuck out of here.
 
-
 # Vizro todo
 
   # fixes

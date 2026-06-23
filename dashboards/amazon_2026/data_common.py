@@ -84,6 +84,23 @@ NON_CAMPAIGN_VALUES = "('', 'no', 'false', 'n', 'n/a', 'none', 'null', '0')"
 # Values in a `paid` column indicating sponsored/paid content.
 PAID_VALUES = "('paid', 'sponsored', 'branded', 'advertorial', 'promoted')"
 
+# SQL filter excluding placeholder/missing journalist names from top-journalists queries.
+JOURNALIST_EXCLUSION_FILTER = "LOWER(journalist) NOT IN ('unknown', 'brak', 'brak danych', 'n/a', 'na', 'none', '-')"
+
+# Column-name fallback lists for schema drift across data_*.py modules — every
+# call site needs the same candidates because the underlying tables disagree
+# on capitalization/naming across clients.
+CAMPAIGN_COLUMN_CANDIDATES = ["campaign_announcement", "Campaign_Announcement", "campaign"]
+SOME_SENTIMENT_CANDIDATES = ["Sentiment"]
+PUBLISHER_DISPLAY_CANDIDATES = ["publisher_display", "Publisher_Display"]
+TRAD_SUMMARY_CANDIDATES = ["Description", "_3P_Description", "Main_Text", "Summary"]
+SOME_CONTENT_CANDIDATES = ["Main_Text", "Description", "_3P_Description"]
+PAID_COLUMN_CANDIDATES = ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
+TRAD_ANGLE_CANDIDATES = ["dominant_angle"]
+SOME_ANGLE_CANDIDATES = ["angle", "dominant_angle"]
+ANGLE_ID_CANDIDATES = ["dominant_angle_id", "angle_id"]
+ANGLE_LABEL_CANDIDATES = ["dominant_angle_label"]
+
 
 def _table(name: str) -> str:
     return table_ref(DATASET_ID, name, project=PROJECT_ID)

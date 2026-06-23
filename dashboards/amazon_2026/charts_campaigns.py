@@ -7,7 +7,6 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 from dash import dash_table, dcc, html
-from vizro.managers import data_manager
 
 from dashboards.amazon_2026.charts_publishers import (
     SOURCE_OPTIONS,
@@ -39,7 +38,6 @@ from dashboards.amazon_2026.charts_shared import (
     TABLE_STYLE_HEADER,
     TOP_TABLE_STYLE_CELL,
     TOP_TABLE_STYLE_HEADER,
-    THEME_BORDER,
     THEME_GRID,
     THEME_SURFACE,
     THEME_TEXT,
@@ -48,6 +46,7 @@ from dashboards.amazon_2026.charts_shared import (
     _json_safe,
     _normalize_sources,
     _num,
+    _theme_hoverlabel,
     _timeline_available_sources,
     _timeline_chart_title,
     _timeline_figure,
@@ -58,9 +57,10 @@ from dashboards.amazon_2026.charts_shared import (
     detail_combined_weekly_figure,
     load_and_filter,
     na_panel,
+    safe_load,
     trad_some_controls,
+    _add_empty_figure_annotation,
 )
-_narrative_detail_combined_weekly_figure = detail_combined_weekly_figure
 from dashboards.amazon_2026.data_common import (
     CAMPAIGN_NARRATIVES_KEY,
     CAMPAIGN_PROFILE_KEY,
@@ -105,15 +105,7 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
 
     if df.empty:
-        fig.add_annotation(
-            text="No campaign data available",
-            x=0.5,
-            y=0.5,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No campaign data available", color=THEME_TEXT)
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
@@ -218,7 +210,7 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
             showgrid=True,
             gridcolor=THEME_GRID,
         ),
-        hoverlabel=dict(bgcolor=THEME_SURFACE, bordercolor=THEME_BORDER, font=dict(color=THEME_TEXT, size=13)),
+        hoverlabel=_theme_hoverlabel(),
     )
     return fig
 
@@ -425,10 +417,7 @@ def _campaign_profile_panel(
     profile_key: str = CAMPAIGN_PROFILE_KEY,
     narratives_key: str = CAMPAIGN_NARRATIVES_KEY,
 ) -> html.Div:
-    try:
-        df = data_manager[profile_key].load()
-    except Exception:
-        df = pd.DataFrame()
+    df = safe_load(profile_key)
 
     record: dict[str, Any] = {}
     if not df.empty and filter_column in df.columns:
@@ -605,7 +594,7 @@ def _campaign_detail_timeline_section(
 
     x_range = _build_shared_x_range(trad_df, some_df)
 
-    initial_fig = _narrative_detail_combined_weekly_figure(
+    initial_fig = detail_combined_weekly_figure(
         trad_df, some_df,
         trad_metric_col="weekly_publications", trad_label="Trad Publications", trad_cum_label="Trad Cumulative",
         some_metric_col="weekly_posts", some_label="SoMe Posts", some_cum_label="SoMe Cumulative",
@@ -676,14 +665,8 @@ def _load_narrative_sentiment_data(narrative_labels: list[str]) -> tuple[list[di
         return [], []
     normalized = {_normalize_narrative_label(label) for label in narrative_labels}
 
-    try:
-        trad_df = data_manager[NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY].load()
-    except Exception:
-        trad_df = pd.DataFrame()
-    try:
-        some_df = data_manager[NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY].load()
-    except Exception:
-        some_df = pd.DataFrame()
+    trad_df = safe_load(NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY)
+    some_df = safe_load(NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY)
 
     def _filter(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty or "narrative_label" not in df.columns:

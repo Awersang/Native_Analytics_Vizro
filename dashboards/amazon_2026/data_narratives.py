@@ -2,7 +2,25 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, PAID_VALUES, _coalesce_string_expr, _optional_string_expr, _sentiment_case, _table, _table_column_map, _weekly_grid_cte
+from dashboards.amazon_2026.data_common import (
+    ANGLE_ID_CANDIDATES,
+    ANGLE_LABEL_CANDIDATES,
+    CAMPAIGN_COLUMN_CANDIDATES,
+    JOURNALIST_EXCLUSION_FILTER,
+    NON_CAMPAIGN_VALUES,
+    PAID_COLUMN_CANDIDATES,
+    PAID_VALUES,
+    PUBLISHER_DISPLAY_CANDIDATES,
+    SOME_CONTENT_CANDIDATES,
+    SOME_SENTIMENT_CANDIDATES,
+    TRAD_SUMMARY_CANDIDATES,
+    _coalesce_string_expr,
+    _optional_string_expr,
+    _sentiment_case,
+    _table,
+    _table_column_map,
+    _weekly_grid_cte,
+)
 from dashboards.amazon_2026.fixtures import (
     _narrative_detail_kpi_fixture,
     _narrative_overview_fixture,
@@ -21,11 +39,8 @@ from dashboards.amazon_2026.fixtures import (
 from data_sources.bq import safe_query
 
 
-def _narrative_col_expr(alias: str, columns: dict[str, str]) -> str:
+def _narrative_label_expr(alias: str, columns: dict[str, str]) -> str:
     """Return a SQL expression for the narrative label column, preferring dominant_narrative."""
-    name = columns.get("dominant_narrative", "")
-    if name:
-        return f"{alias}.`{name}`"
     return _optional_string_expr(alias, columns, ["dominant_narrative", "narrative_label"])
 
 
@@ -59,7 +74,7 @@ def load_narrative_overview() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
     some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
 
     sql = f"""
     WITH trad_base AS (
@@ -122,7 +137,7 @@ def load_narrative_overview() -> pd.DataFrame:
 
 def load_narrative_weekly_reach() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
-    narrative_col = _narrative_col_expr("t", trad_columns)
+    narrative_col = _narrative_label_expr("t", trad_columns)
     sql = f"""
     WITH all_weekly AS (
         SELECT
@@ -150,7 +165,7 @@ def load_narrative_weekly_reach() -> pd.DataFrame:
 
 def load_narrative_some_weekly_engagement() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    narrative_col = _narrative_col_expr("s", some_columns)
+    narrative_col = _narrative_label_expr("s", some_columns)
     sql = f"""
     WITH all_weekly AS (
         SELECT
@@ -178,7 +193,7 @@ def load_narrative_some_weekly_engagement() -> pd.DataFrame:
 
 def load_narrative_trad_sentiment_timeline() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
-    narrative_col = _narrative_col_expr("t", trad_columns)
+    narrative_col = _narrative_label_expr("t", trad_columns)
     sql = f"""
     WITH base AS (
       SELECT
@@ -207,8 +222,8 @@ def load_narrative_trad_sentiment_timeline() -> pd.DataFrame:
 
 def load_narrative_some_sentiment_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    narrative_col = _narrative_col_expr("s", some_columns)
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
+    narrative_col = _narrative_label_expr("s", some_columns)
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
     sql = f"""
     WITH base AS (
       SELECT
@@ -237,7 +252,7 @@ def load_narrative_some_sentiment_timeline() -> pd.DataFrame:
 
 def load_narrative_trad_media_type_timeline() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
-    narrative_col = _narrative_col_expr("t", trad_columns)
+    narrative_col = _narrative_label_expr("t", trad_columns)
     sql = f"""
     SELECT
       NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
@@ -256,7 +271,7 @@ def load_narrative_trad_media_type_timeline() -> pd.DataFrame:
 
 def load_narrative_some_platform_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    narrative_col = _narrative_col_expr("s", some_columns)
+    narrative_col = _narrative_label_expr("s", some_columns)
     sql = f"""
     SELECT
       NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
@@ -280,16 +295,16 @@ def load_narratives_kpi() -> pd.DataFrame:
     trad_narr_expr = _optional_string_expr("t", trad_columns, ["narrative_label", "dominant_narrative"])
     some_narr_expr = _optional_string_expr("s", some_columns, ["narrative_label", "dominant_narrative"])
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     trad_paid_expr = _optional_string_expr(
-        "t", trad_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
+        "t", trad_columns, PAID_COLUMN_CANDIDATES
     )
     some_paid_expr = _optional_string_expr(
-        "s", some_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
+        "s", some_columns, PAID_COLUMN_CANDIDATES
     )
 
     # One base scan per source — all metrics derived from these two CTEs.
@@ -394,16 +409,16 @@ def load_narrative_detail_kpis() -> pd.DataFrame:
     trad_narr_expr = _optional_string_expr("t", trad_columns, ["narrative_label", "dominant_narrative"])
     some_narr_expr = _optional_string_expr("s", some_columns, ["narrative_label", "dominant_narrative"])
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     trad_paid_expr = _optional_string_expr(
-        "t", trad_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
+        "t", trad_columns, PAID_COLUMN_CANDIDATES
     )
     some_paid_expr = _optional_string_expr(
-        "s", some_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
+        "s", some_columns, PAID_COLUMN_CANDIDATES
     )
 
     sql = f"""
@@ -477,8 +492,8 @@ def load_narrative_top_publishers() -> pd.DataFrame:
 
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
     some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
-    trad_pub_expr = _optional_string_expr("t", trad_columns, ["publisher_display", "Publisher_Display"])
-    some_pub_expr = _optional_string_expr("s", some_columns, ["publisher_display", "Publisher_Display"])
+    trad_pub_expr = _optional_string_expr("t", trad_columns, PUBLISHER_DISPLAY_CANDIDATES)
+    some_pub_expr = _optional_string_expr("s", some_columns, PUBLISHER_DISPLAY_CANDIDATES)
 
     sql = f"""
     WITH trad_base AS (
@@ -534,7 +549,7 @@ def load_narrative_top_journalists() -> pd.DataFrame:
     )
     SELECT narrative_label, journalist, publications, reach
     FROM journalist_base
-    WHERE LOWER(journalist) NOT IN ('unknown', 'brak', 'brak danych', 'n/a', 'na', 'none', '-')
+    WHERE {JOURNALIST_EXCLUSION_FILTER}
     ORDER BY narrative_label, reach DESC
     """
     return safe_query(sql, fallback=_narrative_top_journalists_fixture())
@@ -548,13 +563,13 @@ def load_narrative_top_publications() -> pd.DataFrame:
     angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id", "id"])
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
     some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
-    trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
-    trad_angle_id_expr = _optional_string_expr("t", trad_columns, ["dominant_angle_id", "angle_id"])
-    some_angle_id_expr = _optional_string_expr("s", some_columns, ["dominant_angle_id", "angle_id"])
-    trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle_label"])
-    some_angle_expr = _optional_string_expr("s", some_columns, ["dominant_angle_label"])
+    trad_summary_expr = _coalesce_string_expr("t", trad_columns, TRAD_SUMMARY_CANDIDATES)
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
+    some_content_expr = _coalesce_string_expr("s", some_columns, SOME_CONTENT_CANDIDATES)
+    trad_angle_id_expr = _optional_string_expr("t", trad_columns, ANGLE_ID_CANDIDATES)
+    some_angle_id_expr = _optional_string_expr("s", some_columns, ANGLE_ID_CANDIDATES)
+    trad_angle_expr = _optional_string_expr("t", trad_columns, ANGLE_LABEL_CANDIDATES)
+    some_angle_expr = _optional_string_expr("s", some_columns, ANGLE_LABEL_CANDIDATES)
 
     sql = f"""
     WITH angle_lookup AS (

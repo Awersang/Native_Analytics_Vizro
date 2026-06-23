@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import _metric_pivot, _optional_string_expr, _sentiment_case, _table, _table_column_map
+from dashboards.amazon_2026.data_common import (
+    SOME_SENTIMENT_CANDIDATES,
+    _metric_pivot,
+    _optional_string_expr,
+    _sentiment_case,
+    _table,
+    _table_column_map,
+)
 from dashboards.amazon_2026.fixtures import (
     _media_type_period_fixture,
     _overview_fixture,
@@ -18,7 +25,7 @@ from data_sources.bq import safe_query
 
 def _some_sentiment_expr(alias: str) -> str:
     some_columns = _table_column_map("amazon_2026_some")
-    return _optional_string_expr(alias, some_columns, ["Sentiment"])
+    return _optional_string_expr(alias, some_columns, SOME_SENTIMENT_CANDIDATES)
 
 
 def load_tml_split() -> pd.DataFrame:

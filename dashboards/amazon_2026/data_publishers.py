@@ -3,7 +3,11 @@ from __future__ import annotations
 import pandas as pd
 
 from dashboards.amazon_2026.data_common import (
+    PUBLISHER_DISPLAY_CANDIDATES,
     PUBLISHER_SEED_CTE,
+    SOME_CONTENT_CANDIDATES,
+    SOME_SENTIMENT_CANDIDATES,
+    TRAD_SUMMARY_CANDIDATES,
     _coalesce_string_expr,
     _optional_json_string_expr,
     _optional_numeric_expr,
@@ -190,7 +194,7 @@ def load_publisher_trad_timeline() -> pd.DataFrame:
 
 def load_publisher_some_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
     sql = f"""
     WITH {PUBLISHER_SEED_CTE},
     base AS (
@@ -280,12 +284,12 @@ def load_publisher_top_publications() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
 
     trad_pub_uid_expr = _optional_string_expr("t", trad_columns, ["publisher_uid"])
-    trad_pub_display_expr = _optional_string_expr("t", trad_columns, ["publisher_display", "Publisher_Display"])
-    trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
+    trad_pub_display_expr = _optional_string_expr("t", trad_columns, PUBLISHER_DISPLAY_CANDIDATES)
+    trad_summary_expr = _coalesce_string_expr("t", trad_columns, TRAD_SUMMARY_CANDIDATES)
     some_pub_uid_expr = _optional_string_expr("s", some_columns, ["publisher_uid"])
-    some_pub_display_expr = _optional_string_expr("s", some_columns, ["publisher_display", "Publisher_Display"])
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
+    some_pub_display_expr = _optional_string_expr("s", some_columns, PUBLISHER_DISPLAY_CANDIDATES)
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
+    some_content_expr = _coalesce_string_expr("s", some_columns, SOME_CONTENT_CANDIDATES)
 
     sql = f"""
     WITH {PUBLISHER_SEED_CTE},

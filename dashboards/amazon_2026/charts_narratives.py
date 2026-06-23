@@ -9,12 +9,12 @@ from dash import Input, Output, State, callback, dash_table, dcc, html
 from plotly.subplots import make_subplots
 from dash.dash_table.Format import Format, Scheme
 
-from vizro.managers import data_manager
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_shared import (
     ACCENT_SOME,
     ACCENT_TRAD,
+    NARRATIVE_LINE_COLORS,
     NARRATIVE_SOME_COLUMNS,
     NARRATIVE_TRAD_COLUMNS,
     OVERVIEW_TABLE_STYLE_CELL,
@@ -36,15 +36,21 @@ from dashboards.amazon_2026.charts_shared import (
     _hex_to_rgba,
     _json_safe,
     _kpi_card,
+    donut_figure,
+    donut_panel,
+    empty_donut_panel,
     _narrative_data_bar_styles,
     _narrative_header_divider_styles,
     _narratives_table_columns,
     _normalize_sources,
     _num,
+    _theme_hoverlabel,
     detail_combined_weekly_figure,
     detail_weekly_figure,
+    _add_empty_figure_annotation,
     load_and_filter,
     na_panel,
+    safe_load,
     trad_some_controls,
     build_top_items_panel,
     build_top_items_table_data,
@@ -56,10 +62,6 @@ from dashboards.amazon_2026.charts_shared import (
     top_reach_flags,
 )
 
-# Backward-compat aliases used by internal callers in this file.
-_narrative_detail_weekly_figure = detail_weekly_figure
-_narrative_detail_combined_weekly_figure = detail_combined_weekly_figure
-_apply_narrative_weekly_layout = _apply_detail_weekly_layout
 from dashboards.amazon_2026.data_common import (
     ANGLES_KEY,
     NARRATIVE_SOME_PLATFORM_TIMELINE_KEY,
@@ -247,18 +249,11 @@ def overview_table_columns(source_filter: str | list[str] | None) -> list[dict[s
 # Weekly reach by narratives line chart
 # ---------------------------------------------------------------------------
 
-_NARRATIVE_LINE_COLORS = [
-    "#2f7dd1", "#22a6a1", "#d98933", "#8a6fd1",
-    "#35a66b", "#c84e5a", "#b8a33e", "#5aa4b1",
-    "#e07040", "#7b5ea7",
-]
+_NARRATIVE_LINE_COLORS = NARRATIVE_LINE_COLORS
 
 def build_narratives_combined_timeline_section(data_frame: pd.DataFrame) -> html.Div:
     trad_df = data_frame.copy() if data_frame is not None else pd.DataFrame()
-    try:
-        some_df = data_manager[NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY].load()
-    except Exception:
-        some_df = pd.DataFrame()
+    some_df = safe_load(NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY)
 
     shared_color_map = _build_shared_color_map(trad_df, some_df)
     x_range = _build_shared_x_range(trad_df, some_df)
@@ -361,13 +356,8 @@ def _narrative_weekly_figure(
     df = data_frame.copy() if data_frame is not None else pd.DataFrame()
     fig = go.Figure()
     if df.empty or "dominant_narrative" not in df.columns:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
-        _apply_narrative_weekly_layout(fig, y_title)
+        _add_empty_figure_annotation(fig, "No data available")
+        _apply_detail_weekly_layout(fig, y_title)
         return fig
 
     df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce")
@@ -455,7 +445,7 @@ def _narrative_weekly_figure(
         )
     )
 
-    _apply_narrative_weekly_layout(fig, y_title, x_range)
+    _apply_detail_weekly_layout(fig, y_title, x_range)
     return fig
 
 
@@ -561,12 +551,7 @@ def _narrative_small_multiples_figure(
         margin=dict(l=95, r=20, t=20, b=46),
         showlegend=False,
         hovermode="x",
-        hoverlabel=dict(
-            bgcolor=THEME_SURFACE,
-            bordercolor=THEME_BORDER,
-            font=dict(color=THEME_TEXT, size=12),
-            namelength=-1,
-        ),
+        hoverlabel=_theme_hoverlabel(size=12, namelength=-1),
     )
     fig.update_annotations(font=dict(color=THEME_TEXT_MUTED, size=10))
 
@@ -633,10 +618,7 @@ def _detail_records_from_frame(data_frame: pd.DataFrame) -> list[dict[str, Any]]
     df["narrative_label"] = df["narrative_label"].fillna("").astype(str)
     df = df[df["narrative_label"].str.strip() != ""]
 
-    try:
-        narratives_df = data_manager[NARRATIVES_KEY].load()
-    except Exception:
-        narratives_df = pd.DataFrame()
+    narratives_df = safe_load(NARRATIVES_KEY)
     for col in _NARRATIVE_TEXT_COLUMNS:
         if narratives_df.empty or col not in narratives_df.columns:
             df[col] = ""
@@ -662,55 +644,12 @@ def _narrative_sentiment_donut(
     ]
     slices = [(label, share) for label, share in slices if share > 0]
     if not slices:
-        return html.Div(
-            className="amazon-publishers-mini-donut amazon-publishers-mini-donut-empty",
-            children=[html.Div("No sentiment data", className="amazon-publishers-mini-empty")],
-        )
-    labels = [s[0] for s in slices]
-    values = [s[1] for s in slices]
-    colors = [SENTIMENT_COLORS[s[0]] for s in slices]
-    slice_text = [f"{s[0]}<br>{s[1]:.1%}" if s[1] >= 0.03 else "" for s in slices]
-    fig = go.Figure(
-        go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.62,
-            domain={"x": [0.2, 0.8], "y": [0.12, 0.88]},
-            sort=False,
-            marker={"colors": colors, "line": {"color": THEME_SURFACE, "width": 0.5}},
-            text=slice_text,
-            textinfo="text",
-            textposition="outside",
-            textfont={"color": THEME_TEXT, "size": 11},
-            automargin=True,
-            hovertemplate="%{label}: %{percent:.1%}<extra></extra>",
-            hoverlabel={"bgcolor": THEME_SURFACE, "bordercolor": THEME_BORDER, "font": {"color": THEME_TEXT}},
-            showlegend=False,
-        )
-    )
-    fig.update_layout(
-        autosize=True, width=None, height=None,
-        margin={"l": 0, "r": 0, "t": 0, "b": 0},
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        uniformtext={"minsize": 10, "mode": "hide"},
-    )
-    return html.Div(
-        className="amazon-publishers-mini-donut",
-        children=[
-            html.Div(
-                className="amazon-publishers-mini-donut-header",
-                children=[html.Div(title, className="amazon-publishers-mini-title")],
-            ),
-            dcc.Graph(
-                figure=fig,
-                responsive=True,
-                config={"displayModeBar": False},
-                className="amazon-publishers-mini-donut-graph",
-                style={"width": "100%", "height": "100%", "minWidth": 0},
-            ),
-        ],
-    )
+        return empty_donut_panel("No sentiment data")
+    labels = [label for label, _ in slices]
+    values = [share for _, share in slices]
+    colors = [SENTIMENT_COLORS[label] for label in labels]
+    figure = donut_figure(labels, values, colors, hovertemplate="%{label}: %{percent:.1%}<extra></extra>")
+    return donut_panel(title, figure)
 
 
 def _narrative_angles_overview(selected_label: str) -> tuple[int, float, float]:
@@ -789,7 +728,7 @@ def _narrative_detail_timeline_section(selected_label: str) -> html.Div:
 
     x_range = _build_shared_x_range(trad_df, some_df)
 
-    initial_fig = _narrative_detail_weekly_figure(
+    initial_fig = detail_weekly_figure(
         trad_df, "weekly_publications", "Trad Publications", "Trad Cumulative",
         source="Trad", x_range=x_range,
     )

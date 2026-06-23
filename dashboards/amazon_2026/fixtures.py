@@ -68,44 +68,6 @@ def _narratives_fixture() -> pd.DataFrame:
     )
 
 
-def _media_type_monthly_fixture() -> pd.DataFrame:
-    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    media_types = ["Online", "Radio", "Newswire", "Print", "TV", "Podcast", "Blog", "Newsletter", "Video"]
-    rows: list[dict[str, object]] = []
-    for month_num, month_label in enumerate(month_labels, start=1):
-        for media_type in media_types:
-            pub = 8
-            reach = 150000
-            if media_type == "Online":
-                pub = 120
-                reach = 9800000
-            elif media_type == "Radio":
-                pub = 14
-                reach = 1100000
-            elif media_type == "Print":
-                pub = 10
-                reach = 650000
-            rows.append(
-                {
-                    "month_num": month_num,
-                    "month_label": month_label,
-                    "media_type": media_type,
-                    "base_metric": "publications",
-                    "metric_value": pub,
-                }
-            )
-            rows.append(
-                {
-                    "month_num": month_num,
-                    "month_label": month_label,
-                    "media_type": media_type,
-                    "base_metric": "reach",
-                    "metric_value": reach,
-                }
-            )
-    return pd.DataFrame(rows)
-
-
 def _media_type_period_fixture() -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -127,57 +89,6 @@ def _media_type_period_fixture() -> pd.DataFrame:
             {"media_type": "Blog", "base_metric": "reach", "metric_value": 2700000},
             {"media_type": "Newsletter", "base_metric": "reach", "metric_value": 2100000},
             {"media_type": "Video", "base_metric": "reach", "metric_value": 1800000},
-        ]
-    )
-
-
-def _sentiment_monthly_fixture() -> pd.DataFrame:
-    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    sentiments = ["Positive", "Neutral", "Negative"]
-    rows: list[dict[str, object]] = []
-    for month_num, month_label in enumerate(month_labels, start=1):
-        for sentiment in sentiments:
-            pub = 10
-            reach = 1000000
-            if sentiment == "Positive":
-                pub = 54
-                reach = 6800000
-            elif sentiment == "Neutral":
-                pub = 40
-                reach = 5200000
-            elif sentiment == "Negative":
-                pub = 6
-                reach = 900000
-            rows.append(
-                {
-                    "month_num": month_num,
-                    "month_label": month_label,
-                    "sentiment": sentiment,
-                    "base_metric": "publications",
-                    "metric_value": pub,
-                }
-            )
-            rows.append(
-                {
-                    "month_num": month_num,
-                    "month_label": month_label,
-                    "sentiment": sentiment,
-                    "base_metric": "reach",
-                    "metric_value": reach,
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def _sentiment_period_fixture() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {"sentiment": "Positive", "base_metric": "publications", "metric_value": 648},
-            {"sentiment": "Neutral", "base_metric": "publications", "metric_value": 480},
-            {"sentiment": "Negative", "base_metric": "publications", "metric_value": 72},
-            {"sentiment": "Positive", "base_metric": "reach", "metric_value": 81600000},
-            {"sentiment": "Neutral", "base_metric": "reach", "metric_value": 62400000},
-            {"sentiment": "Negative", "base_metric": "reach", "metric_value": 10800000},
         ]
     )
 

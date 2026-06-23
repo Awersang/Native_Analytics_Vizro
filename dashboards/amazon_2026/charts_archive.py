@@ -10,21 +10,23 @@ from dash import Input, Output, State, callback, dcc, html
 from scipy.stats import gaussian_kde
 
 from dashboards.amazon_2026.charts_shared import (
+    NARRATIVE_LINE_COLORS,
     THEME_BORDER,
     THEME_GRID,
     THEME_SURFACE,
     THEME_TEXT,
     THEME_TEXT_MUTED,
+    _add_empty_figure_annotation,
     _hex_to_rgba,
     _json_safe,
+    _theme_hoverlabel,
     na_panel,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 
-ARCHIVE_NARRATIVE_COLORS = [
-    "#2f7dd1", "#22a6a1", "#d98933", "#8a6fd1",
-    "#35a66b", "#c84e5a", "#b8a33e", "#5aa4b1",
-    "#e07040", "#7b5ea7",
+# NARRATIVE_LINE_COLORS plus extra hues — archive has more clusters to color
+# distinctly than the narratives/donut palettes need.
+ARCHIVE_NARRATIVE_COLORS = NARRATIVE_LINE_COLORS + [
     "#cf844d", "#493aaf", "#47b931", "#c65689",
     "#3196b9", "#afab3a", "#a44dcf", "#3aaf66",
     "#b93c31", "#566dc6", "#75b931", "#af3a97",
@@ -172,12 +174,7 @@ def _archive_figure(
     fig = go.Figure()
 
     if df.empty:
-        fig.add_annotation(
-            text="No UMAP data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
+        _add_empty_figure_annotation(fig, "No UMAP data available")
         _apply_archive_layout(fig)
         return fig
 
@@ -319,7 +316,7 @@ def _apply_archive_layout(fig: go.Figure) -> None:
         ),
         xaxis=dict(title=None, showgrid=True, gridcolor=THEME_GRID, zeroline=False, showticklabels=False),
         yaxis=dict(title=None, showgrid=True, gridcolor=THEME_GRID, zeroline=False, showticklabels=False),
-        hoverlabel=dict(bgcolor=THEME_SURFACE, bordercolor=THEME_BORDER, font=dict(color=THEME_TEXT, size=12)),
+        hoverlabel=_theme_hoverlabel(size=12),
     )
 
 

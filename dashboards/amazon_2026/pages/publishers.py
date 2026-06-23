@@ -6,8 +6,7 @@ from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, html, no_update
-from vizro.managers import data_manager
+from dash import Input, Output, State, callback, no_update
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_publishers import (
@@ -38,6 +37,7 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_figure,
     _timeline_records_from_frame,
     register_top_items_callback,
+    safe_load,
 )
 from dashboards.amazon_2026.data_common import (
     PARAM_SINK_KEY,
@@ -50,18 +50,13 @@ from dashboards.amazon_2026.data_common import (
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
+    basic_metric_sink,
     build_overview_table_response,
     metric_parameter,
     select_active_table_value,
 )
 
 register_top_items_callback("amazon-2026-publisher")
-
-
-def _uid_rows(df: pd.DataFrame, uid: str) -> pd.DataFrame:
-    if "publisher_uid" in df.columns:
-        return df[df["publisher_uid"] == uid]
-    return df
 
 
 def build_publishers_page(base_path: str) -> vm.Page:
@@ -81,7 +76,7 @@ def build_publishers_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-publisher-basic-metric-sink",
-                figure=publisher_basic_metric_sink(data_frame=PARAM_SINK_KEY),
+                figure=basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
         layout=vm.Flex(direction="column", gap="20px"),
@@ -102,11 +97,6 @@ def publishers_overview_panel(data_frame: pd.DataFrame):
 @capture("figure")
 def publishers_details_panel(data_frame: pd.DataFrame):
     return build_publishers_details_section(data_frame)
-
-
-@capture("figure")
-def publisher_basic_metric_sink(data_frame: pd.DataFrame, basic_metric: str = "publications"):
-    return html.Div(basic_metric, className="amazon-publishers-control-sink")
 
 
 @callback(
@@ -185,7 +175,13 @@ def _update_author_details(
             PUBLISHER_TOP_PUBLICATIONS_KEY,
         ]
         with ThreadPoolExecutor(max_workers=5) as executor:
-            loaded = list(executor.map(lambda k: _uid_rows(data_manager[k].load(), selected_uid), detail_keys))
+            def _load_uid_rows(key: str) -> pd.DataFrame:
+                df = safe_load(key)
+                if df.empty or "publisher_uid" not in df.columns:
+                    return pd.DataFrame()
+                return df[df["publisher_uid"] == selected_uid]
+
+            loaded = list(executor.map(_load_uid_rows, detail_keys))
         trad_timeline = _timeline_records_from_frame(loaded[0])
         some_timeline = _timeline_records_from_frame(loaded[1])
         topic_areas = _topic_area_records_from_frame(loaded[2])

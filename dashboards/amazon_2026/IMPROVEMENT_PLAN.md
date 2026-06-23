@@ -1,9 +1,18 @@
 # Amazon 2026 Dashboard — Deep Architecture Review & Improvement Plan
 
-> Status: **COMPLETE.** All 13 sections below are filled in. Nothing in this document has been
-> implemented — this is analysis + recommendations only. Every concrete claim (file paths, line
+> Status: **COMPLETE.** All 13 sections below are filled in. Every concrete claim (file paths, line
 > numbers, counts) was verified by direct reading or `grep`/`wc` against this repository, not
 > inferred; see §13 for the prioritized action list this whole document builds toward.
+>
+> **Update (2026-06-24): a first implementation pass has landed** (uncommitted working-tree
+> changes, not yet merged). Verified against current code, not assumed from this document's
+> original claims — see §13 for which specific numbered items are now done/partial/still open.
+> Done: Tier 0 #1 (print debug removed), #4 (preload timing logs); Tier 3 #13 (preload
+> consolidation), #16 partial (campaign-column candidate list consolidated; sentiment-case
+> adoption mostly but not fully consolidated; publisher-identity COALESCE still duplicated); Tier 4
+> #20 started (a `tests/` directory now exists). **Still open, including both items this document
+> calls the single highest-payoff fixes in the whole review: Tier 1 #6 (cache TTL) and #7
+> (min-instances=1).** Those two are picked out as the next move — see the end of §13.
 
 Scope: `dashboards/amazon_2026/**` (the dashboard itself) plus the shared platform code it
 depends on (`app.py`, `config.py`, `dashboards/_base.py`, `data_sources/bq.py`, `tenancy/*`,
@@ -153,8 +162,8 @@ dashboards/amazon_2026/
   charts_shared.py        2,119 lines — color palettes, na_panel(), KPI cards, table style constants,
                            AND ~700 lines of nontrivial chart-geometry code (timeline figures, PCHIP
                            smoothing, flag-annotation pixel math) that arguably isn't "shared" at all
-  charts.py / charts_narratives.py / charts_publishers.py / charts_campaigns.py /
-  charts_topic_areas.py / charts_discover.py / charts_archive.py
+  charts_overview.py (renamed from charts.py) / charts_narratives.py / charts_publishers.py /
+  charts_campaigns.py / charts_topic_areas.py / charts_discover.py / charts_archive.py
                           one module per page: figure builders + dash_table builders + (in several
                           cases) the page's @callback definitions live here, not in pages/*.py
   dev_ids.py               dev-mode "P1S2G1"-style reference-code overlay (clever, cheap, low-risk)
@@ -1111,47 +1120,41 @@ through deliberately, in whatever order matches available time and risk appetite
 These are all small, mechanical, and each independently worth doing regardless of anything else
 on this list:
 
-1. Remove/replace the `print("[NARR-DEBUG] ...")` statements in `narratives.py` with proper
-   `logger.debug(...)` calls, or delete them outright (§5.4, §11.2).
-2. Decide and act on `set_dev_mode(True)` (`pages/__init__.py:36`) — either gate it on
-   `settings.is_dev`, or rename the concept since it's clearly meant to be permanent (§5.3, §10.3).
-3. Add a `threading.Lock` around `_server_discover_data()`'s populate-if-empty check
-   (`charts_discover.py:57-72`) — five lines, removes a redundant-work race under concurrent
-   first requests (§8.3).
-4. Add one `logger.info` timing line each to `_server_discover_data()`'s populate branch and the
-   five preload fan-outs, so cold-start behavior becomes observable in logs rather than inferred
-   (§11.2).
-5. Confirm and document (one comment, one line) that the Firebase Web API key in `cloudbuild.yaml`
-   is intentionally non-secret, so it isn't "fixed" into Secret Manager for the wrong reason later
-   while masking where an actual secret might be exposed (§12.4).
+1. ✅ **DONE.** Remove/replace the `print("[NARR-DEBUG] ...")` statements in `narratives.py` with
+   proper `logger.debug(...)` calls, or delete them outright (§5.4, §11.2).
+2. ⬜ **Still open.** Decide and act on `set_dev_mode(True)` (`pages/__init__.py:36`) — still called
+   unconditionally, not gated on `settings.is_dev` (§5.3, §10.3).
+3. ✅ **DONE (2026-06-24).** Added a `threading.Lock`-guarded double-check around
+   `_server_discover_data()`'s populate-if-empty check (`charts_discover.py`) — removes the
+   redundant-work race under concurrent first requests (§8.3).
+4. ✅ **DONE.** `logger.info` timing lines now log on preload completion (`__init__.py`) — cold-
+   start behavior is observable in logs (§11.2).
+5. ⬜ **Still open.** No comment added near `FIREBASE_API_KEY` in `cloudbuild.yaml` yet (§12.4).
 
 ### Tier 1 — infrastructure/config changes: highest payoff per hour spent
 
 These aren't code refactors — they're config and small wiring changes that directly fix the
 biggest latency/consistency/cost risks found in this review:
 
-6. **Raise `CACHE_DEFAULT_TIMEOUT` from 600 (10 min) to 3600 (1 hour) in `app.py`.** Single
-   highest-value, lowest-effort fix in this entire document — the underlying data updates at most
-   once a day, so the current 10-minute TTL re-fetches everything from BigQuery up to 144
-   times/day for no freshness benefit (§9.1). One constant, no refactor, agreed with the team.
-   Do this first — it's a one-line change with no downside.
-7. **Set `--min-instances=1` on the Cloud Run service.** Directly eliminates the worst-case
-   cold-start scenario (§8.2: 2 workers × ~40 concurrent BigQuery queries racing for 1 vCPU/1GB on
-   a cold container) for the cost of one always-on instance. Do this before anything else on this
-   list (besides #6) if a client might ever load the dashboard after an idle period.
-8. Add a `threading.Lock`-guarded TTL (matching whatever #6 lands on) to
+6. ⬜ **Still open — do this next.** Raise `CACHE_DEFAULT_TIMEOUT` from 600 (10 min) to 3600
+   (1 hour) in `app.py`. Confirmed still `600` in the current code. Single highest-value,
+   lowest-effort fix in this entire document — the underlying data updates at most once a day, so
+   the current 10-minute TTL re-fetches everything from BigQuery up to 144 times/day for no
+   freshness benefit (§9.1). One constant, no refactor, agreed with the team.
+7. ⬜ **Still open — do this next.** Set `--min-instances=1` on the Cloud Run service. Confirmed
+   still `0` in `cloudbuild.yaml`. Directly eliminates the worst-case cold-start scenario (§8.2:
+   2 workers × ~40 concurrent BigQuery queries racing for 1 vCPU/1GB on a cold container) for the
+   cost of one always-on instance.
+8. ⬜ **Still open.** Add a `threading.Lock`-guarded TTL (matching whatever #6 lands on) to
    `_server_discover_data()`'s cache (§8.3, §9.1) so Discover stops silently diverging from every
    other page's freshness guarantee the longer a worker has been alive — ideally by folding this
    into `data_manager` instead of maintaining a second hand-rolled cache next to it.
-9. Move `tenancy.events.record_usage()` off the synchronous request path in
-   `app.py::_install_access_gate` (§8.4) — fire-and-forget background thread, removing a Firestore
-   round-trip from every single page navigation's latency budget.
-10. Add a Firestore TTL policy (or scheduled rollup) on the usage-events collection (§9.4) before
-    unbounded analytics-write growth becomes a cost-investigation a year from now.
-11. Optional, lower priority than #6-10: move `flask_caching`'s backend from `SimpleCache` to a
-    shared backend (Redis/Memorystore) to close the remaining multi-instance cache-fragmentation
-    gap (§9.1) — worth doing if/when this runs at higher concurrent-instance counts, but #6 alone
-    already removes most of the cost impact, so this is cleanup, not urgency.
+9. ⬜ **Still open.** `tenancy.events.record_usage()` is still called synchronously inline in
+   `app.py::_install_access_gate` (§8.4) — move to a fire-and-forget background thread.
+10. ⬜ **Still open.** No Firestore TTL policy (or scheduled rollup) on the usage-events
+    collection yet (§9.4).
+11. ⬜ **Still open, lowest priority of this tier.** `flask_caching` still uses `SimpleCache`, not
+    a shared backend (§9.1).
 
 ### Tier 2 — close the multi-tenancy gap (schedule deliberately, don't discover under deadline)
 
@@ -1169,33 +1172,39 @@ Best done together as a single focused pass, since they're all "delete duplicate
 nothing visible" — low risk, and the kind of work that's easiest to justify in one batch rather
 than piecemeal:
 
-13. Collapse the 5 near-identical startup preload functions into one parameterized helper (§8.1).
-14. Extract the 3x-duplicated sentiment donut figure, the 2x-duplicated `_data_bar_column_styles`,
-    and the 2x-duplicated `_combined_narratives_from_record` into `charts_shared.py` proper with
-    public names (§4.2, §10.2).
-15. Make the top publishers/journalists/publications table builder a real shared API instead of a
-    private cross-module import from `charts_narratives.py` into `charts_campaigns.py` (§4.2).
-16. Consolidate publisher-identity resolution (§3.3) and the campaign-column candidate list
-    (§3.3) into single shared definitions in `data_common.py`; replace every inline
-    `LIKE 'pos%'`-style sentiment check with the existing `_sentiment_case()` helper.
-17. Build a `build_standard_page()` factory for the five pages that currently hand-roll near-
-    identical `vm.Page(...)` scaffolding (§5.1).
-18. Rename `--amazon-publishers-*` CSS custom properties to `--na-*` directly and delete the alias
-    layer (§2.3, §7.3).
-19. Consolidate the redundant per-page BigQuery scans noted in §9.1 (e.g. Overview's seven
-    independent full scans of the same one or two source tables) into fewer, shared base queries —
-    do this after, and separately from, the TTL fix (Tier 1 #6), since it addresses *how much*
-    work happens per refresh rather than *how often* the refresh happens.
+13. ✅ **DONE.** Collapse the 5 near-identical startup preload functions into one parameterized
+    helper (§8.1) — confirmed consolidated in `__init__.py`.
+14. **Mostly done, one piece left.** `_data_bar_column_styles`/table-bar-styling was already
+    consolidated into `charts_shared.py::_narrative_data_bar_styles`, shared by both pages.
+    `_combined_narratives_from_record` now exists in one place only (`charts_publishers.py`), not
+    duplicated. The sentiment donut figure was still genuinely triplicated
+    (`charts_narratives.py::_narrative_sentiment_donut`, `charts_publishers.py::_mini_donut_chart`,
+    `charts_discover.py::_discover_engagement_sentiment_donut`) — ✅ now consolidated into
+    `charts_shared.py::donut_figure()`/`donut_panel()`/`empty_donut_panel()` (§4.2, §10.2).
+15. ⬜ **Still open.** The top publishers/journalists/publications table builder is still a
+    private cross-module import from `charts_narratives.py` into `charts_campaigns.py`, not a
+    shared public API (§4.2).
+16. **Partially done.** The campaign-column candidate list is now a single `data_common.py`
+    constant (`CAMPAIGN_COLUMN_CANDIDATES`), used consistently across `data_narratives.py`,
+    `data_campaigns.py`, `data_topic_areas.py` — confirmed ✅. Most `_sentiment_case()` adoption is
+    now consistent, but a handful of inline `LIKE 'pos%'` sentiment checks remain
+    (`data_narratives.py` lines ~85/99, `data_topic_areas.py` lines ~133/153/208/226) — not fully
+    converted yet. Publisher-identity COALESCE resolution is still duplicated, not consolidated.
+17. ⬜ **Still open.** No `build_standard_page()` factory yet — the five pages still hand-roll
+    near-identical `vm.Page(...)` scaffolding (§5.1).
+18. ⬜ **Still open.** `--amazon-publishers-*` CSS custom properties are still in use, not renamed
+    to `--na-*` (§2.3, §7.3).
+19. ⬜ **Still open.** The redundant per-page BigQuery scans noted in §9.1 are not yet
+    consolidated — do this after, and separately from, the TTL fix (Tier 1 #6).
 
 ### Tier 4 — foundational investment (start small, this is the long game)
 
-20. **Start a `tests/` directory.** Even just the five items in §11.1 (SQL-fragment helpers,
-    fixture-shape assertions, pure chart-geometry functions, one Discover end-to-end smoke test,
-    `tenancy/access.py`'s pure functions) would take this codebase from zero automated
-    verification to "the highest-risk 20% of the code has a safety net." This is the single
-    investment that makes every other item on this list — and everything written after this
-    review — safer to do quickly. Start with #1 on that sub-list (SQL-fragment helpers); it
-    requires no test infrastructure beyond bare `pytest` and no BigQuery access.
+20. **Started.** A `tests/` directory now exists (`test_access.py`, `test_security.py`,
+    `test_routes.py`, `test_dashboard_discovery.py`, `test_amazon_2026_publishers.py`,
+    `conftest.py`) — `tenancy/access.py` (§11.1 sub-item 5) and some pure chart helpers (§11.1
+    sub-item 3) are covered. Still missing from the original five-item list: SQL-fragment-builder
+    tests for `data_common.py` (sub-item 1, the highest ratio of confidence-to-effort), fixture-
+    shape assertions (sub-item 2), and the Discover end-to-end smoke test (sub-item 4).
 21. Split `charts_shared.py` into `theme.py` / `ui_components.py` / `timeline_charts.py` (§4.1) —
     do this *after* Tier 3's dedup pass, so there's less to move.
 22. Design and prototype a BigQuery normalization view (or equivalent) that exposes one stable
@@ -1211,6 +1220,23 @@ than piecemeal:
     marquee AI feature stops being a dead end on the dashboard that matters most — or, if not a
     priority, explicitly suppress the chat widget on dashboards without a registered provider so
     it isn't a visible dead end in the meantime.
+
+### Recommended next two (2026-06-24): highest impact, lowest risk, still open
+
+Picked from everything still open above, not from scratch — these are the only two items this
+document itself calls "highest payoff" / "no downside," and both remain untouched in the current
+code:
+
+1. **Tier 1 #6 — raise `CACHE_DEFAULT_TIMEOUT` to 3600 in `app.py`.** One constant. Zero behavior
+   risk (the data source updates at most daily, already agreed with the team). Cuts BigQuery
+   re-fetch volume ~6x.
+2. **Tier 1 #7 — set `--min-instances=1` in `cloudbuild.yaml`.** One deploy-config flag. Removes
+   the cold-start/OOM/502 risk described in §8.2. The only "cost" is a small always-on Cloud Run
+   instance charge — no code risk at all.
+
+Both are pure config changes (no code paths touched), independent of each other, and reversible by
+flipping the value back. Tier 0 items #2/#3/#5 are equally low-risk but lower-impact (cosmetic/
+observability), so they're good filler work, not the next priority.
 
 ---
 

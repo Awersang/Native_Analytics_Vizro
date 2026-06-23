@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, html, no_update
+from dash import Input, Output, State, callback, no_update
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_campaigns import build_detail_content
@@ -32,7 +32,6 @@ from dashboards.amazon_2026.charts_shared import (
 from dashboards.amazon_2026.charts_topic_areas import (
     _topic_area_available_sources,
     _topic_area_breakdown_records,
-    _topic_area_media_available_sources,
     _topic_area_media_records,
     _topic_area_media_sankey_figure,
     _topic_area_theme_treemap_figure,
@@ -55,6 +54,7 @@ from dashboards.amazon_2026.data_common import (
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
+    basic_metric_sink,
     build_detail_timeline_response,
     build_overview_table_response,
     metric_parameter,
@@ -89,7 +89,7 @@ def build_topic_areas_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-topic-area-basic-metric-sink",
-                figure=topic_area_basic_metric_sink(data_frame=TOPIC_AREA_BREAKDOWN_KEY),
+                figure=basic_metric_sink(data_frame=TOPIC_AREA_BREAKDOWN_KEY),
             ),
         ],
         layout=vm.Flex(direction="column", gap="20px"),
@@ -124,11 +124,6 @@ def topic_area_details_panel(data_frame: pd.DataFrame):
     return build_topic_area_details_section(data_frame)
 
 
-@capture("figure")
-def topic_area_basic_metric_sink(data_frame: pd.DataFrame, basic_metric: str = "publications"):
-    return html.Div(basic_metric, className="amazon-publishers-control-sink")
-
-
 @callback(
     Output("amazon-2026-topic-area-treemap", "figure"),
     Output("amazon-2026-topic-area-source", "value"),
@@ -161,7 +156,7 @@ def _update_topic_area_media_sankey(
     records: list[dict[str, Any]] | None,
 ):
     records = records or []
-    available_sources = _topic_area_media_available_sources(records)
+    available_sources = _topic_area_available_sources(records)
     selected_sources = _normalize_sources(source_filter, available_sources)
     fig = _topic_area_media_sankey_figure(records, selected_sources, basic_metric or "publications")
     return fig, selected_sources

@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from dashboards.amazon_2026.data_common import (
+    SOME_CONTENT_CANDIDATES,
+    TRAD_SUMMARY_CANDIDATES,
     _coalesce_string_expr,
     _optional_numeric_expr,
     _optional_string_expr,
@@ -26,7 +28,7 @@ def load_discover_items() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
 
-    trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
+    trad_summary_expr = _coalesce_string_expr("t", trad_columns, TRAD_SUMMARY_CANDIDATES)
     trad_full_text_expr = _coalesce_string_expr(
         "t", trad_columns, ["Main_Text", "Body", "Article_Text", "Content", "Full_Text", "Description", "_3P_Description", "Summary"]
     )
@@ -34,7 +36,7 @@ def load_discover_items() -> pd.DataFrame:
     trad_narrative_expr = _optional_string_expr("t", trad_columns, ["narrative_label", "dominant_narrative"])
     trad_journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist", "Byline", "Author"])
 
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
+    some_content_expr = _coalesce_string_expr("s", some_columns, SOME_CONTENT_CANDIDATES)
     some_topic_area_expr = _optional_string_expr("s", some_columns, ["Topic_Area"])
     some_narrative_expr = _optional_string_expr("s", some_columns, ["narrative_label", "dominant_narrative"])
     some_engagement_positive_expr = _optional_numeric_expr("s", some_columns, ["engagement_positive"])

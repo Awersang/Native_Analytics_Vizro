@@ -12,11 +12,11 @@ from dashboards.amazon_2026.charts_shared import (
     MEDIA_TYPE_COLORS,
     PLATFORM_COLORS,
     SENTIMENT_COLORS,
-    THEME_BORDER,
     THEME_SURFACE,
     THEME_TEXT,
     _kpi_card,
     _num,
+    _theme_hoverlabel,
     build_top_items_panel,
     na_panel,
     register_top_items_callback,
@@ -25,14 +25,6 @@ from dashboards.amazon_2026.data_common import MEDIA_TYPE_ORDER, MONTH_ORDER
 from dashboards.amazon_2026.dev_ids import ref_label
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
-
-
-def _theme_hoverlabel(size: int = 13) -> dict:
-    return {
-        "bgcolor": THEME_SURFACE,
-        "bordercolor": THEME_BORDER,
-        "font": {"color": THEME_TEXT, "size": size},
-    }
 
 
 def _get_metric(data_frame: pd.DataFrame) -> str:

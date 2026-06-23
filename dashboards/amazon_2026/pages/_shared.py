@@ -5,6 +5,19 @@ from typing import Any, Callable
 
 import pandas as pd
 import vizro.models as vm
+from dash import html
+from vizro.models.types import capture
+
+
+@capture("figure")
+def basic_metric_sink(data_frame: pd.DataFrame, basic_metric: str = "publications"):
+    """Invisible figure whose sole job is to receive the basic-metric Parameter value.
+
+    Every detail page (Campaigns/Narratives/Publishers/Topic Areas) wires this in so
+    `basic_metric` reaches their other callbacks via the rendered div's children.
+    """
+    return html.Div(basic_metric, className="amazon-publishers-control-sink")
+
 
 _METRIC_OPTIONS = [
     {"label": "Publications and Posts Count", "value": "publications"},

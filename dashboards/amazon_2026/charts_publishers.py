@@ -31,6 +31,9 @@ from dashboards.amazon_2026.charts_shared import (
     _hex_to_rgba,
     _json_safe,
     _kpi_card,
+    donut_figure,
+    donut_panel,
+    empty_donut_panel,
     _narrative_data_bar_styles,
     _narrative_header_divider_styles,
     _narratives_table_columns,
@@ -637,63 +640,15 @@ def _mini_donut_chart(
 ) -> html.Div:
     distribution = _category_distribution(records, category_key, row_filter)
     if not distribution:
-        return html.Div(
-            className="amazon-publishers-mini-donut amazon-publishers-mini-donut-empty",
-            children=[html.Div("No data available", className="amazon-publishers-mini-empty")],
-        )
+        return empty_donut_panel()
 
-    total = sum(item["count"] for item in distribution)
     labels = [item["label"] for item in distribution]
     values = [item["count"] for item in distribution]
     colors = _donut_colors(len(distribution))
-    slice_text = [
-        f"{item['label']}<br>{item['count'] / total:.1%}" if total and (item["count"] / total) >= 0.03 else ""
-        for item in distribution
-    ]
-    figure = go.Figure(
-        go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.62,
-            domain={"x": [0.2, 0.8], "y": [0.12, 0.88]},
-            sort=False,
-            direction="clockwise",
-            marker={"colors": colors, "line": {"color": THEME_SURFACE, "width": 0.5}},
-            text=slice_text,
-            textinfo="text",
-            textposition="outside",
-            textfont={"color": THEME_TEXT, "size": 11},
-            automargin=True,
-            hovertemplate="%{label}: %{value} publishers (%{percent})<extra></extra>",
-            hoverlabel={"bgcolor": THEME_SURFACE, "bordercolor": THEME_BORDER, "font": {"color": THEME_TEXT}},
-            showlegend=False,
-        )
+    figure = donut_figure(
+        labels, values, colors, hovertemplate="%{label}: %{value} publishers (%{percent})<extra></extra>"
     )
-    figure.update_layout(
-        autosize=True,
-        width=None,
-        height=None,
-        margin={"l": 0, "r": 0, "t": 0, "b": 0},
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        uniformtext={"minsize": 10, "mode": "hide"},
-    )
-    return html.Div(
-        className="amazon-publishers-mini-donut",
-        children=[
-            html.Div(
-                className="amazon-publishers-mini-donut-header",
-                children=[html.Div(chart_title, className="amazon-publishers-mini-title")],
-            ),
-            dcc.Graph(
-                figure=figure,
-                responsive=True,
-                config={"displayModeBar": False},
-                className="amazon-publishers-mini-donut-graph",
-                style={"width": "100%", "height": "100%", "minWidth": 0},
-            ),
-        ],
-    )
+    return donut_panel(chart_title, figure)
 
 
 def _publisher_overlap_venn(trad_publishers: int, some_publishers: int, linked_publishers: int) -> html.Div:

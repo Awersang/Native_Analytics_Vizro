@@ -238,8 +238,6 @@ def build_topic_area_treemap_section(records: list[dict[str, Any]]) -> html.Div:
 # ---------------------------------------------------------------------------
 
 
-_topic_area_media_available_sources = _topic_area_available_sources
-
 
 # Links below this share of total publications are hidden as visual noise.
 SANKEY_MIN_SHARE = 0.005

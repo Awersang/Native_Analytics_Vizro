@@ -243,29 +243,7 @@ def _register_data_sources() -> None:
 def build_pages(ctx: BuildContext) -> list[vm.Page]:
     _register_data_sources()
     prime_schema_cache()
-    _start_overview_preload()
-    _start_topic_area_preload()
-    _start_narratives_preload()
-    _start_campaigns_preload()
-    _start_publishers_preload()
-    from dashboards.amazon_2026.pages import build_all_pages
-    return build_all_pages(ctx, MANIFEST.base_path)
-
-
-def _start_overview_preload() -> None:
-    """Warm the data_manager cache for all Overview page datasets in parallel at startup.
-
-    The Overview is the first page most users land on, so cold queries on first
-    visit produce the worst perceived latency. Preloading in parallel here means
-    all seven datasets are typically ready before any user interaction.
-    """
-    import logging
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    logger = logging.getLogger(__name__)
-
-    preload_keys = [
+    _start_preload("Overview", [
         OVERVIEW_KPI_KEY,
         OVERVIEW_KEY,
         MEDIA_TYPE_PERIOD_KEY,
@@ -273,35 +251,8 @@ def _start_overview_preload() -> None:
         SOURCE_SENTIMENT_MONTHLY_KEY,
         SOME_PLATFORM_KEY,
         TOP_ITEMS_KEY,
-    ]
-
-    def _run() -> None:
-        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
-            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
-            for key, future in futures.items():
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.warning("Overview preload failed for %s: %s", key, exc)
-        logger.info("Overview preload complete.")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _start_topic_area_preload() -> None:
-    """Warm the data_manager cache for Topic Areas detail datasets in parallel at startup.
-
-    Without this, the first user click on a topic area triggers 7 sequential BQ queries
-    inside a single callback.  Loading them upfront in parallel means the cache is ready
-    before any user interaction, so that first click is instant.
-    """
-    import logging
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    logger = logging.getLogger(__name__)
-
-    preload_keys = [
+    ])
+    _start_preload("Topic area", [
         TOPIC_AREA_BREAKDOWN_KEY,
         TOPIC_AREA_MEDIA_KEY,
         TOPIC_AREA_OVERVIEW_KEY,
@@ -312,30 +263,8 @@ def _start_topic_area_preload() -> None:
         TOPIC_AREA_TOP_PUBLISHERS_KEY,
         TOPIC_AREA_TOP_JOURNALISTS_KEY,
         TOPIC_AREA_TOP_PUBLICATIONS_KEY,
-    ]
-
-    def _run() -> None:
-        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
-            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
-            for key, future in futures.items():
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.warning("Topic area preload failed for %s: %s", key, exc)
-        logger.info("Topic area preload complete.")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _start_narratives_preload() -> None:
-    """Warm all Narratives page datasets in parallel so first click on a narrative is instant."""
-    import logging
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    logger = logging.getLogger(__name__)
-
-    preload_keys = [
+    ])
+    _start_preload("Narratives", [
         NARRATIVES_KEY,
         NARRATIVES_KPI_KEY,
         NARRATIVE_OVERVIEW_KEY,
@@ -349,30 +278,8 @@ def _start_narratives_preload() -> None:
         NARRATIVE_TOP_PUBLISHERS_KEY,
         NARRATIVE_TOP_JOURNALISTS_KEY,
         NARRATIVE_TOP_PUBLICATIONS_KEY,
-    ]
-
-    def _run() -> None:
-        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
-            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
-            for key, future in futures.items():
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.warning("Narratives preload failed for %s: %s", key, exc)
-        logger.info("Narratives preload complete.")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _start_campaigns_preload() -> None:
-    """Warm all Campaigns page datasets in parallel so first click on a campaign is instant."""
-    import logging
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    logger = logging.getLogger(__name__)
-
-    preload_keys = [
+    ])
+    _start_preload("Campaigns", [
         CAMPAIGN_TIMELINE_KEY,
         CAMPAIGN_WEEKLY_REACH_KEY,
         CAMPAIGN_SOME_WEEKLY_ENGAGEMENT_KEY,
@@ -383,37 +290,31 @@ def _start_campaigns_preload() -> None:
         CAMPAIGN_TOP_PUBLICATIONS_KEY,
         CAMPAIGN_PROFILE_KEY,
         CAMPAIGN_NARRATIVES_KEY,
-    ]
-
-    def _run() -> None:
-        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
-            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
-            for key, future in futures.items():
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.warning("Campaigns preload failed for %s: %s", key, exc)
-        logger.info("Campaigns preload complete.")
-
-    threading.Thread(target=_run, daemon=True).start()
-
-
-def _start_publishers_preload() -> None:
-    """Warm all Publishers page datasets in parallel so first click on a publisher is instant."""
-    import logging
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    logger = logging.getLogger(__name__)
-
-    preload_keys = [
+    ])
+    _start_preload("Publishers", [
         PUBLISHERS_KEY,
         PUBLISHER_TRAD_TIMELINE_KEY,
         PUBLISHER_SOME_TIMELINE_KEY,
         PUBLISHER_TOPIC_AREAS_KEY,
         PUBLISHER_SOME_TOPIC_AREAS_KEY,
         PUBLISHER_TOP_PUBLICATIONS_KEY,
-    ]
+    ])
+    from dashboards.amazon_2026.pages import build_all_pages
+    return build_all_pages(ctx, MANIFEST.base_path)
+
+
+def _start_preload(name: str, preload_keys: list[str]) -> None:
+    """Warm the data_manager cache for *preload_keys* in parallel at startup.
+
+    Without this, the first user click on a page triggers a wave of sequential
+    BQ queries inside a single callback. Loading them upfront in parallel means
+    the cache is ready before any user interaction, so that first click is instant.
+    """
+    import logging
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = logging.getLogger(__name__)
 
     def _run() -> None:
         with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
@@ -422,7 +323,7 @@ def _start_publishers_preload() -> None:
                 try:
                     future.result()
                 except Exception as exc:
-                    logger.warning("Publishers preload failed for %s: %s", key, exc)
-        logger.info("Publishers preload complete.")
+                    logger.warning("%s preload failed for %s: %s", name, key, exc)
+        logger.info("%s preload complete.", name)
 
     threading.Thread(target=_run, daemon=True).start()

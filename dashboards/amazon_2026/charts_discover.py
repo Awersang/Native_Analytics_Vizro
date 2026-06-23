@@ -1,13 +1,12 @@
 """Discover page components — unified Trad/SoMe item browser with filters and search."""
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pandas as pd
 from dash import dcc, html
 from vizro.managers import data_manager
-
-import plotly.graph_objects as go
 
 from dashboards.amazon_2026.charts_archive import _archive_figure, _build_color_map
 from dashboards.amazon_2026.charts_shared import (
@@ -25,6 +24,8 @@ from dashboards.amazon_2026.charts_shared import (
     _num,
     build_top_posts_table,
     build_top_publications_table,
+    donut_figure,
+    donut_panel,
     na_panel,
 )
 from dashboards.amazon_2026.data_common import DISCOVER_ITEMS_KEY
@@ -52,6 +53,7 @@ def discover_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 _server_cache: tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]] | None = None
+_server_cache_lock = threading.Lock()
 
 
 def _server_discover_data() -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
@@ -64,12 +66,15 @@ def _server_discover_data() -> tuple[list[dict[str, Any]], list[dict[str, Any]],
     global _server_cache
     if _server_cache is not None:
         return _server_cache
-    df = data_manager[DISCOVER_ITEMS_KEY].load()
-    records = discover_records(df)
-    cluster_records = discover_cluster_records(records)
-    color_map = _build_color_map(pd.DataFrame(cluster_records)) if cluster_records else {}
-    _server_cache = (records, cluster_records, color_map)
-    return _server_cache
+    with _server_cache_lock:
+        if _server_cache is not None:
+            return _server_cache
+        df = data_manager[DISCOVER_ITEMS_KEY].load()
+        records = discover_records(df)
+        cluster_records = discover_cluster_records(records)
+        color_map = _build_color_map(pd.DataFrame(cluster_records)) if cluster_records else {}
+        _server_cache = (records, cluster_records, color_map)
+        return _server_cache
 
 
 def discover_date_bounds(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -195,42 +200,6 @@ def filter_discover_records(
 # ---------------------------------------------------------------------------
 # Table data mapping
 # ---------------------------------------------------------------------------
-
-
-def discover_trad_table_data(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "_id": record.get("_id"),
-            "Date": record.get("Date", ""),
-            "Media_Type": record.get("Media_Type", ""),
-            "Publication": record.get("Publisher", ""),
-            "Title": record.get("Title", ""),
-            "Summary": record.get("Summary", ""),
-            "URL": f"[Open]({record['URL']})" if record.get("URL") else "",
-            "Sentiment": record.get("Sentiment", ""),
-            "Reach": record.get("Reach", 0),
-        }
-        for record in records
-        if record.get("Source") == "Trad"
-    ]
-
-
-def discover_some_table_data(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "_id": record.get("_id"),
-            "Date": record.get("Date", ""),
-            "Platform": record.get("Media_Type", ""),
-            "Author": record.get("Publisher", ""),
-            "Post_Content": record.get("Title", ""),
-            "URL": f"[Open]({record['URL']})" if record.get("URL") else "",
-            "Sentiment": record.get("Sentiment", ""),
-            "Reach": record.get("Reach", 0),
-            "Engagement": record.get("Engagement", 0),
-        }
-        for record in records
-        if record.get("Source") == "SoMe"
-    ]
 
 
 def discover_split_table_data(
@@ -709,56 +678,13 @@ def _discover_engagement_sentiment_donut(record: dict[str, Any]) -> html.Div | N
     slices = [(label, val) for label, val in slices if val > 0]
     if not slices:
         return None
-    total = sum(v for _, v in slices)
-    labels = [s[0] for s in slices]
-    values = [s[1] for s in slices]
+    labels = [label for label, _ in slices]
+    values = [val for _, val in slices]
     colors = [SENTIMENT_COLORS[label] for label in labels]
-    slice_text = [f"{label}<br>{val / total:.1%}" if total and (val / total) >= 0.03 else "" for label, val in slices]
-    fig = go.Figure(
-        go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.62,
-            domain={"x": [0.2, 0.8], "y": [0.12, 0.88]},
-            sort=False,
-            direction="clockwise",
-            marker={"colors": colors, "line": {"color": THEME_SURFACE, "width": 0.5}},
-            text=slice_text,
-            textinfo="text",
-            textposition="outside",
-            textfont={"color": THEME_TEXT, "size": 11},
-            automargin=True,
-            hovertemplate="%{label}: %{value:,.0f} (%{percent:.1%})<extra></extra>",
-            hoverlabel={"bgcolor": THEME_SURFACE, "bordercolor": THEME_BORDER, "font": {"color": THEME_TEXT}},
-            showlegend=False,
-        )
+    figure = donut_figure(
+        labels, values, colors, hovertemplate="%{label}: %{value:,.0f} (%{percent:.1%})<extra></extra>"
     )
-    fig.update_layout(
-        autosize=True,
-        width=None,
-        height=None,
-        margin={"l": 0, "r": 0, "t": 0, "b": 0},
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        uniformtext={"minsize": 10, "mode": "hide"},
-    )
-    return html.Div(
-        className="amazon-publishers-mini-donut",
-        style={"minHeight": f"{_DONUT_GRAPH_HEIGHT + 28}px"},
-        children=[
-            html.Div(
-                className="amazon-publishers-mini-donut-header",
-                children=[html.Div("Engagement by sentiment", className="amazon-publishers-mini-title")],
-            ),
-            dcc.Graph(
-                figure=fig,
-                responsive=True,
-                config={"displayModeBar": False},
-                className="amazon-publishers-mini-donut-graph",
-                style={"width": "100%", "height": f"{_DONUT_GRAPH_HEIGHT}px", "minWidth": 0},
-            ),
-        ],
-    )
+    return donut_panel("Engagement by sentiment", figure, graph_height=_DONUT_GRAPH_HEIGHT)
 
 
 def _discover_detail_kpis(record: dict[str, Any]) -> list[html.Div]:

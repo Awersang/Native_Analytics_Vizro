@@ -2,7 +2,23 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, _coalesce_string_expr, _optional_string_expr, _sentiment_case, _table, _table_column_map, _weekly_grid_cte
+from dashboards.amazon_2026.data_common import (
+    CAMPAIGN_COLUMN_CANDIDATES,
+    JOURNALIST_EXCLUSION_FILTER,
+    NON_CAMPAIGN_VALUES,
+    PUBLISHER_DISPLAY_CANDIDATES,
+    SOME_ANGLE_CANDIDATES,
+    SOME_CONTENT_CANDIDATES,
+    SOME_SENTIMENT_CANDIDATES,
+    TRAD_ANGLE_CANDIDATES,
+    TRAD_SUMMARY_CANDIDATES,
+    _coalesce_string_expr,
+    _optional_string_expr,
+    _sentiment_case,
+    _table,
+    _table_column_map,
+    _weekly_grid_cte,
+)
 from dashboards.amazon_2026.fixtures import (
     _campaign_narratives_fixture,
     _campaign_profile_fixture,
@@ -23,10 +39,10 @@ def load_campaign_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
 
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
 
     sql = f"""
@@ -73,7 +89,7 @@ def load_campaign_weekly_reach() -> pd.DataFrame:
     """Trad weekly reach + publication count, by campaign."""
     trad_columns = _table_column_map("amazon_2026_trad")
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     sql = f"""
     WITH all_weekly AS (
@@ -103,7 +119,7 @@ def load_campaign_some_weekly_engagement() -> pd.DataFrame:
     """SoMe weekly engagement + post count, by campaign."""
     some_columns = _table_column_map("amazon_2026_some")
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     sql = f"""
     WITH all_weekly AS (
@@ -132,7 +148,7 @@ def load_campaign_some_weekly_engagement() -> pd.DataFrame:
 def load_campaign_trad_sentiment_timeline() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     sql = f"""
     WITH all_weekly AS (
@@ -185,9 +201,9 @@ def load_campaign_trad_sentiment_timeline() -> pd.DataFrame:
 def load_campaign_some_sentiment_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
     sql = f"""
     WITH all_weekly AS (
         SELECT
@@ -241,13 +257,13 @@ def load_campaign_top_publishers() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
 
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
-    trad_pub_expr = _optional_string_expr("t", trad_columns, ["publisher_display", "Publisher_Display"])
-    some_pub_expr = _optional_string_expr("s", some_columns, ["publisher_display", "Publisher_Display"])
+    trad_pub_expr = _optional_string_expr("t", trad_columns, PUBLISHER_DISPLAY_CANDIDATES)
+    some_pub_expr = _optional_string_expr("s", some_columns, PUBLISHER_DISPLAY_CANDIDATES)
 
     sql = f"""
     WITH trad_base AS (
@@ -287,7 +303,7 @@ def load_campaign_top_publishers() -> pd.DataFrame:
 def load_campaign_top_journalists() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist", "Byline", "Author"])
 
@@ -305,7 +321,7 @@ def load_campaign_top_journalists() -> pd.DataFrame:
     )
     SELECT campaign, journalist, publications, reach
     FROM journalist_base
-    WHERE LOWER(journalist) NOT IN ('unknown', 'brak', 'brak danych', 'n/a', 'na', 'none', '-')
+    WHERE {JOURNALIST_EXCLUSION_FILTER}
     ORDER BY campaign, reach DESC
     """
     return safe_query(sql, fallback=_campaign_top_journalists_fixture())
@@ -316,16 +332,16 @@ def load_campaign_top_publications() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
 
     trad_campaign_expr = _optional_string_expr(
-        "t", trad_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
     some_campaign_expr = _optional_string_expr(
-        "s", some_columns, ["campaign_announcement", "Campaign_Announcement", "campaign"]
+        "s", some_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
-    trad_summary_expr = _coalesce_string_expr("t", trad_columns, ["Description", "_3P_Description", "Main_Text", "Summary"])
-    some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
-    some_content_expr = _coalesce_string_expr("s", some_columns, ["Main_Text", "Description", "_3P_Description"])
-    trad_angle_expr = _optional_string_expr("t", trad_columns, ["dominant_angle"])
-    some_angle_expr = _optional_string_expr("s", some_columns, ["angle", "dominant_angle"])
+    trad_summary_expr = _coalesce_string_expr("t", trad_columns, TRAD_SUMMARY_CANDIDATES)
+    some_sentiment_expr = _optional_string_expr("s", some_columns, SOME_SENTIMENT_CANDIDATES)
+    some_content_expr = _coalesce_string_expr("s", some_columns, SOME_CONTENT_CANDIDATES)
+    trad_angle_expr = _optional_string_expr("t", trad_columns, TRAD_ANGLE_CANDIDATES)
+    some_angle_expr = _optional_string_expr("s", some_columns, SOME_ANGLE_CANDIDATES)
 
     sql = f"""
     WITH trad_pubs AS (

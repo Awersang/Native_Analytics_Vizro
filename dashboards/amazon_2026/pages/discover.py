@@ -145,7 +145,7 @@ def _update_discover_results(
     similarity_radius = None
     if reference_data:
         diagonal = umap_distance_bounds(cluster_records)
-        similarity_radius = (float(similarity_value or 0) / 100.0) * diagonal
+        similarity_radius = (float(similarity_value or 0) / 10.0) * diagonal
 
     filtered = filter_discover_records(
         records,
@@ -303,7 +303,7 @@ def _update_discover_clusters(
             try:
                 ref_point = (float(rx), float(ry))
                 diagonal = umap_distance_bounds(full_cluster_records)
-                ref_radius = (float(similarity_value or 0) / 100.0) * diagonal
+                ref_radius = (float(similarity_value or 0) / 10.0) * diagonal
             except (TypeError, ValueError):
                 ref_point = None
 
