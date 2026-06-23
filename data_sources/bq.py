@@ -23,9 +23,14 @@ logger = logging.getLogger(__name__)
 @lru_cache
 def get_bq_client():
     """Return a cached BigQuery client (raises if the library/creds missing)."""
+    import requests
     from google.cloud import bigquery  # lazy import
 
-    return bigquery.Client(project=settings.gcp_project_id or None)
+    client = bigquery.Client(project=settings.gcp_project_id or None)
+    adapter = requests.adapters.HTTPAdapter(pool_maxsize=50)
+    client._http.mount("https://", adapter)
+    client._http._auth_request.session.mount("https://", adapter)
+    return client
 
 
 def run_query(sql: str) -> pd.DataFrame:

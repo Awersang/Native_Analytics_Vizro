@@ -168,11 +168,12 @@
 }
 
 /* Full Native Analytics wordmark replaces the "Native Analytics" text title
-   in the dashboard header. The logo SVGs (assets/logo_light.svg — dark grey
-   #495057 fill, assets/logo_dark.svg — light grey #ced4da fill) are picked
-   up automatically by Vizro and swapped based on [data-bs-theme]; the text
-   title is kept (for the browser tab title) but hidden visually. Resize via
-   --na-logo-height above. */
+   in the dashboard header. The logo SVGs (assets/logo/logo_light.svg — dark
+   grey #495057 fill, assets/logo/logo_dark.svg — light grey #ced4da fill)
+   are picked up automatically by Vizro (it searches assets/ recursively)
+   and swapped based on [data-bs-theme]; the text title is kept (for the
+   browser tab title) but hidden visually. Resize via --na-logo-height
+   above. */
 #dashboard-title {
   display: none;
 }
@@ -206,6 +207,20 @@ a.back-to-panel:hover {
 a.back-to-panel .material-symbols-outlined {
   font-size: 18px;
   line-height: 1;
+}
+
+/* Vizro's built-in collapse arrow remains in the DOM as the Dash callback
+   target, but the user-facing menu control lives in the bottom left rail dock. */
+#collapse-icon-outer {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateX(-9999px) !important;
 }
 
 .na-dev-inline-label {

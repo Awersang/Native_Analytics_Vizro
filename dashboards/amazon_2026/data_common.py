@@ -15,8 +15,7 @@ MEDIA_TYPE_PERIOD_KEY = "amazon_2026_trad_media_type_period"
 SENTIMENT_SOURCE_MONTHLY_KEY = "amazon_2026_source_monthly"
 SOURCE_SENTIMENT_MONTHLY_KEY = "amazon_2026_source_sentiment_monthly"
 SOME_PLATFORM_KEY = "amazon_2026_some_platform"
-TOP_ARTICLES_KEY = "amazon_2026_top_articles"
-TOP_POSTS_KEY = "amazon_2026_top_posts"
+TOP_ITEMS_KEY = "amazon_2026_top_items"
 NARRATIVES_KEY = "amazon_2026_narratives"
 PUBLISHERS_KEY = "amazon_2026_publishers"
 PARAM_SINK_KEY = "amazon_2026_param_sink"
@@ -125,6 +124,53 @@ def _metric_pivot(
         f"        UNION ALL\n"
         f"        SELECT {dim_sql}, 'reach' AS base_metric, {reach_col} AS metric_value FROM {cte}"
     )
+
+
+def _sentiment_case(expr: str) -> str:
+    """Return a SQL CASE expression normalising *expr* to Positive / Neutral / Negative."""
+    w = f"LOWER(TRIM(COALESCE({expr}, '')))"
+    return f"CASE WHEN {w} LIKE 'pos%' THEN 'Positive' WHEN {w} LIKE 'neg%' THEN 'Negative' ELSE 'Neutral' END"
+
+
+def _weekly_grid_cte(dim_col: str, dim_plural: str, extra_filter: str = "") -> str:
+    """Return the all_{dim_plural}, all_weeks, and grid CTEs for a weeks × dim CROSS JOIN.
+
+    The caller is responsible for defining an ``all_weekly`` CTE upstream that
+    contains both ``week_start`` and ``{dim_col}`` columns.
+    """
+    filter_clause = f"\n      AND {extra_filter}" if extra_filter else ""
+    return (
+        f"all_{dim_plural} AS (\n"
+        f"        SELECT DISTINCT {dim_col}\n"
+        f"        FROM all_weekly\n"
+        f"        WHERE {dim_col} IS NOT NULL{filter_clause}\n"
+        f"    ),\n"
+        f"    all_weeks AS (\n"
+        f"        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL\n"
+        f"    ),\n"
+        f"    grid AS (\n"
+        f"        SELECT w.week_start, d.{dim_col}\n"
+        f"        FROM all_weeks w CROSS JOIN all_{dim_plural} d\n"
+        f"    )"
+    )
+
+
+def prime_schema_cache() -> None:
+    """Pre-warm _table_column_map for all known tables before any threads are spawned.
+
+    lru_cache is not call-once under concurrency — two threads hitting the same
+    uncached key will both fire a BigQuery INFORMATION_SCHEMA query simultaneously.
+    Calling this before ThreadPoolExecutor startup ensures the cache is populated
+    and all subsequent calls from worker threads are instant cache hits.
+    """
+    for table in (
+        "amazon_2026_trad",
+        "amazon_2026_some",
+        "amazon_2026_publishers",
+        "amazon_2026_narratives",
+        "amazon_2026_angles",
+    ):
+        _table_column_map(table)
 
 
 def _optional_json_string_expr(alias: str, columns: dict[str, str], candidates: list[str]) -> str:

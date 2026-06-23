@@ -52,9 +52,15 @@
   }
 }
 
+.amazon-discover-search-input-wrap {
+  position: relative;
+  display: flex;
+}
+
 .amazon-discover-search {
+  width: 100%;
   height: 38px;
-  padding: 0 12px;
+  padding: 0 34px 0 12px;
   border: 1px solid var(--amazon-publishers-border);
   border-radius: 8px;
   background: var(--amazon-publishers-dropdown-bg);
@@ -69,6 +75,38 @@
 .amazon-discover-search:focus {
   outline: none;
   border-color: var(--amazon-publishers-link);
+}
+
+.amazon-discover-search-clear {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--amazon-publishers-text-muted);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.amazon-discover-search-clear.is-visible {
+  display: flex;
+}
+
+.amazon-discover-search-clear .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.amazon-discover-search-clear:hover {
+  background: var(--amazon-publishers-surface-hover);
+  color: var(--amazon-publishers-text);
 }
 
 .amazon-discover-search-fulltext {

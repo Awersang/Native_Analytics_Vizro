@@ -6,6 +6,7 @@ from dashboards.amazon_2026.data_common import (
     _coalesce_string_expr,
     _optional_numeric_expr,
     _optional_string_expr,
+    _sentiment_case,
     _table,
     _table_column_map,
 )
@@ -54,11 +55,7 @@ def load_discover_items() -> pd.DataFrame:
       SELECT
         CAST(DATE(t.Published_At) AS STRING) AS Date,
         'Trad' AS Source,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case('t.Sentiment')} AS Sentiment,
         COALESCE(pl.display_name, {trad_display_expr}, NULLIF(TRIM(t.Publisher), ''), 'Unknown') AS Publisher,
         COALESCE({trad_topic_area_expr}, '') AS Topic_Area,
         COALESCE({trad_narrative_expr}, '') AS Narrative,
@@ -85,11 +82,7 @@ def load_discover_items() -> pd.DataFrame:
       SELECT
         CAST(DATE(s.Published_At) AS STRING) AS Date,
         'SoMe' AS Source,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(s.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(s.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case('s.Sentiment')} AS Sentiment,
         COALESCE(pl.display_name, {some_display_expr}, NULLIF(TRIM(s.Author), ''), 'Unknown') AS Publisher,
         COALESCE({some_topic_area_expr}, '') AS Topic_Area,
         COALESCE({some_narrative_expr}, '') AS Narrative,

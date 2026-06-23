@@ -5,7 +5,7 @@
 ----------------------------------------------------------------------- */
 .amazon-overview-kpi-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 3fr 2fr;
   gap: 16px;
   align-items: stretch;
 }
@@ -14,12 +14,19 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* The "Traditional Media" panel sits in the 2fr column of a 2:1 split, so
+/* The "Traditional Media" panel sits in the 3fr column of a 3:2 split, so
    its width is much smaller than the viewport. Override the shared
    minmax(320px, 1fr) (tuned for the wider Publishers page) so the 3 KPI
    cards shrink with their container instead of overflowing it. */
 #amazon-2026-overview .amazon-publishers-kpis {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* The Social Media panel only has 2 cards; without this, the ID-scoped
+   3-column rule above (higher specificity than the plain --2col class)
+   wins and leaves a blank 3rd column. */
+#amazon-2026-overview .amazon-publishers-kpis--2col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @media (max-width: 900px) {

@@ -8,8 +8,10 @@ from dashboards.amazon_2026.data_common import (
     _coalesce_string_expr,
     _optional_numeric_expr,
     _optional_string_expr,
+    _sentiment_case,
     _table,
     _table_column_map,
+    _weekly_grid_cte,
 )
 from dashboards.amazon_2026.fixtures import (
     _topic_area_breakdown_fixture,
@@ -261,16 +263,7 @@ def load_topic_area_weekly_reach() -> pd.DataFrame:
         FROM {_table('amazon_2026_trad')} AS t
         WHERE t.Published_At IS NOT NULL
     ),
-    all_topic_areas AS (
-        SELECT DISTINCT topic_area FROM all_weekly
-    ),
-    all_weeks AS (
-        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
-    ),
-    grid AS (
-        SELECT w.week_start, c.topic_area
-        FROM all_weeks w CROSS JOIN all_topic_areas c
-    )
+    {_weekly_grid_cte("topic_area", "topic_areas")}
     SELECT
         g.week_start,
         g.topic_area,
@@ -298,16 +291,7 @@ def load_topic_area_some_weekly_engagement() -> pd.DataFrame:
         FROM {_table('amazon_2026_some')} AS s
         WHERE s.Published_At IS NOT NULL
     ),
-    all_topic_areas AS (
-        SELECT DISTINCT topic_area FROM all_weekly
-    ),
-    all_weeks AS (
-        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
-    ),
-    grid AS (
-        SELECT w.week_start, c.topic_area
-        FROM all_weeks w CROSS JOIN all_topic_areas c
-    )
+    {_weekly_grid_cte("topic_area", "topic_areas")}
     SELECT
         g.week_start,
         g.topic_area,
@@ -330,11 +314,7 @@ def load_topic_area_trad_sentiment_timeline() -> pd.DataFrame:
       SELECT
         DATE_TRUNC(DATE(t.Published_At), WEEK(MONDAY)) AS week_start,
         COALESCE(NULLIF(TRIM({trad_topic_area_expr}), ''), 'Unknown') AS topic_area,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS sentiment,
+        {_sentiment_case('t.Sentiment')} AS sentiment,
         COUNT(*) AS publications,
         SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS reach
       FROM {_table('amazon_2026_trad')} AS t
@@ -362,11 +342,7 @@ def load_topic_area_some_sentiment_timeline() -> pd.DataFrame:
       SELECT
         DATE_TRUNC(DATE(s.Published_At), WEEK(MONDAY)) AS week_start,
         COALESCE(NULLIF(TRIM({some_topic_area_expr}), ''), 'Unknown') AS topic_area,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS sentiment,
         COUNT(*) AS posts,
         SUM(COALESCE(s.Engagement, 0)) AS engagement
       FROM {_table('amazon_2026_some')} AS s
@@ -472,11 +448,7 @@ def load_topic_area_top_publications() -> pd.DataFrame:
         COALESCE(NULLIF(TRIM(t.Title), ''), '(untitled)') AS Title,
         COALESCE({trad_summary_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(t.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case('t.Sentiment')} AS Sentiment,
         CAST(COALESCE(t.Reach, 0) AS INT64) AS Reach,
         CAST(NULL AS INT64) AS Engagement,
         COALESCE({trad_angle_expr}, '') AS Angle
@@ -494,11 +466,7 @@ def load_topic_area_top_publications() -> pd.DataFrame:
         '' AS Title,
         COALESCE({some_content_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(s.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS Sentiment,
         CAST(COALESCE(s.Reach, 0) AS INT64) AS Reach,
         COALESCE(s.Engagement, 0) AS Engagement,
         COALESCE({some_angle_expr}, '') AS Angle

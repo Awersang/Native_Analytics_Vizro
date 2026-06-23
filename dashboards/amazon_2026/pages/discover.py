@@ -139,7 +139,7 @@ def _update_discover_results(
     active_source: str | None,
     selected_ids: list[Any] | None,
     reference_data: dict[str, Any] | None,
-    similarity_value: int | None,
+    similarity_value: float | None,
 ):
     records, cluster_records, _ = _server_discover_data()
     similarity_radius = None
@@ -261,7 +261,7 @@ def _update_discover_clusters(
     relative_value: list[str] | None,
     _clear_clicks: int | None,
     reference_data: dict[str, Any] | None,
-    similarity_value: int | None,
+    similarity_value: float | None,
     color_map: dict[str, str] | None,
     date_bounds: dict[str, Any] | None,
     selections: list[dict[str, Any]] | None,
@@ -455,6 +455,27 @@ def _update_discover_reference(
         return no_update, no_update
     return record, build_discover_reference_content(record)
 
+
+clientside_callback(
+    """
+    function(_n_clicks) {
+        return "";
+    }
+    """,
+    Output("amazon-2026-discover-search", "value"),
+    Input("amazon-2026-discover-search-clear", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
+    """
+    function(value) {
+        return (value && value.length > 0) ? "amazon-discover-search-clear is-visible" : "amazon-discover-search-clear";
+    }
+    """,
+    Output("amazon-2026-discover-search-clear", "className"),
+    Input("amazon-2026-discover-search", "value"),
+)
 
 clientside_callback(
     """

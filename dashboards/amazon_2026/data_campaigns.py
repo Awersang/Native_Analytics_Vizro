@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, _coalesce_string_expr, _optional_string_expr, _table, _table_column_map
+from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, _coalesce_string_expr, _optional_string_expr, _sentiment_case, _table, _table_column_map, _weekly_grid_cte
 from dashboards.amazon_2026.fixtures import (
     _campaign_narratives_fixture,
     _campaign_profile_fixture,
@@ -84,19 +84,7 @@ def load_campaign_weekly_reach() -> pd.DataFrame:
         FROM {_table('amazon_2026_trad')} AS t
         WHERE t.Published_At IS NOT NULL
     ),
-    all_campaigns AS (
-        SELECT DISTINCT campaign
-        FROM all_weekly
-        WHERE campaign IS NOT NULL
-          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
-    ),
-    all_weeks AS (
-        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
-    ),
-    grid AS (
-        SELECT w.week_start, c.campaign
-        FROM all_weeks w CROSS JOIN all_campaigns c
-    )
+    {_weekly_grid_cte("campaign", "campaigns", f"TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}")}
     SELECT
         g.week_start,
         g.campaign,
@@ -126,19 +114,7 @@ def load_campaign_some_weekly_engagement() -> pd.DataFrame:
         FROM {_table('amazon_2026_some')} AS s
         WHERE s.Published_At IS NOT NULL
     ),
-    all_campaigns AS (
-        SELECT DISTINCT campaign
-        FROM all_weekly
-        WHERE campaign IS NOT NULL
-          AND TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
-    ),
-    all_weeks AS (
-        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
-    ),
-    grid AS (
-        SELECT w.week_start, c.campaign
-        FROM all_weeks w CROSS JOIN all_campaigns c
-    )
+    {_weekly_grid_cte("campaign", "campaigns", f"TRIM(LOWER(CAST(campaign AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}")}
     SELECT
         g.week_start,
         g.campaign,
@@ -163,11 +139,7 @@ def load_campaign_trad_sentiment_timeline() -> pd.DataFrame:
         SELECT
           DATE_TRUNC(DATE(t.Published_At), WEEK(MONDAY)) AS week_start,
           {trad_campaign_expr} AS campaign,
-          CASE
-            WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-            WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-            ELSE 'Neutral'
-          END AS sentiment,
+          {_sentiment_case('t.Sentiment')} AS sentiment,
           CAST(COALESCE(t.Reach, 0) AS INT64) AS reach
         FROM {_table('amazon_2026_trad')} AS t
         WHERE t.Published_At IS NOT NULL
@@ -221,11 +193,7 @@ def load_campaign_some_sentiment_timeline() -> pd.DataFrame:
         SELECT
           DATE_TRUNC(DATE(s.Published_At), WEEK(MONDAY)) AS week_start,
           {some_campaign_expr} AS campaign,
-          CASE
-            WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-            WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-            ELSE 'Neutral'
-          END AS sentiment,
+          {_sentiment_case(some_sentiment_expr)} AS sentiment,
           COALESCE(s.Engagement, 0) AS engagement
         FROM {_table('amazon_2026_some')} AS s
         WHERE s.Published_At IS NOT NULL
@@ -371,11 +339,7 @@ def load_campaign_top_publications() -> pd.DataFrame:
         COALESCE(NULLIF(TRIM(t.Title), ''), '(untitled)') AS Title,
         COALESCE({trad_summary_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(t.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case('t.Sentiment')} AS Sentiment,
         CAST(COALESCE(t.Reach, 0) AS INT64) AS Reach,
         CAST(NULL AS INT64) AS Engagement,
         COALESCE({trad_angle_expr}, '') AS Angle
@@ -395,11 +359,7 @@ def load_campaign_top_publications() -> pd.DataFrame:
         '' AS Title,
         COALESCE({some_content_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(s.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS Sentiment,
         CAST(COALESCE(s.Reach, 0) AS INT64) AS Reach,
         COALESCE(s.Engagement, 0) AS Engagement,
         COALESCE({some_angle_expr}, '') AS Angle

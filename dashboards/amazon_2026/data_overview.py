@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import _metric_pivot, _optional_string_expr, _table, _table_column_map
+from dashboards.amazon_2026.data_common import _metric_pivot, _optional_string_expr, _sentiment_case, _table, _table_column_map
 from dashboards.amazon_2026.fixtures import (
     _media_type_period_fixture,
     _overview_fixture,
@@ -21,7 +21,7 @@ def _some_sentiment_expr(alias: str) -> str:
     return _optional_string_expr(alias, some_columns, ["Sentiment"])
 
 
-def load_overview_daily() -> pd.DataFrame:
+def load_tml_split() -> pd.DataFrame:
     sql = f"""
         WITH grouped AS (
             SELECT
@@ -98,11 +98,7 @@ def load_source_sentiment_monthly() -> pd.DataFrame:
             SELECT
                 EXTRACT(MONTH FROM Published_At) AS month_num,
                 FORMAT_TIMESTAMP('%b', Published_At) AS month_label,
-                CASE
-                    WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-                    WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
+                {_sentiment_case('Sentiment')} AS sentiment,
                 COUNT(*) AS publications,
                 SUM(COALESCE(CAST(Reach AS INT64), 0)) AS reach_val
             FROM {_table('amazon_2026_trad')}
@@ -113,31 +109,27 @@ def load_source_sentiment_monthly() -> pd.DataFrame:
             SELECT
                 EXTRACT(MONTH FROM Published_At) AS month_num,
                 FORMAT_TIMESTAMP('%b', Published_At) AS month_label,
-                CASE
-                    WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-                    WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
+                {_sentiment_case(some_sentiment_expr)} AS sentiment,
                 COUNT(*) AS publications,
-                SUM(COALESCE(Engagement, 0)) AS engagement_val
+                SUM(COALESCE(Engagement, 0)) AS engagement_val,
+                SUM(COALESCE(engagement_positive, 0)) AS positive_eng,
+                SUM(COALESCE(engagement_neutral, 0)) AS neutral_eng,
+                SUM(COALESCE(engagement_negative, 0)) AS negative_eng
             FROM {_table('amazon_2026_some')} AS s
             WHERE Published_At IS NOT NULL
             GROUP BY month_num, month_label, sentiment
         ),
-        engagement_base AS (
-            SELECT
-                EXTRACT(MONTH FROM Published_At) AS month_num,
-                FORMAT_TIMESTAMP('%b', Published_At) AS month_label,
-                SUM(COALESCE(engagement_positive, 0)) AS positive_val,
-                SUM(COALESCE(engagement_neutral, 0)) AS neutral_val,
-                SUM(COALESCE(engagement_negative, 0)) AS negative_val
-            FROM {_table('amazon_2026_some')}
-            WHERE Published_At IS NOT NULL
+        social_month AS (
+            SELECT month_num, month_label,
+                SUM(positive_eng) AS positive_val,
+                SUM(neutral_eng) AS neutral_val,
+                SUM(negative_eng) AS negative_val
+            FROM social_base
             GROUP BY month_num, month_label
         ),
         engagement_sentiment AS (
             SELECT month_num, month_label, sentiment, metric_value
-            FROM engagement_base,
+            FROM social_month,
             UNNEST([
                 STRUCT('Positive' AS sentiment, positive_val AS metric_value),
                 STRUCT('Neutral' AS sentiment, neutral_val AS metric_value),
@@ -178,7 +170,6 @@ def load_overview_kpis() -> pd.DataFrame:
             trad.total_reach,
             social.total_posts,
             social.total_engagement,
-            pubs.linked_publishers,
             pubs.trad_with_some
         FROM (
             SELECT
@@ -194,7 +185,6 @@ def load_overview_kpis() -> pd.DataFrame:
         ) social
         CROSS JOIN (
             SELECT
-                COUNT(DISTINCT CASE WHEN some_post_count > 0 THEN publisher_uid END) AS linked_publishers,
                 COUNT(DISTINCT CASE WHEN trad_article_count > 0 AND some_post_count > 0 THEN publisher_uid END) AS trad_with_some
             FROM {_table('amazon_2026_publishers')}
         ) pubs
@@ -219,48 +209,75 @@ def load_some_platform() -> pd.DataFrame:
     return safe_query(sql, fallback=_some_platform_fixture())
 
 
-def load_top_posts() -> pd.DataFrame:
+def load_top_items() -> pd.DataFrame:
+    """Fetch top 250 trad articles and top 250 SoMe posts in one query.
+
+    Returns a combined DataFrame with a 'Source' column ('Trad' or 'SoMe').
+    Columns absent from one source are NULL. Eliminates the second data_manager
+    call that overview_top_items_panel previously made inside the capture body.
+    """
     some_sentiment_expr = _some_sentiment_expr("s")
     sql = f"""
-        SELECT
-            CAST(DATE(Published_At) AS STRING) AS Date,
-            COALESCE(NULLIF(TRIM(Platform), ''), 'Unknown') AS Platform,
-            COALESCE(NULLIF(TRIM(Author), ''), '') AS Author,
-            COALESCE(NULLIF(TRIM(Description), ''), NULLIF(TRIM(Main_Text), ''), '') AS Post_Content,
-            COALESCE(NULLIF(TRIM(URL), ''), '') AS URL,
-            CASE
-                WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-                WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-                ELSE 'Neutral'
-            END AS Sentiment,
-            CAST(COALESCE(Reach, 0) AS INT64) AS Reach,
-            COALESCE(Engagement, 0) AS Engagement
-        FROM {_table('amazon_2026_some')} AS s
-        WHERE Published_At IS NOT NULL
-        ORDER BY Engagement DESC
-        LIMIT 250
+        SELECT * FROM (
+            SELECT
+                'Trad' AS Source,
+                CAST(DATE(Published_At) AS STRING) AS Date,
+                COALESCE(NULLIF(TRIM(Media_Type), ''), 'Unknown') AS Media_Type,
+                COALESCE(NULLIF(TRIM(Publisher), ''), '') AS Publication,
+                COALESCE(NULLIF(TRIM(Title), ''), '(untitled)') AS Title,
+                COALESCE(NULLIF(TRIM(Description), ''), NULLIF(TRIM(_3P_Description), ''), NULLIF(TRIM(Main_Text), ''), '') AS Summary,
+                COALESCE(NULLIF(TRIM(URL), ''), '') AS URL,
+                {_sentiment_case('Sentiment')} AS Sentiment,
+                CAST(COALESCE(Reach, 0) AS INT64) AS Reach,
+                CAST(COALESCE(Tier, 0) AS INT64) AS Tier,
+                CAST(NULL AS STRING) AS Platform,
+                CAST(NULL AS STRING) AS Author,
+                CAST(NULL AS STRING) AS Post_Content,
+                0 AS Engagement
+            FROM {_table('amazon_2026_trad')}
+            WHERE Published_At IS NOT NULL
+            ORDER BY Reach DESC
+            LIMIT 250
+        )
+        UNION ALL
+        SELECT * FROM (
+            SELECT
+                'SoMe' AS Source,
+                CAST(DATE(Published_At) AS STRING) AS Date,
+                CAST(NULL AS STRING) AS Media_Type,
+                CAST(NULL AS STRING) AS Publication,
+                CAST(NULL AS STRING) AS Title,
+                CAST(NULL AS STRING) AS Summary,
+                COALESCE(NULLIF(TRIM(URL), ''), '') AS URL,
+                {_sentiment_case(some_sentiment_expr)} AS Sentiment,
+                CAST(COALESCE(Reach, 0) AS INT64) AS Reach,
+                CAST(NULL AS INT64) AS Tier,
+                COALESCE(NULLIF(TRIM(Platform), ''), 'Unknown') AS Platform,
+                COALESCE(NULLIF(TRIM(Author), ''), '') AS Author,
+                COALESCE(NULLIF(TRIM(Description), ''), NULLIF(TRIM(Main_Text), ''), '') AS Post_Content,
+                COALESCE(Engagement, 0) AS Engagement
+            FROM {_table('amazon_2026_some')} AS s
+            WHERE Published_At IS NOT NULL
+            ORDER BY Engagement DESC
+            LIMIT 250
+        )
     """
-    return safe_query(sql, fallback=_top_posts_fixture())
-
-
-def load_top_articles() -> pd.DataFrame:
-    sql = f"""
-        SELECT
-            CAST(DATE(Published_At) AS STRING) AS Date,
-            COALESCE(NULLIF(TRIM(Media_Type), ''), 'Unknown') AS Media_Type,
-            COALESCE(NULLIF(TRIM(Publisher), ''), '') AS Publication,
-            COALESCE(NULLIF(TRIM(Title), ''), '(untitled)') AS Title,
-            COALESCE(NULLIF(TRIM(Description), ''), NULLIF(TRIM(_3P_Description), ''), NULLIF(TRIM(Main_Text), ''), '') AS Summary,
-            COALESCE(NULLIF(TRIM(URL), ''), '') AS URL,
-            CASE
-                WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-                WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-                ELSE 'Neutral'
-            END AS Sentiment,
-            CAST(COALESCE(Reach, 0) AS INT64) AS Reach,
-            CAST(COALESCE(Tier, 0) AS INT64) AS Tier
-        FROM {_table('amazon_2026_trad')}
-        ORDER BY Reach DESC
-        LIMIT 250
-    """
-    return safe_query(sql, fallback=_top_articles_fixture())
+    arts = _top_articles_fixture()
+    arts = arts.assign(
+        Source="Trad",
+        Platform=None,
+        Author=None,
+        Post_Content=None,
+        Engagement=0,
+    )
+    posts = _top_posts_fixture()
+    posts = posts.assign(
+        Source="SoMe",
+        Media_Type=None,
+        Publication=None,
+        Title=None,
+        Summary=None,
+        Tier=None,
+    )
+    fallback = pd.concat([arts, posts], ignore_index=True)
+    return safe_query(sql, fallback=fallback)

@@ -30,7 +30,11 @@
   user-select: none;
 }
 
-.na-panel:hover .na-chart-menu-btn,
+[data-chart-menu="true"] {
+  position: relative;
+}
+
+[data-chart-menu="true"]:hover > .na-chart-menu-btn,
 .na-chart-menu-btn.na-chart-menu-btn--open {
   opacity: 1;
 }
@@ -110,56 +114,10 @@
    Global toggle widget — fixed bottom-right above the chat button
 ----------------------------------------------------------------------- */
 
-#na-chart-menu-toggle-root {
-  position: fixed;
-  bottom: 80px;
-  right: 20px;
-  z-index: 1200;
-}
-
-.na-chart-menu-toggle-btn {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border: 1px solid var(--na-border);
-  border-radius: 20px;
-  background: var(--na-surface);
-  color: var(--na-text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
-}
-
-.na-chart-menu-toggle-btn:hover {
-  background: var(--na-surface-hover);
-  color: var(--na-text);
-}
-
-.na-chart-menu-toggle-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 7px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  background: var(--na-surface-hover);
-  color: var(--na-text-muted);
-}
-
-.na-chart-menu-toggle-pill--on {
-  background: var(--na-accent-trad);
-  color: #fff;
-}
-
 /* Feedback toast */
 .na-chart-menu-toast {
   position: fixed;
-  bottom: 140px;
+  bottom: 80px;
   right: 20px;
   z-index: 1300;
   padding: 8px 14px;

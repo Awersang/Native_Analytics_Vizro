@@ -117,7 +117,7 @@ def discover_filter_options(records: list[dict[str, Any]]) -> dict[str, list[dic
 # ---------------------------------------------------------------------------
 
 
-def _record_matches_search(record: dict[str, Any], search: str, fulltext: bool) -> bool:
+def _record_matches_search(record: dict[str, Any], search_terms: list[str], fulltext: bool) -> bool:
     parts = [
         str(record.get("Publisher", "")),
         str(record.get("Title", "")),
@@ -125,7 +125,8 @@ def _record_matches_search(record: dict[str, Any], search: str, fulltext: bool) 
     ]
     if fulltext:
         parts.append(str(record.get("Full_Text", "")))
-    return search in " ".join(parts).lower()
+    haystack = " ".join(parts).lower()
+    return all(term in haystack for term in search_terms)
 
 
 def filter_discover_records(
@@ -149,7 +150,7 @@ def filter_discover_records(
     topic_areas = set(topic_area_filter or [])
     narratives = set(narrative_filter or [])
     selected_id_set = set(selected_ids) if selected_ids else None
-    search = (search_text or "").strip().lower()
+    search_terms = (search_text or "").strip().lower().split()
 
     if date_range and len(date_range) == 2:
         date_lo, date_hi = int(date_range[0]), int(date_range[1])
@@ -175,7 +176,7 @@ def filter_discover_records(
             index = int(record.get("_date_index", 0))
             if index < date_lo or index > date_hi:
                 continue
-        if search and not _record_matches_search(record, search, search_fulltext):
+        if search_terms and not _record_matches_search(record, search_terms, search_fulltext):
             continue
         if selected_id_set is not None and record.get("_id") not in selected_id_set:
             continue
@@ -307,12 +308,25 @@ def build_discover_filters_panel(
                         className="amazon-discover-search-col",
                         children=[
                             html.Div("Search", className="amazon-publishers-control-label"),
-                            dcc.Input(
-                                id="amazon-2026-discover-search",
-                                type="text",
-                                placeholder="Search author, publisher, title, or text...",
-                                debounce=True,
-                                className="amazon-discover-search",
+                            html.Div(
+                                className="amazon-discover-search-input-wrap",
+                                children=[
+                                    dcc.Input(
+                                        id="amazon-2026-discover-search",
+                                        type="text",
+                                        placeholder="Search author, publisher, title, or text...",
+                                        debounce=True,
+                                        className="amazon-discover-search",
+                                    ),
+                                    html.Button(
+                                        html.Span("close", className="material-symbols-outlined"),
+                                        id="amazon-2026-discover-search-clear",
+                                        className="amazon-discover-search-clear",
+                                        n_clicks=0,
+                                        type="button",
+                                        title="Clear search",
+                                    ),
+                                ],
                             ),
                             dcc.Checklist(
                                 id="amazon-2026-discover-search-fulltext",
@@ -353,7 +367,7 @@ def build_discover_filters_panel(
                                         id="amazon-2026-discover-similarity-slider",
                                         min=0,
                                         max=10,
-                                        step=1,
+                                        step=0.1,
                                         value=5,
                                         marks={0: "Close", 10: "Far"},
                                         tooltip=None,

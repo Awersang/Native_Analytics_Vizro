@@ -9,21 +9,18 @@ from dash import Input, Output, State, callback, html, no_update
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_campaigns import (
-    _campaign_detail_content,
+    build_detail_content,
+    _data_bar_styles,
+    _header_divider_styles,
+    _load_narrative_sentiment_data,
+    _table_columns,
+    _table_records,
     build_campaign_campaigns_section,
     build_campaign_details_section,
     build_campaign_timeline_panel,
 )
-from dashboards.amazon_2026.charts_publishers import (
-    _data_bar_styles,
-    _filter_records,
-    _header_divider_styles,
-    _table_columns,
-    _table_records,
-)
+from dashboards.amazon_2026.charts_publishers import _filter_records
 from dashboards.amazon_2026.charts_narratives import (
-    _narrative_detail_combined_weekly_figure,
-    _narrative_detail_weekly_figure,
     _top_publishers_data_bar_styles,
     _top_publishers_table_rows,
 )
@@ -34,11 +31,14 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_available_sources,
     _timeline_figure,
     _timeline_with_narratives_figure,
+    detail_combined_weekly_figure,
+    detail_weekly_figure,
     register_top_items_callback,
 )
 from dashboards.amazon_2026.data_common import (
     CAMPAIGN_NARRATIVES_KEY,
     CAMPAIGN_TIMELINE_KEY,
+    PARAM_SINK_KEY,
     TOPIC_AREA_CAMPAIGNS_KEY,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
@@ -72,7 +72,7 @@ def build_campaigns_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-campaign-basic-metric-sink",
-                figure=campaign_basic_metric_sink(data_frame=CAMPAIGN_TIMELINE_KEY),
+                figure=campaign_basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
         controls=[
@@ -152,7 +152,7 @@ def _select_campaign_from_campaigns_table(active_cell, viewport_rows, table_rows
     State("amazon-2026-campaign-campaigns-data", "data"),
 )
 def _update_campaign_details(selected_campaign: str | None, records: list[dict[str, Any]] | None):
-    return _campaign_detail_content(
+    return build_detail_content(
         selected_campaign,
         records=records or [],
         narratives_key=CAMPAIGN_NARRATIVES_KEY,
@@ -175,8 +175,8 @@ def _update_campaign_detail_timeline(source: list[str] | None, basic_metric: str
         store_data,
         ref_code="P7S2G1",
         make_ref_label=ref_label,
-        combined_builder=_narrative_detail_combined_weekly_figure,
-        single_builder=_narrative_detail_weekly_figure,
+        combined_builder=detail_combined_weekly_figure,
+        single_builder=detail_weekly_figure,
     )
 
 
@@ -203,6 +203,10 @@ def _update_campaign_sentiment_timeline(
     raw_values = source_filter if isinstance(source_filter, list) else [source_filter] if source_filter else []
     narratives_on = "Narratives" in raw_values and bool(payload.get("narrative_labels"))
     if narratives_on:
+        if not payload.get("narrative_trad_timeline") and not payload.get("narrative_some_timeline"):
+            trad_records, some_records = _load_narrative_sentiment_data(payload["narrative_labels"])
+            payload["narrative_trad_timeline"] = trad_records
+            payload["narrative_some_timeline"] = some_records
         fig, height_px = _timeline_with_narratives_figure(payload, selected_sources, id_field="campaign")
         return fig, {"height": f"{height_px}px"}, [*selected_sources, "Narratives"]
     fig = _timeline_figure(payload, selected_sources, id_field="campaign")

@@ -136,7 +136,7 @@ def _update_publishers_table(
         data_styles=_data_bar_styles,
         tml_filter=tml_filter,
         media_filter=media_filter,
-        extra_output=lambda filtered, normalized_source: _kpi_cards(filtered, normalized_source),
+        extra_output=lambda filtered, _source: _kpi_cards(filtered),
     )
 
 

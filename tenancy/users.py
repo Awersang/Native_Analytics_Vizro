@@ -151,7 +151,10 @@ class FirestoreUserStore:
     def __init__(self, project_id: str | None = None):
         from google.cloud import firestore  # lazy import
 
-        self._db = firestore.Client(project=project_id or settings.gcp_project_id or None)
+        self._db = firestore.Client(
+            project=project_id or settings.gcp_project_id or None,
+            database=settings.firestore_database,
+        )
 
     def get_user(self, uid: str) -> User | None:
         snap = self._db.collection(self.USERS).document(uid).get()

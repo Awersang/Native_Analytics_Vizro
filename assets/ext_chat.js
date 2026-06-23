@@ -1,6 +1,6 @@
 /* Native Analytics — "Chat with your data" widget  (detachable feature)
  *
- * A floating button + panel shown only on dashboard pages (/app/d/<slug>).
+ * A left-rail button + panel shown only on dashboard pages (/app/d/<slug>).
  * It POSTs questions to /ext/chat/ask and renders the answer.
  *
  * To remove this feature: delete this file, assets/ext_chat.css, the
@@ -8,6 +8,19 @@
  */
 (function () {
     var PREFIX = "/app/d/";
+    var scriptSrc = document.currentScript && document.currentScript.src;
+
+    function ensureStylesheet() {
+        if (document.getElementById("ext-chat-css")) return;
+        var href = scriptSrc
+            ? scriptSrc.replace(/\.js(\?.*)?$/, ".css$1")
+            : "/app/assets/ext_chat.css";
+        var link = document.createElement("link");
+        link.id = "ext-chat-css";
+        link.rel = "stylesheet";
+        link.href = href;
+        document.head.appendChild(link);
+    }
 
     function currentSlug() {
         var p = window.location.pathname;
@@ -22,17 +35,17 @@
         return e;
     }
 
-    function build() {
-        if (document.getElementById("ext-chat-root")) return;
+    function ensureRoot() {
+        var root = document.getElementById("ext-chat-root");
+        if (root) return root;
 
-        var root = el("div", null);
+        root = el("div", null);
         root.id = "ext-chat-root";
-
-        var toggle = el("button", "ext-chat-toggle", "Chat with your data");
-        toggle.type = "button";
-        toggle.setAttribute("aria-label", "Chat with your data");
+        root.className = "na-sidebar-panel-hidden";
 
         var panel = el("div", "ext-chat-panel ext-chat-hidden");
+        panel.id = "ext-chat-panel";
+        panel.setAttribute("aria-hidden", "true");
         var header = el("div", "ext-chat-header", "Chat with your data");
         var log = el("div", "ext-chat-log");
         var hint = el("div", "ext-chat-msg ext-chat-bot",
@@ -53,13 +66,6 @@
         panel.appendChild(log);
         panel.appendChild(form);
         root.appendChild(panel);
-        root.appendChild(toggle);
-        document.body.appendChild(root);
-
-        toggle.addEventListener("click", function () {
-            panel.classList.toggle("ext-chat-hidden");
-            if (!panel.classList.contains("ext-chat-hidden")) input.focus();
-        });
 
         function addMsg(text, who) {
             var m = el("div", "ext-chat-msg " + (who === "user" ? "ext-chat-user" : "ext-chat-bot"));
@@ -95,16 +101,76 @@
                 .catch(function () { pending.textContent = "Network error \u2014 please try again."; })
                 .finally(function () { send.disabled = false; input.focus(); });
         });
+
+        return root;
+    }
+
+    function ensureToggle() {
+        var toggle = document.getElementById("ext-chat-toggle");
+        if (toggle) return toggle;
+
+        toggle = el("button", "na-left-dock-button ext-chat-toggle");
+        toggle.id = "ext-chat-toggle";
+        toggle.type = "button";
+        toggle.setAttribute("aria-label", "Chat with your data");
+        toggle.setAttribute("title", "AI chart");
+        var icon = el("span", "material-symbols-outlined", "smart_toy");
+        toggle.appendChild(icon);
+
+        toggle.addEventListener("click", function () {
+            if (window.NativeAnalyticsSidebar) {
+                window.NativeAnalyticsSidebar.show("chat");
+            }
+        });
+
+        return toggle;
+    }
+
+    function build() {
+        var dock = document.getElementById("na-left-action-dock");
+        var host = document.getElementById("nav-control-panel");
+        if (!dock || !host) return;
+
+        var root = ensureRoot();
+        var toggle = ensureToggle();
+        if (root.parentNode !== host) {
+            host.appendChild(root);
+        }
+
+        var viewsButton = document.getElementById("saved-views-toggle");
+        if (toggle.parentNode !== dock) {
+            if (viewsButton && viewsButton.parentNode === dock) {
+                dock.insertBefore(toggle, viewsButton);
+            } else {
+                dock.appendChild(toggle);
+            }
+        } else if (viewsButton && toggle.nextSibling !== viewsButton) {
+            dock.insertBefore(toggle, viewsButton);
+        }
+    }
+
+    function detach() {
+        var root = document.getElementById("ext-chat-root");
+        var toggle = document.getElementById("ext-chat-toggle");
+        if (root) {
+            root.remove();
+        }
+        if (toggle) {
+            toggle.remove();
+        }
     }
 
     function sync() {
         var onDashboard = currentSlug() !== null;
-        var root = document.getElementById("ext-chat-root");
-        if (onDashboard && !root) build();
-        else if (!onDashboard && root) root.remove();
+        if (onDashboard) {
+            build();
+        } else {
+            detach();
+        }
     }
 
     // Vizro is a single-page app, so re-check on navigation/DOM changes.
+    ensureStylesheet();
     if (document.body) sync();
     new MutationObserver(sync).observe(document.documentElement, { subtree: true, childList: true });
 })();

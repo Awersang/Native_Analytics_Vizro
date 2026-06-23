@@ -9,7 +9,7 @@ and dashboards pull data from **BigQuery** with per-client data isolation.
 
 - **Authentication** via Firebase / Identity Platform, toggleable with a single
   env var (`AUTH_ENABLED`) so local development needs no login.
-- **Per-user dashboard access** — a curated "user panel" lists only the
+- **Per-user dashboard access** — the Client Hub lists only the
   dashboards a user may open; a request gate blocks everything else.
 - **Admin panel** — manage users, clients (tenants) and dashboard grants.
 - **Plugin dashboards** — drop a folder under `dashboards/<slug>/` and it is
@@ -22,7 +22,7 @@ and dashboards pull data from **BigQuery** with per-client data isolation.
 ```
             ┌────────────────────── Cloud Run (one container) ──────────────────────┐
 Browser ──► │  Flask server (created by Vizro)                                       │
-            │   /            landing "user panel"  (pages_landing)                    │
+            │   /            Client Hub  (pages_landing)                              │
             │   /login,/logout, /sessionLogin       (Firebase session cookies)       │
             │   /admin/*     admin panel            (admin blueprint)                 │
             │   before_request gate → auth + per-dashboard access check               │
@@ -53,7 +53,7 @@ dashboards/             # plugin packages, auto-discovered
   timeline/             #   reach & engagement (synthetic data)
   breakdown/            #   narrative breakdown (synthetic data)
   bq_sample/            #   BigQuery-connected sample
-pages_landing/          # landing/login/logout routes + shared HTML shell
+pages_landing/          # Client Hub/login/logout routes + shared HTML shell
 admin/                  # admin panel (users / clients / grants)
 tests/                  # pytest suite
 Dockerfile              # Cloud Run image
@@ -123,7 +123,7 @@ python -m pytest -q
    Vizro's `data_manager` (see `dashboards/bq_sample/`). Use
    `data_sources.bq.safe_query(sql, fallback=...)` for graceful local dev.
 4. Restart the app. The dashboard is auto-discovered, appears in the admin grant
-   UI, and shows on a user's landing page once granted.
+   UI, and shows in the Client Hub once granted.
 
 ### Responsive Plotly charts in cards
 

@@ -43,6 +43,7 @@ from dashboards.amazon_2026.data_common import (
     NARRATIVE_OVERVIEW_KEY,
     NARRATIVE_WEEKLY_REACH_KEY,
     NARRATIVES_KPI_KEY,
+    PARAM_SINK_KEY,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
@@ -78,7 +79,7 @@ def build_narratives_page(base_path: str) -> vm.Page:
             ),
             vm.Figure(
                 id="amazon-2026-narrative-basic-metric-sink",
-                figure=narrative_basic_metric_sink(data_frame=NARRATIVES_KPI_KEY),
+                figure=narrative_basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
         controls=[
@@ -118,7 +119,7 @@ def narratives_detail_panel(data_frame: pd.DataFrame):
     prevent_initial_call=True,
 )
 def _select_narrative_from_table(active_cell, viewport_rows, table_rows):
-    return select_active_table_value(
+    result = select_active_table_value(
         active_cell,
         viewport_rows,
         table_rows,
@@ -127,6 +128,8 @@ def _select_narrative_from_table(active_cell, viewport_rows, table_rows):
         row_id_first=True,
         value_keys=["narrative_label"],
     )
+    print(f"[NARR-DEBUG] _select_narrative_from_table active_cell={active_cell} -> {result!r}")
+    return result
 
 
 @callback(
@@ -140,6 +143,8 @@ def _update_narrative_details(
     records: list[dict[str, Any]] | None,
     overview_records: list[dict[str, Any]] | None,
 ):
+    from dash import ctx
+    print(f"[NARR-DEBUG] _update_narrative_details selected_label={selected_label!r} triggered_id={ctx.triggered_id!r} triggered={ctx.triggered!r}")
     return _narrative_detail_content(records or [], selected_label, overview_records or [])
 
 
@@ -302,6 +307,7 @@ def _update_narrative_top_publishers_table(
     Output("amazon-2026-narratives-overview-table", "style_data_conditional"),
     Input("amazon-2026-narratives-source-filter", "value"),
     State("amazon-2026-narratives-overview-data", "data"),
+    prevent_initial_call=True,
 )
 def _update_narratives_overview_table(
     source_filter: str | None,

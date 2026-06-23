@@ -18,10 +18,12 @@ from dashboards.amazon_2026.charts_shared import (
     NARRATIVE_TRAD_COLUMNS,
     THEME_BORDER,
     THEME_ROW_EVEN,
+    THEME_ROW_ODD,
     THEME_SURFACE,
     THEME_SURFACE_ALT,
     THEME_TEXT,
     THEME_TEXT_MUTED,
+    TOOLTIP_CSS,
     _as_list,
     _coerce_float,
     _detail_metric_values,
@@ -42,6 +44,7 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_records_from_frame,
     build_overview_table_section,
     build_top_items_panel,
+    build_top_items_table_data,
     topic_area_color_map,
     trad_some_controls,
 )
@@ -88,6 +91,42 @@ BAR_COLORS = {
     "some_engagement_positive_share": "var(--amazon-publishers-bar-positive)",
     "some_engagement_negative_share": "var(--amazon-publishers-bar-negative)",
 }
+
+
+def _precompute_bar_styles_by_column() -> dict[str, list[dict[str, Any]]]:
+    """Build per-column gradient rules for all 101 percentage buckets × 2 row parities.
+
+    Runs once at import time so _data_bar_styles never iterates over table rows.
+    Each rule matches on hidden data columns ({col}_pct and row_parity) so the
+    DataTable only evaluates O(rules_per_col × rows) instead of O(N²) filter
+    expressions. Rules are keyed by column so _data_bar_styles can filter to
+    only visible columns in O(n_columns) time.
+    """
+    row_bgs = [
+        ("even", THEME_ROW_EVEN),
+        ("odd", THEME_ROW_ODD),
+    ]
+    result: dict[str, list[dict[str, Any]]] = {}
+    for col, color in BAR_COLORS.items():
+        col_rules: list[dict[str, Any]] = []
+        for pct in range(101):
+            for parity, row_bg in row_bgs:
+                col_rules.append({
+                    "if": {
+                        "column_id": col,
+                        "filter_query": f"{{row_parity}} = '{parity}' && {{{col}_pct}} = {pct}",
+                    },
+                    "background": (
+                        f"linear-gradient(90deg, {color} 0%, {color} {pct}%, "
+                        f"{row_bg} {pct}%, {row_bg} 100%)"
+                    ),
+                })
+        result[col] = col_rules
+    return result
+
+
+_BAR_STYLES_BY_COLUMN: dict[str, list[dict[str, Any]]] = _precompute_bar_styles_by_column()
+
 # ---------------------------------------------------------------------------
 # Public section builders (called by @capture wrappers in publishers.py)
 # ---------------------------------------------------------------------------
@@ -156,7 +195,7 @@ def build_publishers_overview_section(data_frame: pd.DataFrame) -> html.Div:
         style_cell_conditional=_cell_width_styles(),
         style_header_conditional=_header_divider_styles(columns),
         style_data_conditional=_data_bar_styles(table_data, columns),
-        pre_table_children=[html.Div(id="amazon-2026-publishers-kpis", children=_kpi_cards(records, "All"))],
+        pre_table_children=[html.Div(id="amazon-2026-publishers-kpis", children=_kpi_cards(records))],
     )
 
 
@@ -284,10 +323,11 @@ def _topic_area_records_from_frame(
 
 
 def _table_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
+    rows = [
         {
             "id": record.get("publisher_uid", ""),
             "row_id": idx,
+            "row_parity": "odd" if idx % 2 else "even",
             "publisher_uid": record.get("publisher_uid", ""),
             "publisher_type": record.get("publisher_type", ""),
             "display_name": record.get("display_name", ""),
@@ -306,6 +346,12 @@ def _table_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for idx, record in enumerate(records)
     ]
+    # Add normalised percentage columns used by _BAR_STYLES_BY_COLUMN filter rules.
+    for col in [*TRAD_COLUMNS, *SOME_COLUMNS]:
+        max_val = max((_num(r, col) for r in rows), default=0)
+        for r in rows:
+            r[f"{col}_pct"] = round((_num(r, col) / max_val) * 100) if max_val > 0 else 0
+    return rows
 
 
 def _table_columns(source_filter: str) -> list[dict[str, Any]]:
@@ -450,15 +496,19 @@ def _header_divider_styles(columns: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # table_data is not read here; percentage buckets are pre-baked into row data
+    # by _table_records and matched via _BAR_STYLES_BY_COLUMN filter rules.
     visible_ids = {column["id"] for column in columns}
     styles: list[dict[str, Any]] = [
-        {"if": {"row_index": "odd"}, "backgroundColor": "var(--amazon-publishers-row-odd)"},
+        {"if": {"row_index": "odd"}, "backgroundColor": THEME_ROW_ODD},
         {
             "if": {"column_id": "display_name"},
             "color": "var(--amazon-publishers-link)",
             "cursor": "pointer",
             "borderRight": "none",
             "boxShadow": f"inset -1px 0 0 {THEME_BORDER}",
+            "position": "relative",
+            "zIndex": 4,
         },
         {
             "if": {"state": "active"},
@@ -472,42 +522,14 @@ def _data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict[str, A
         },
     ]
     if _has_source_divider(columns):
-        styles.append(
-            {
-                "if": {"column_id": "some_post_count"},
-                "borderLeft": "none",
-                "boxShadow": f"inset 1px 0 0 {THEME_BORDER}",
-            }
-        )
-    for column_id in [col for col in [*TRAD_COLUMNS, *SOME_COLUMNS] if col in visible_ids]:
-        max_value = max((_num(row, column_id) for row in table_data), default=0)
-        if max_value <= 0:
-            continue
-        for row in table_data:
-            pct = max(0, min(100, (_num(row, column_id) / max_value) * 100))
-            row_bg = (
-                "var(--amazon-publishers-row-odd)"
-                if int(row["row_id"]) % 2
-                else "var(--amazon-publishers-row-even)"
-            )
-            styles.append(
-                {
-                    "if": {"filter_query": f"{{row_id}} = {row['row_id']}", "column_id": column_id},
-                    "background": (
-                        f"linear-gradient(90deg, {BAR_COLORS[column_id]} 0%, "
-                        f"{BAR_COLORS[column_id]} {pct:.2f}%, {row_bg} {pct:.2f}%, {row_bg} 100%)"
-                    ),
-                }
-            )
-    for row in table_data:
-        styles.append(
-            {
-                "if": {"filter_query": f"{{row_id}} = {row['row_id']}", "column_id": "display_name"},
-                "position": "relative",
-                "zIndex": 4,
-                "boxShadow": f"inset 0 -1px 0 {THEME_BORDER}",
-            }
-        )
+        styles.append({
+            "if": {"column_id": "some_post_count"},
+            "borderLeft": "none",
+            "boxShadow": f"inset 1px 0 0 {THEME_BORDER}",
+        })
+    for col in [*TRAD_COLUMNS, *SOME_COLUMNS]:
+        if col in visible_ids:
+            styles.extend(_BAR_STYLES_BY_COLUMN[col])
     return styles
 
 
@@ -534,7 +556,7 @@ def _cell_width_styles() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _kpi_cards(records: list[dict[str, Any]], source_filter: str) -> html.Div:
+def _kpi_cards(records: list[dict[str, Any]]) -> html.Div:
     total_publishers = 0
     trad_publishers = 0
     some_publishers = 0
@@ -869,7 +891,7 @@ def _details_content(
     )
     selected_narratives = _combined_narratives_from_record(selected)
     topic_area_panel = _topic_area_panel(selected, topic_areas or [], some_topic_areas or [])
-    top_items_panel = _top_items_panel(selected, top_publications or [])
+    top_items_panel = _top_items_panel(top_publications or [])
     return html.Div(
         className="amazon-publishers-detail-content",
         children=[
@@ -1176,16 +1198,16 @@ def _topic_area_available_sources(topic_area_data: dict[str, Any] | None) -> lis
 
 
 def _topic_area_rows(topic_area_data: dict[str, Any], selected_sources: list[str]) -> list[dict[str, Any]]:
-    publisher_uid = str(topic_area_data.get("publisher_uid", ""))
+    # trad_topic_areas / some_topic_areas are already filtered to the selected publisher
     combined: dict[str, float] = {}
     if "Trad" in selected_sources:
         for label, value in _topic_area_counts(
-            topic_area_data.get("trad_topic_areas", []), publisher_uid, value_key="publication_count"
+            topic_area_data.get("trad_topic_areas", []), value_key="publication_count"
         ).items():
             combined[label] = combined.get(label, 0) + value
     if "SoMe" in selected_sources:
         for label, value in _topic_area_counts(
-            topic_area_data.get("some_topic_areas", []), publisher_uid, value_key="post_count"
+            topic_area_data.get("some_topic_areas", []), value_key="post_count"
         ).items():
             combined[label] = combined.get(label, 0) + value
     return [
@@ -1196,13 +1218,10 @@ def _topic_area_rows(topic_area_data: dict[str, Any], selected_sources: list[str
 
 def _topic_area_counts(
     rows: list[dict[str, Any]],
-    publisher_uid: str,
     value_key: str = "publication_count",
 ) -> dict[str, float]:
     counts: dict[str, float] = {}
     for row in rows:
-        if str(row.get("publisher_uid", "")) != publisher_uid:
-            continue
         label = str(row.get("topic_area", "")).strip() or "Unknown"
         counts[label] = counts.get(label, 0) + _coerce_float(row.get(value_key, 0))
     return counts
@@ -1257,13 +1276,7 @@ def _narratives_table(rows: list[dict[str, Any]]) -> html.Div:
         style_header_conditional=_narrative_header_divider_styles(selected_sources),
         style_data_conditional=_narrative_data_bar_styles(table_rows, table_cols),
         style_data={"height": "38px"},
-        css=[
-            {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
-            {
-                "selector": ".dash-header",
-                "rule": "white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;",
-            },
-        ],
+        css=TOOLTIP_CSS,
     )
     return na_panel(
         title,
@@ -1413,47 +1426,11 @@ def _combined_narratives_from_record(record: dict[str, Any]) -> list[dict[str, A
 # ---------------------------------------------------------------------------
 
 
-def _top_items_panel(selected: dict[str, Any], top_publications: list[dict[str, Any]]) -> html.Div:
-    publisher_uid = str(selected.get("publisher_uid", ""))
-
-    trad_rows = [
-        r for r in top_publications
-        if str(r.get("publisher_uid", "")) == publisher_uid and str(r.get("Source", "")) == "Trad"
-    ][:50]
-    some_rows = [
-        r for r in top_publications
-        if str(r.get("publisher_uid", "")) == publisher_uid and str(r.get("Source", "")) == "SoMe"
-    ][:50]
-
-    trad_table_data = [
-        {
-            "Date":       str(r.get("Date", "") or ""),
-            "Media_Type": str(r.get("Type", "")),
-            "Title":      str(r.get("Title", "")),
-            "Summary":    str(r.get("Summary", "")),
-            "URL":        f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
-            "Sentiment":  str(r.get("Sentiment", "")),
-            "Reach":      _num(r, "Reach"),
-        }
-        for r in trad_rows
-    ]
-    some_table_data = [
-        {
-            "Date":         str(r.get("Date", "") or ""),
-            "Platform":     str(r.get("Type", "")),
-            "Post_Content": str(r.get("Summary", "")),
-            "URL":          f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
-            "Sentiment":    str(r.get("Sentiment", "")),
-            "Reach":        _num(r, "Reach"),
-            "Engagement":   _num(r, "Engagement"),
-        }
-        for r in some_rows
-    ]
-
-    panel_title = ref_label("Top Publications / Posts", "P3S2T2")
+def _top_items_panel(top_publications: list[dict[str, Any]]) -> html.Div:
+    trad_table_data, some_table_data = build_top_items_table_data(top_publications)
     return build_top_items_panel(
         "amazon-2026-publisher",
-        panel_title,
+        ref_label("Top Publications / Posts", "P3S2T2"),
         trad_table_data,
         some_table_data,
     )
@@ -1640,10 +1617,10 @@ def _normalize_profile_text(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    for idx, char in enumerate(text):
-        if char.isalpha():
-            return f"{text[:idx]}{char.upper()}{text[idx + 1:]}"
-    return text
+    idx = next((i for i, c in enumerate(text) if c.isalpha()), -1)
+    if idx == -1:
+        return text
+    return text[:idx] + text[idx].upper() + text[idx + 1:]
 
 
 def _normalize_tml_labels(value: Any) -> list[str]:

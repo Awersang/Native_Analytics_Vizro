@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, callback, dcc, html
-from vizro.managers import data_manager
 from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_shared import (
@@ -22,7 +21,7 @@ from dashboards.amazon_2026.charts_shared import (
     na_panel,
     register_top_items_callback,
 )
-from dashboards.amazon_2026.data_common import MEDIA_TYPE_ORDER, MONTH_ORDER, TOP_POSTS_KEY
+from dashboards.amazon_2026.data_common import MEDIA_TYPE_ORDER, MONTH_ORDER
 from dashboards.amazon_2026.dev_ids import ref_label
 
 _GRAPH_CONFIG = {"displayModeBar": False, "responsive": True}
@@ -36,13 +35,60 @@ def _theme_hoverlabel(size: int = 13) -> dict:
     }
 
 
-def _overview_metric_title(data_frame: pd.DataFrame) -> str:
-    metric = "publications"
+def _get_metric(data_frame: pd.DataFrame) -> str:
+    """Return the active base_metric value ('publications' or 'reach') from a pivoted DataFrame."""
     if "base_metric" in data_frame.columns and not data_frame.empty:
-        selected = str(data_frame["base_metric"].iloc[0]).lower()
-        if selected in {"publications", "reach"}:
-            metric = selected
-    return "Publications" if metric == "publications" else "Reach"
+        val = str(data_frame["base_metric"].iloc[0]).lower()
+        if val in {"publications", "reach"}:
+            return val
+    return "publications"
+
+
+def _overview_metric_title(data_frame: pd.DataFrame) -> str:
+    return "Publications" if _get_metric(data_frame) == "publications" else "Reach"
+
+
+def _build_monthly_bar_positions(
+    months: list[str],
+    groups: list[str],
+    *,
+    slot_width: float,
+    total_extra_gap: float = 1.2,
+    group_labels: list[str] | None = None,
+) -> tuple[dict[tuple[str, str], float], list[float], list[str], list[dict]]:
+    """Build numeric x-positions for a grouped monthly bar chart with a 'Total' column.
+
+    Returns (x_pos, tick_vals, tick_text, month_annotations).
+    ``group_labels`` overrides tick text when data keys differ from display names.
+    """
+    labels = group_labels if group_labels is not None else groups
+    x_pos: dict[tuple[str, str], float] = {}
+    tick_vals: list[float] = []
+    tick_text: list[str] = []
+    month_annotations: list[dict] = []
+    for i, month in enumerate(months):
+        extra = total_extra_gap if month == "Total" else 0.0
+        base = i * slot_width + extra
+        for j, (group, label) in enumerate(zip(groups, labels)):
+            x_pos[(month, group)] = base + j
+            tick_vals.append(base + j)
+            tick_text.append(label)
+        mid = base + (len(groups) - 1) / 2.0 if groups else base
+        month_annotations.append(
+            dict(
+                x=mid,
+                y=-0.13,
+                xref="x",
+                yref="paper",
+                text=f"<b>{month}</b>",
+                showarrow=False,
+                font=dict(color=THEME_TEXT, size=11),
+                xanchor="center",
+                yanchor="top",
+                borderpad=4,
+            )
+        )
+    return x_pos, tick_vals, tick_text, month_annotations
 
 
 def _trad_tml_donut_figure(data_frame: pd.DataFrame, metric_title: str):
@@ -163,12 +209,7 @@ def _some_platform_donut_figure(data_frame: pd.DataFrame, metric_label: str):
 
 @capture("figure")
 def some_platform_donut_panel(data_frame: pd.DataFrame):
-    metric = "publications"
-    if "base_metric" in data_frame.columns and not data_frame.empty:
-        selected = str(data_frame["base_metric"].iloc[0]).lower()
-        if selected in {"publications", "reach"}:
-            metric = selected
-
+    metric = _get_metric(data_frame)
     if metric == "publications":
         title = "Posts by Platform"
         metric_label = "Posts"
@@ -203,40 +244,10 @@ def _pubs_posts_reach_by_source_figure(data_frame: pd.DataFrame, metric: str, y_
     max_value = float(plot_df["metric_value"].max()) if not plot_df.empty else 0.0
     y_axis_max = max_value * 1.18 if max_value > 0 else 1.0
 
-    # Match the sentiment chart's hierarchical x-axis: source labels on the ticks,
-    # months as annotations underneath each pair of bars.
-    slot_width = 2.6
-    total_extra_gap = 1.2
     bar_width = 0.9
-
-    x_pos: dict[tuple[str, str], float] = {}
-    tick_vals: list[float] = []
-    tick_text: list[str] = []
-    month_annotations: list[dict] = []
-
-    for i, month in enumerate(x_order):
-        extra = total_extra_gap if month == "Total" else 0.0
-        base = i * slot_width + extra
-        x_trad = base
-        x_some = base + 1.0
-        x_pos[(month, "Trad")] = x_trad
-        x_pos[(month, "Some")] = x_some
-        tick_vals.extend([x_trad, x_some])
-        tick_text.extend([source_display["Trad"], source_display["Some"]])
-        month_annotations.append(
-            dict(
-                x=(x_trad + x_some) / 2,
-                y=-0.13,
-                xref="x",
-                yref="paper",
-                text=f"<b>{month}</b>",
-                showarrow=False,
-                font=dict(color=THEME_TEXT, size=11),
-                xanchor="center",
-                yanchor="top",
-                borderpad=4,
-            )
-        )
+    x_pos, tick_vals, tick_text, month_annotations = _build_monthly_bar_positions(
+        x_order, ["Trad", "Some"], slot_width=2.6, group_labels=["Trad", "SoMe"]
+    )
 
     fig = go.Figure()
     for source_group in ["Trad", "Some"]:
@@ -304,12 +315,7 @@ def _pubs_posts_reach_by_source_figure(data_frame: pd.DataFrame, metric: str, y_
 
 @capture("figure")
 def pubs_posts_reach_by_source_panel(data_frame: pd.DataFrame):
-    metric = "publications"
-    if "base_metric" in data_frame.columns and not data_frame.empty:
-        bm = str(data_frame["base_metric"].iloc[0]).lower()
-        if bm in {"publications", "reach"}:
-            metric = bm
-
+    metric = _get_metric(data_frame)
     y_label = "Count" if metric == "publications" else "Reach"
     title = "Publications and Posts Count" if metric == "publications" else "Reach Sum"
 
@@ -353,39 +359,11 @@ def _trad_source_sentiment_monthly_split_figure(data_frame: pd.DataFrame, visibl
         lambda s: (s / s.sum() * 100) if s.sum() else 0
     )
 
-    # Numeric x positions: monthly slots use slot_width=2.6, Total gets extra gap
     all_months = present_months + ["Total"]
-    slot_width = 3.6
-    total_extra_gap = 1.2  # additional gap before Total column
     bar_width = 0.9
-
-    x_pos: dict[tuple, float] = {}
-    tick_vals: list[float] = []
-    tick_text: list[str] = []
-    month_annotations: list[dict] = []
-
-    for i, month in enumerate(all_months):
-        extra = total_extra_gap if month == "Total" else 0.0
-        base = i * slot_width + extra
-        for j, group in enumerate(active_groups):
-            x_pos[(month, group)] = base + j * 1.0
-            tick_vals.append(base + j * 1.0)
-            tick_text.append(group)
-        mid = base + (len(active_groups) - 1) / 2.0 if active_groups else base
-        month_annotations.append(
-            dict(
-                x=mid,
-                y=-0.13,
-                xref="x",
-                yref="paper",
-                text=f"<b>{month}</b>",
-                showarrow=False,
-                font=dict(color=THEME_TEXT, size=11),
-                xanchor="center",
-                yanchor="top",
-                borderpad=4,
-            )
-        )
+    x_pos, tick_vals, tick_text, month_annotations = _build_monthly_bar_positions(
+        all_months, active_groups, slot_width=3.6
+    )
 
     fig = go.Figure()
     for sentiment in sentiment_order_plot:
@@ -452,11 +430,7 @@ def _trad_source_sentiment_monthly_split_figure(data_frame: pd.DataFrame, visibl
 
 @capture("figure")
 def trad_source_sentiment_monthly_split_panel(data_frame: pd.DataFrame):
-    base_metric = "publications"
-    if "base_metric" in data_frame.columns and not data_frame.empty:
-        bm = str(data_frame["base_metric"].iloc[0]).lower()
-        if bm in {"publications", "reach"}:
-            base_metric = bm
+    base_metric = _get_metric(data_frame)
     chart_title = (
         "Publications and Posts by Sentiment"
         if base_metric == "publications"
@@ -498,40 +472,34 @@ def _update_p1s4g1_graph(visible_groups, records):
 
 @capture("figure")
 def overview_top_items_panel(data_frame: pd.DataFrame):
-    articles_df = data_frame.copy()
-    for col in ["Date", "Media_Type", "Publication", "Title", "Summary", "URL", "Sentiment", "Reach"]:
-        if col not in articles_df.columns:
-            articles_df[col] = ""
+    trad_df = data_frame[data_frame["Source"] == "Trad"] if "Source" in data_frame.columns else data_frame
+    some_df = data_frame[data_frame["Source"] == "SoMe"] if "Source" in data_frame.columns else pd.DataFrame()
+
     trad_table_data = [
         {
             "Date": str(row.get("Date", "") or ""),
-            "Media_Type": str(row.get("Media_Type", "")),
-            "Publication": str(row.get("Publication", "")),
-            "Title": str(row.get("Title", "")),
-            "Summary": str(row.get("Summary", "")),
+            "Media_Type": str(row.get("Media_Type", "") or ""),
+            "Publication": str(row.get("Publication", "") or ""),
+            "Title": str(row.get("Title", "") or ""),
+            "Summary": str(row.get("Summary", "") or ""),
             "URL": f"[link]({row['URL']})" if str(row.get("URL", "")).startswith("http") else "",
             "Sentiment": str(row.get("Sentiment", "")),
             "Reach": _num(row, "Reach"),
         }
-        for _, row in articles_df.iterrows()
+        for _, row in trad_df.iterrows()
     ]
-
-    posts_df = data_manager[TOP_POSTS_KEY].load()
-    for col in ["Date", "Platform", "Author", "Post_Content", "URL", "Sentiment", "Reach", "Engagement"]:
-        if col not in posts_df.columns:
-            posts_df[col] = ""
     some_table_data = [
         {
             "Date": str(row.get("Date", "") or ""),
-            "Platform": str(row.get("Platform", "")),
-            "Author": str(row.get("Author", "")),
-            "Post_Content": str(row.get("Post_Content", "")),
+            "Platform": str(row.get("Platform", "") or ""),
+            "Author": str(row.get("Author", "") or ""),
+            "Post_Content": str(row.get("Post_Content", "") or ""),
             "URL": f"[link]({row['URL']})" if str(row.get("URL", "")).startswith("http") else "",
             "Sentiment": str(row.get("Sentiment", "")),
             "Reach": _num(row, "Reach"),
             "Engagement": _num(row, "Engagement"),
         }
-        for _, row in posts_df.iterrows()
+        for _, row in some_df.iterrows()
     ]
 
     panel_title = ref_label("Top Publications / Posts", "P1S5T1")

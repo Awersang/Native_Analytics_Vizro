@@ -8,6 +8,7 @@ from dashboards.amazon_2026.data_common import (
     _optional_json_string_expr,
     _optional_numeric_expr,
     _optional_string_expr,
+    _sentiment_case,
     _table,
     _table_column_map,
 )
@@ -156,11 +157,7 @@ def load_publisher_trad_timeline() -> pd.DataFrame:
       SELECT
         DATE_TRUNC(DATE(Published_At), WEEK(MONDAY)) AS week_start,
         COALESCE(NULLIF(TRIM(Publisher), ''), 'Unknown') AS display_name,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS sentiment,
+        {_sentiment_case('Sentiment')} AS sentiment,
         COUNT(*) AS publications,
         SUM(CAST(COALESCE(Reach, 0) AS INT64)) AS reach
       FROM {_table('amazon_2026_trad')}
@@ -201,11 +198,7 @@ def load_publisher_some_timeline() -> pd.DataFrame:
         DATE_TRUNC(DATE(Published_At), WEEK(MONDAY)) AS week_start,
         NULLIF(TRIM(CAST(publisher_uid AS STRING)), '') AS source_publisher_uid,
         COALESCE(NULLIF(TRIM(CAST(publisher_display AS STRING)), ''), NULLIF(TRIM(Author), ''), 'Unknown') AS display_name,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS sentiment,
         COUNT(*) AS posts,
         SUM(COALESCE(Engagement, 0)) AS engagement
       FROM {_table('amazon_2026_some')} AS s
@@ -309,11 +302,7 @@ def load_publisher_top_publications() -> pd.DataFrame:
         COALESCE(NULLIF(TRIM(t.Title), ''), '(untitled)') AS Title,
         COALESCE({trad_summary_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(t.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case('t.Sentiment')} AS Sentiment,
         CAST(COALESCE(t.Reach, 0) AS INT64) AS Reach,
         CAST(NULL AS INT64) AS Engagement
       FROM {_table('amazon_2026_trad')} AS t
@@ -334,11 +323,7 @@ def load_publisher_top_publications() -> pd.DataFrame:
         '' AS Title,
         COALESCE({some_content_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(s.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS Sentiment,
         CAST(COALESCE(s.Reach, 0) AS INT64) AS Reach,
         COALESCE(s.Engagement, 0) AS Engagement
       FROM {_table('amazon_2026_some')} AS s

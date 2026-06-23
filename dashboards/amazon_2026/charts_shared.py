@@ -1777,6 +1777,55 @@ def build_top_posts_table(table_id: str, table_data: list[dict[str, Any]], show_
     )
 
 
+def build_top_items_table_data(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split JSON-safe records into trad/some table row dicts for build_top_items_panel.
+
+    Always includes Publication, Author, Angle, Angle_ID so the DataTable store
+    carries them for row-click callbacks; columns not in the table column config
+    are silently ignored by Dash DataTable.
+    """
+    trad_rows = [r for r in records if str(r.get("Source", "")) == "Trad"]
+    some_rows = [r for r in records if str(r.get("Source", "")) == "SoMe"]
+
+    def _url(r: dict) -> str:
+        url = r.get("URL", "")
+        return f"[link]({url})" if str(url).startswith("http") else ""
+
+    trad_data = [
+        {
+            "Date": str(r.get("Date", "") or ""),
+            "Media_Type": str(r.get("Type", "")),
+            "Publication": str(r.get("Publication", "") or ""),
+            "Title": str(r.get("Title", "")),
+            "Summary": str(r.get("Summary", "")),
+            "URL": _url(r),
+            "Sentiment": str(r.get("Sentiment", "")),
+            "Reach": _num(r, "Reach"),
+            "Angle_ID": str(r.get("Angle_ID", "") or ""),
+            "Angle": str(r.get("Angle", "") or ""),
+        }
+        for r in trad_rows
+    ]
+    some_data = [
+        {
+            "Date": str(r.get("Date", "") or ""),
+            "Platform": str(r.get("Type", "")),
+            "Author": str(r.get("Author", "") or ""),
+            "Post_Content": str(r.get("Summary", "")),
+            "URL": _url(r),
+            "Sentiment": str(r.get("Sentiment", "")),
+            "Reach": _num(r, "Reach"),
+            "Engagement": _num(r, "Engagement"),
+            "Angle_ID": str(r.get("Angle_ID", "") or ""),
+            "Angle": str(r.get("Angle", "") or ""),
+        }
+        for r in some_rows
+    ]
+    return trad_data, some_data
+
+
 def build_top_items_panel(
     id_prefix: str,
     panel_title: Any,
@@ -1835,3 +1884,236 @@ def register_top_items_callback(id_prefix: str, show_publication_col: bool = Fal
         if source == "SoMe":
             return build_top_posts_table(f"{id_prefix}-top-posts", data.get("some", []), show_author_col)
         return build_top_publications_table(f"{id_prefix}-top-publications", data.get("trad", []), show_publication_col)
+
+
+# ---------------------------------------------------------------------------
+# Detail weekly timeline builders (shared by Narratives, Campaigns, Topic Areas)
+# ---------------------------------------------------------------------------
+
+# Line style per source — solid/circle for Trad, dotted/diamond for SoMe.
+# Cumulative lines reuse the source color with a dashed stroke so they stay
+# visually distinct from both the weekly bars and each other.
+_DETAIL_SOURCE_STYLE: dict[str, dict] = {
+    "Trad": {"color": ACCENT_TRAD, "dash": "solid", "marker": "circle"},
+    "SoMe": {"color": ACCENT_SOME, "dash": "dot", "marker": "diamond"},
+}
+_DETAIL_CUMULATIVE_DASH = "dash"
+
+
+def _apply_detail_weekly_layout(
+    fig: go.Figure, y_title: str, x_range: list[str] | None = None, dtick: int | None = None
+) -> None:
+    xaxis_cfg: dict = dict(
+        title=None,
+        tickformat="%d %b",
+        hoverformat="%d %b %Y",
+        showgrid=True,
+        gridcolor=THEME_GRID,
+    )
+    if x_range:
+        xaxis_cfg["range"] = x_range
+    if dtick:
+        xaxis_cfg["dtick"] = dtick
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=THEME_TEXT),
+        margin=dict(l=95, r=20, t=10, b=46),
+        hovermode="x unified",
+        legend=dict(
+            orientation="v",
+            x=0.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+            bgcolor=THEME_SURFACE,
+            bordercolor=THEME_BORDER,
+            borderwidth=1,
+            font=dict(size=10),
+            title=None,
+        ),
+        xaxis=xaxis_cfg,
+        yaxis=dict(
+            title=y_title,
+            tickformat=",",
+            rangemode="tozero",
+            automargin=False,
+            showgrid=True,
+            gridcolor=THEME_GRID,
+        ),
+        hoverlabel=dict(
+            bgcolor=THEME_SURFACE,
+            bordercolor=THEME_BORDER,
+            font=dict(color=THEME_TEXT, size=13),
+            namelength=-1,
+            align="left",
+        ),
+    )
+
+
+def detail_weekly_figure(
+    data_frame: pd.DataFrame,
+    metric_col: str,
+    y_title: str,
+    cum_title: str,
+    source: str = "Trad",
+    x_range: list[str] | None = None,
+    dtick: int | None = None,
+) -> go.Figure:
+    """Single-entity weekly line with a cumulative line on a secondary y-axis."""
+    style = _DETAIL_SOURCE_STYLE.get(source, _DETAIL_SOURCE_STYLE["Trad"])
+    color = style["color"]
+
+    df = data_frame.copy() if data_frame is not None else pd.DataFrame()
+    fig = go.Figure()
+    if df.empty or "week_start" not in df.columns:
+        fig.add_annotation(
+            text="No data available",
+            x=0.5, y=0.5, xref="paper", yref="paper",
+            showarrow=False,
+            font=dict(color=THEME_TEXT_MUTED, size=13),
+        )
+        _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
+        return fig
+
+    df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce")
+    df[metric_col] = pd.to_numeric(df.get(metric_col, 0), errors="coerce").fillna(0)
+    df = df.dropna(subset=["week_start"]).sort_values("week_start")
+
+    if df.empty:
+        fig.add_annotation(
+            text="No data available",
+            x=0.5, y=0.5, xref="paper", yref="paper",
+            showarrow=False,
+            font=dict(color=THEME_TEXT_MUTED, size=13),
+        )
+        _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
+        return fig
+
+    cumulative = df[metric_col].cumsum()
+
+    fig.add_trace(
+        go.Scatter(
+            x=df["week_start"],
+            y=df[metric_col],
+            name=y_title,
+            mode="lines+markers",
+            line=dict(width=2.5, color=color, shape="spline", smoothing=0.45, dash=style["dash"]),
+            marker=dict(size=5, color=color, symbol=style["marker"]),
+            fill="tozeroy",
+            fillcolor=_hex_to_rgba(color, 0.12),
+            hovertemplate=f"{y_title}: %{{y:,.0f}}<extra></extra>",
+            yaxis="y",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["week_start"],
+            y=cumulative,
+            name=cum_title,
+            mode="lines",
+            line=dict(width=2, color=color, dash=_DETAIL_CUMULATIVE_DASH),
+            hovertemplate=f"{cum_title}: %{{y:,.0f}}<extra></extra>",
+            yaxis="y2",
+        )
+    )
+
+    _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
+    fig.update_layout(
+        hovermode="closest",
+        yaxis2=dict(
+            title=cum_title,
+            tickformat=",",
+            rangemode="tozero",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+        ),
+    )
+    return fig
+
+
+def detail_combined_weekly_figure(
+    trad_df: pd.DataFrame,
+    some_df: pd.DataFrame,
+    trad_metric_col: str,
+    trad_label: str,
+    trad_cum_label: str,
+    some_metric_col: str,
+    some_label: str,
+    some_cum_label: str,
+    y_title: str,
+    cum_title: str,
+    x_range: list[str] | None = None,
+    dtick: int | None = None,
+) -> go.Figure:
+    """Trad + SoMe weekly metric, each with its own cumulative line."""
+    fig = go.Figure()
+
+    def _prep(data_frame: pd.DataFrame, metric_col: str) -> pd.DataFrame:
+        df = data_frame.copy() if data_frame is not None else pd.DataFrame()
+        if df.empty or "week_start" not in df.columns:
+            return pd.DataFrame()
+        df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce")
+        df[metric_col] = pd.to_numeric(df.get(metric_col, 0), errors="coerce").fillna(0)
+        return df.dropna(subset=["week_start"]).sort_values("week_start")
+
+    series = [
+        ("Trad", _prep(trad_df, trad_metric_col), trad_metric_col, trad_label, trad_cum_label),
+        ("SoMe", _prep(some_df, some_metric_col), some_metric_col, some_label, some_cum_label),
+    ]
+
+    for source, df, metric_col, weekly_label, cum_label in series:
+        if df.empty:
+            continue
+        style = _DETAIL_SOURCE_STYLE[source]
+        color = style["color"]
+        cumulative = df[metric_col].cumsum()
+        fig.add_trace(
+            go.Scatter(
+                x=df["week_start"],
+                y=df[metric_col],
+                name=weekly_label,
+                mode="lines+markers",
+                line=dict(width=2.5, color=color, shape="spline", smoothing=0.45, dash=style["dash"]),
+                marker=dict(size=5, color=color, symbol=style["marker"]),
+                fill="tozeroy",
+                fillcolor=_hex_to_rgba(color, 0.1),
+                hovertemplate=f"{weekly_label}: %{{y:,.0f}}<extra></extra>",
+                yaxis="y",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df["week_start"],
+                y=cumulative,
+                name=cum_label,
+                mode="lines",
+                line=dict(width=2, color=color, dash=_DETAIL_CUMULATIVE_DASH),
+                hovertemplate=f"{cum_label}: %{{y:,.0f}}<extra></extra>",
+                yaxis="y2",
+            )
+        )
+
+    if not fig.data:
+        fig.add_annotation(
+            text="No data available",
+            x=0.5, y=0.5, xref="paper", yref="paper",
+            showarrow=False,
+            font=dict(color=THEME_TEXT_MUTED, size=13),
+        )
+
+    _apply_detail_weekly_layout(fig, y_title, x_range, dtick=dtick)
+    fig.update_layout(
+        hovermode="closest",
+        yaxis2=dict(
+            title=cum_title,
+            tickformat=",",
+            rangemode="tozero",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+        ),
+    )
+    return fig

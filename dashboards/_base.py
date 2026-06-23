@@ -9,7 +9,7 @@ that exposes, at package level:
 
 ``app.py`` discovers all such packages, collects their pages into a single
 Vizro ``Dashboard`` (see SPIKE FINDINGS: multiple Vizro apps cannot coexist in
-one process), and uses the manifest for the landing page and the admin grant UI.
+one process), and uses the manifest for the Client Hub and the admin grant UI.
 
 Page paths MUST be namespaced as ``/d/<slug>`` (and ``/d/<slug>/...`` for extra
 pages) so the request gate in app.py can map any URL back to a dashboard slug.
@@ -31,9 +31,9 @@ class DashboardManifest:
     # Minimum role required even to be granted this dashboard. "user" means any
     # granted user; "admin" hides it from the grant UI for normal users.
     required_role: Role = "user"
-    # Optional Bootstrap icon name shown on the landing card.
+    # Optional Bootstrap icon name shown on the Client Hub card.
     icon: str = "bar_chart"
-    # Grouping label for the user panel (cards are grouped under this heading).
+    # Grouping label for the Client Hub (cards are grouped under this heading).
     category: str = "General"
     # Free-form list of data dependencies for documentation/admin display, e.g.
     # ["bigquery:london_bicycles.cycle_hire"].
@@ -41,7 +41,7 @@ class DashboardManifest:
 
     @property
     def base_path(self) -> str:
-        """The canonical in-app path for this dashboard's landing page."""
+        """The canonical in-app path for this dashboard's Client Hub entry page."""
         return f"/d/{self.slug}"
 
 

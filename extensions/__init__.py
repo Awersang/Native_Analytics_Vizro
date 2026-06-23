@@ -19,7 +19,7 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-def install_extensions(server) -> None:
+def install_extensions(server, dash_app=None) -> None:
     """Register all enabled extensions onto the Flask ``server``.
 
     Safe to delete: removing this call (and the ``extensions/`` package) fully
@@ -30,3 +30,8 @@ def install_extensions(server) -> None:
 
         register_chat(server)
         logger.info("Extension enabled: chat_with_data")
+
+    if dash_app is not None:
+        from extensions.saved_views import register_saved_views
+
+        register_saved_views(dash_app)

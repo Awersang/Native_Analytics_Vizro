@@ -23,7 +23,6 @@ from dashboards.amazon_2026.charts_publishers import (
 from dashboards.amazon_2026.charts_narratives import (
     _TOP_TABLES_PAGE_SIZE,
     _build_shared_x_range,
-    _narrative_detail_combined_weekly_figure,
     _top_journalists_data_bar_styles,
     _top_journalists_table_columns,
     _top_journalists_table_rows,
@@ -55,10 +54,13 @@ from dashboards.amazon_2026.charts_shared import (
     _timeline_records_from_frame,
     build_overview_table_section,
     build_top_items_panel,
+    build_top_items_table_data,
+    detail_combined_weekly_figure,
     load_and_filter,
     na_panel,
     trad_some_controls,
 )
+_narrative_detail_combined_weekly_figure = detail_combined_weekly_figure
 from dashboards.amazon_2026.data_common import (
     CAMPAIGN_NARRATIVES_KEY,
     CAMPAIGN_PROFILE_KEY,
@@ -293,9 +295,9 @@ def build_campaign_campaigns_section(data_frame: pd.DataFrame) -> html.Div:
     return build_overview_table_section(
         records=records,
         store_id="amazon-2026-campaign-campaigns-data",
-        section_title=ref_label("Campaigns Overview", "P6S3"),
+        section_title=ref_label("Campaigns Overview", "P7S3"),
         controls=controls,
-        dev_label=_dev_inline_label("P6S3T1", "Campaigns Table"),
+        dev_label=_dev_inline_label("P7S3T1", "Campaigns Table"),
         table_id="amazon-2026-campaign-campaigns-table",
         table_data=table_data,
         columns=columns,
@@ -364,7 +366,7 @@ def build_campaign_details_section(
             ),
             html.Div(
                 id=f"{id_prefix}-details-content",
-                children=_campaign_detail_content(None, id_prefix, ref_prefix, empty_label=empty_label),
+                children=build_detail_content(None, id_prefix, ref_prefix, empty_label=empty_label),
             ),
         ],
     )
@@ -474,7 +476,7 @@ def _campaign_profile_panel(
     )
 
 
-def _campaign_detail_content(
+def build_detail_content(
     selected_campaign: str | None,
     id_prefix: str = "amazon-2026-campaign",
     ref_prefix: str = "P7S2",
@@ -668,6 +670,44 @@ def _campaign_associated_narrative_labels(
     return [label for label in labels.drop_duplicates().tolist() if label]
 
 
+def _load_narrative_sentiment_data(narrative_labels: list[str]) -> tuple[list[dict], list[dict]]:
+    """Load and filter narrative sentiment timelines by label. Called lazily when the user enables the Narratives overlay."""
+    if not narrative_labels:
+        return [], []
+    normalized = {_normalize_narrative_label(label) for label in narrative_labels}
+
+    try:
+        trad_df = data_manager[NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY].load()
+    except Exception:
+        trad_df = pd.DataFrame()
+    try:
+        some_df = data_manager[NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY].load()
+    except Exception:
+        some_df = pd.DataFrame()
+
+    def _filter(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty or "narrative_label" not in df.columns:
+            return pd.DataFrame()
+        return df[df["narrative_label"].map(_normalize_narrative_label).isin(normalized)]
+
+    matched_trad = _filter(trad_df)
+    matched_some = _filter(some_df)
+
+    if matched_trad.empty and matched_some.empty:
+        available_trad = sorted(trad_df["narrative_label"].dropna().unique().tolist()) if not trad_df.empty and "narrative_label" in trad_df.columns else []
+        available_some = sorted(some_df["narrative_label"].dropna().unique().tolist()) if not some_df.empty and "narrative_label" in some_df.columns else []
+        logger.warning(
+            "Campaign narrative labels %r did not match any narrative sentiment timeline rows. "
+            "Available trad: %r. Available some: %r.",
+            narrative_labels, available_trad, available_some,
+        )
+
+    return (
+        _timeline_records_from_frame(matched_trad, id_field="narrative_label"),
+        _timeline_records_from_frame(matched_some, id_field="narrative_label"),
+    )
+
+
 def _campaign_sentiment_timeline_section(
     selected_campaign: str,
     id_prefix: str = "amazon-2026-campaign",
@@ -698,59 +738,9 @@ def _campaign_sentiment_timeline_section(
             selected_campaign, filter_column=filter_column, narratives_key=narratives_key
         )
     if narrative_labels:
-        normalized_labels = {_normalize_narrative_label(label) for label in narrative_labels}
-        try:
-            narrative_trad_df = data_manager[NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY].load()
-        except Exception:
-            narrative_trad_df = pd.DataFrame()
-        try:
-            narrative_some_df = data_manager[NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY].load()
-        except Exception:
-            narrative_some_df = pd.DataFrame()
-
-        if not narrative_trad_df.empty and "narrative_label" in narrative_trad_df.columns:
-            trad_matches = narrative_trad_df["narrative_label"].map(_normalize_narrative_label).isin(
-                normalized_labels
-            )
-            matched_trad_df = narrative_trad_df[trad_matches]
-        else:
-            matched_trad_df = pd.DataFrame()
-
-        if not narrative_some_df.empty and "narrative_label" in narrative_some_df.columns:
-            some_matches = narrative_some_df["narrative_label"].map(_normalize_narrative_label).isin(
-                normalized_labels
-            )
-            matched_some_df = narrative_some_df[some_matches]
-        else:
-            matched_some_df = pd.DataFrame()
-
-        if matched_trad_df.empty and matched_some_df.empty:
-            available_trad_labels = (
-                sorted(narrative_trad_df["narrative_label"].dropna().unique().tolist())
-                if not narrative_trad_df.empty and "narrative_label" in narrative_trad_df.columns
-                else []
-            )
-            available_some_labels = (
-                sorted(narrative_some_df["narrative_label"].dropna().unique().tolist())
-                if not narrative_some_df.empty and "narrative_label" in narrative_some_df.columns
-                else []
-            )
-            logger.warning(
-                "Campaign %r: associated narrative labels %r did not match any narrative sentiment "
-                "timeline rows. Available trad labels: %r. Available some labels: %r.",
-                selected_campaign,
-                narrative_labels,
-                available_trad_labels,
-                available_some_labels,
-            )
-
+        # Store labels only; the actual narrative sentiment data is loaded lazily in the callback
+        # when the user enables the Narratives overlay, to avoid blocking the initial detail render.
         timeline_data["narrative_labels"] = narrative_labels
-        timeline_data["narrative_trad_timeline"] = _timeline_records_from_frame(
-            matched_trad_df, id_field="narrative_label"
-        )
-        timeline_data["narrative_some_timeline"] = _timeline_records_from_frame(
-            matched_some_df, id_field="narrative_label"
-        )
 
     available_sources = _timeline_available_sources(timeline_data)
     selected_sources = _normalize_sources(available_sources, available_sources)
@@ -892,44 +882,11 @@ def _campaign_top_items_panel(
     top_publications_key: str = CAMPAIGN_TOP_PUBLICATIONS_KEY,
 ) -> html.Div:
     df = load_and_filter(top_publications_key, filter_column, selected_campaign)
-
     records = [_json_safe(row) for row in df.to_dict("records")]
-    trad_rows = [r for r in records if str(r.get("Source", "")) == "Trad"]
-    some_rows = [r for r in records if str(r.get("Source", "")) == "SoMe"]
-
-    trad_table_data = [
-        {
-            "Date": str(r.get("Date", "") or ""),
-            "Media_Type": str(r.get("Type", "")),
-            "Publication": str(r.get("Publication", "") or ""),
-            "Title": str(r.get("Title", "")),
-            "Summary": str(r.get("Summary", "")),
-            "URL": f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
-            "Sentiment": str(r.get("Sentiment", "")),
-            "Reach": _num(r, "Reach"),
-            "Angle": str(r.get("Angle", "") or ""),
-        }
-        for r in trad_rows
-    ]
-    some_table_data = [
-        {
-            "Date": str(r.get("Date", "") or ""),
-            "Platform": str(r.get("Type", "")),
-            "Author": str(r.get("Author", "") or ""),
-            "Post_Content": str(r.get("Summary", "")),
-            "URL": f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
-            "Sentiment": str(r.get("Sentiment", "")),
-            "Reach": _num(r, "Reach"),
-            "Engagement": _num(r, "Engagement"),
-            "Angle": str(r.get("Angle", "") or ""),
-        }
-        for r in some_rows
-    ]
-
-    panel_title = ref_label("Top Publications / Posts", f"{ref_prefix}T3")
+    trad_table_data, some_table_data = build_top_items_table_data(records)
     return build_top_items_panel(
         id_prefix,
-        panel_title,
+        ref_label("Top Publications / Posts", f"{ref_prefix}T3"),
         trad_table_data,
         some_table_data,
         show_publication_col=True,

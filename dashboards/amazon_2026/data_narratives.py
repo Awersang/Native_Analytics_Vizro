@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, PAID_VALUES, _coalesce_string_expr, _optional_string_expr, _table, _table_column_map
+from dashboards.amazon_2026.data_common import NON_CAMPAIGN_VALUES, PAID_VALUES, _coalesce_string_expr, _optional_string_expr, _sentiment_case, _table, _table_column_map, _weekly_grid_cte
 from dashboards.amazon_2026.fixtures import (
     _narrative_detail_kpi_fixture,
     _narrative_overview_fixture,
@@ -19,6 +19,14 @@ from dashboards.amazon_2026.fixtures import (
     _narratives_kpi_fixture,
 )
 from data_sources.bq import safe_query
+
+
+def _narrative_col_expr(alias: str, columns: dict[str, str]) -> str:
+    """Return a SQL expression for the narrative label column, preferring dominant_narrative."""
+    name = columns.get("dominant_narrative", "")
+    if name:
+        return f"{alias}.`{name}`"
+    return _optional_string_expr(alias, columns, ["dominant_narrative", "narrative_label"])
 
 
 def load_narratives() -> pd.DataFrame:
@@ -114,11 +122,7 @@ def load_narrative_overview() -> pd.DataFrame:
 
 def load_narrative_weekly_reach() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
-    narrative_col_name = trad_columns.get("dominant_narrative", "")
-    if narrative_col_name:
-        narrative_col = f"t.`{narrative_col_name}`"
-    else:
-        narrative_col = _optional_string_expr("t", trad_columns, ["dominant_narrative", "narrative_label"])
+    narrative_col = _narrative_col_expr("t", trad_columns)
     sql = f"""
     WITH all_weekly AS (
         SELECT
@@ -128,19 +132,7 @@ def load_narrative_weekly_reach() -> pd.DataFrame:
         FROM {_table('amazon_2026_trad')} AS t
         WHERE t.Published_At IS NOT NULL
     ),
-    all_narratives AS (
-        SELECT DISTINCT dominant_narrative
-        FROM all_weekly
-        WHERE dominant_narrative IS NOT NULL
-          AND LOWER(dominant_narrative) NOT IN ('noise', 'unknown')
-    ),
-    all_weeks AS (
-        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
-    ),
-    grid AS (
-        SELECT w.week_start, n.dominant_narrative
-        FROM all_weeks w CROSS JOIN all_narratives n
-    )
+    {_weekly_grid_cte("dominant_narrative", "narratives", "LOWER(dominant_narrative) NOT IN ('noise', 'unknown')")}
     SELECT
         g.week_start,
         g.dominant_narrative,
@@ -158,11 +150,7 @@ def load_narrative_weekly_reach() -> pd.DataFrame:
 
 def load_narrative_some_weekly_engagement() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    narrative_col_name = some_columns.get("dominant_narrative", "")
-    if narrative_col_name:
-        narrative_col = f"s.`{narrative_col_name}`"
-    else:
-        narrative_col = _optional_string_expr("s", some_columns, ["dominant_narrative", "narrative_label"])
+    narrative_col = _narrative_col_expr("s", some_columns)
     sql = f"""
     WITH all_weekly AS (
         SELECT
@@ -172,19 +160,7 @@ def load_narrative_some_weekly_engagement() -> pd.DataFrame:
         FROM {_table('amazon_2026_some')} AS s
         WHERE s.Published_At IS NOT NULL
     ),
-    all_narratives AS (
-        SELECT DISTINCT dominant_narrative
-        FROM all_weekly
-        WHERE dominant_narrative IS NOT NULL
-          AND LOWER(dominant_narrative) NOT IN ('noise', 'unknown')
-    ),
-    all_weeks AS (
-        SELECT DISTINCT week_start FROM all_weekly WHERE week_start IS NOT NULL
-    ),
-    grid AS (
-        SELECT w.week_start, n.dominant_narrative
-        FROM all_weeks w CROSS JOIN all_narratives n
-    )
+    {_weekly_grid_cte("dominant_narrative", "narratives", "LOWER(dominant_narrative) NOT IN ('noise', 'unknown')")}
     SELECT
         g.week_start,
         g.dominant_narrative,
@@ -202,21 +178,13 @@ def load_narrative_some_weekly_engagement() -> pd.DataFrame:
 
 def load_narrative_trad_sentiment_timeline() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
-    narrative_col_name = trad_columns.get("dominant_narrative", "")
-    if narrative_col_name:
-        narrative_col = f"t.`{narrative_col_name}`"
-    else:
-        narrative_col = _optional_string_expr("t", trad_columns, ["dominant_narrative", "narrative_label"])
+    narrative_col = _narrative_col_expr("t", trad_columns)
     sql = f"""
     WITH base AS (
       SELECT
         DATE_TRUNC(DATE(t.Published_At), WEEK(MONDAY)) AS week_start,
         NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS sentiment,
+        {_sentiment_case('t.Sentiment')} AS sentiment,
         COUNT(*) AS publications,
         SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS reach
       FROM {_table('amazon_2026_trad')} AS t
@@ -239,22 +207,14 @@ def load_narrative_trad_sentiment_timeline() -> pd.DataFrame:
 
 def load_narrative_some_sentiment_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    narrative_col_name = some_columns.get("dominant_narrative", "")
-    if narrative_col_name:
-        narrative_col = f"s.`{narrative_col_name}`"
-    else:
-        narrative_col = _optional_string_expr("s", some_columns, ["dominant_narrative", "narrative_label"])
+    narrative_col = _narrative_col_expr("s", some_columns)
     some_sentiment_expr = _optional_string_expr("s", some_columns, ["Sentiment"])
     sql = f"""
     WITH base AS (
       SELECT
         DATE_TRUNC(DATE(s.Published_At), WEEK(MONDAY)) AS week_start,
         NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS sentiment,
         COUNT(*) AS posts,
         SUM(COALESCE(s.Engagement, 0)) AS engagement
       FROM {_table('amazon_2026_some')} AS s
@@ -277,11 +237,7 @@ def load_narrative_some_sentiment_timeline() -> pd.DataFrame:
 
 def load_narrative_trad_media_type_timeline() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
-    narrative_col_name = trad_columns.get("dominant_narrative", "")
-    if narrative_col_name:
-        narrative_col = f"t.`{narrative_col_name}`"
-    else:
-        narrative_col = _optional_string_expr("t", trad_columns, ["dominant_narrative", "narrative_label"])
+    narrative_col = _narrative_col_expr("t", trad_columns)
     sql = f"""
     SELECT
       NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
@@ -300,11 +256,7 @@ def load_narrative_trad_media_type_timeline() -> pd.DataFrame:
 
 def load_narrative_some_platform_timeline() -> pd.DataFrame:
     some_columns = _table_column_map("amazon_2026_some")
-    narrative_col_name = some_columns.get("dominant_narrative", "")
-    if narrative_col_name:
-        narrative_col = f"s.`{narrative_col_name}`"
-    else:
-        narrative_col = _optional_string_expr("s", some_columns, ["dominant_narrative", "narrative_label"])
+    narrative_col = _narrative_col_expr("s", some_columns)
     sql = f"""
     SELECT
       NULLIF(TRIM(CAST({narrative_col} AS STRING)), '') AS narrative_label,
@@ -340,6 +292,7 @@ def load_narratives_kpi() -> pd.DataFrame:
         "s", some_columns, ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
     )
 
+    # One base scan per source — all metrics derived from these two CTEs.
     sql = f"""
     WITH
     narr_totals AS (
@@ -351,79 +304,45 @@ def load_narratives_kpi() -> pd.DataFrame:
       SELECT COUNT(*) AS total_angles
       FROM {_table('amazon_2026_angles')}
     ),
-    trad_narr_raw AS (
-      SELECT {trad_narr_expr} AS narr_label
+    trad_raw AS (
+      SELECT
+        NULLIF(TRIM(CAST({trad_narr_expr} AS STRING)), '') AS narr_label,
+        {trad_campaign_expr} AS camp,
+        {trad_paid_expr} AS paid
       FROM {_table('amazon_2026_trad')} AS t
     ),
-    trad_narr_stats AS (
+    trad_agg AS (
       SELECT
         COUNT(*) AS total_pubs,
-        COUNTIF(narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')) AS pubs_in_narrative
-      FROM trad_narr_raw
+        COUNTIF(narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')) AS pubs_in_narrative,
+        COUNTIF(camp IS NOT NULL AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}) AS campaign_pubs,
+        COUNTIF(LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}) AS paid_pubs
+      FROM trad_raw
     ),
-    some_narr_raw AS (
-      SELECT {some_narr_expr} AS narr_label
+    some_raw AS (
+      SELECT
+        NULLIF(TRIM(CAST({some_narr_expr} AS STRING)), '') AS narr_label,
+        {some_campaign_expr} AS camp,
+        {some_paid_expr} AS paid
       FROM {_table('amazon_2026_some')} AS s
     ),
-    some_narr_stats AS (
+    some_agg AS (
       SELECT
         COUNT(*) AS total_posts,
-        COUNTIF(narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')) AS posts_in_narrative
-      FROM some_narr_raw
-    ),
-    trad_campaign_raw AS (
-      SELECT {trad_campaign_expr} AS camp
-      FROM {_table('amazon_2026_trad')} AS t
-    ),
-    trad_campaign AS (
-      SELECT COUNT(*) AS total_pubs,
-        COUNTIF(
-          camp IS NOT NULL
-          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
-        ) AS campaign_pubs
-      FROM trad_campaign_raw
-    ),
-    some_campaign_raw AS (
-      SELECT {some_campaign_expr} AS camp
-      FROM {_table('amazon_2026_some')} AS s
-    ),
-    some_campaign AS (
-      SELECT COUNT(*) AS total_posts,
-        COUNTIF(
-          camp IS NOT NULL
-          AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}
-        ) AS campaign_posts
-      FROM some_campaign_raw
-    ),
-    trad_paid_raw AS (
-      SELECT {trad_paid_expr} AS paid
-      FROM {_table('amazon_2026_trad')} AS t
-    ),
-    trad_paid AS (
-      SELECT COUNTIF(
-        LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}
-      ) AS paid_pubs
-      FROM trad_paid_raw
-    ),
-    some_paid_raw AS (
-      SELECT {some_paid_expr} AS paid
-      FROM {_table('amazon_2026_some')} AS s
-    ),
-    some_paid AS (
-      SELECT COUNTIF(
-        LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}
-      ) AS paid_posts
-      FROM some_paid_raw
-    ),
-    some_by_narr AS (
-      SELECT narr_label AS narrative_label, COUNT(*) AS some_posts
-      FROM some_narr_raw
-      WHERE narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')
-      GROUP BY narr_label
+        COUNTIF(narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')) AS posts_in_narrative,
+        COUNTIF(camp IS NOT NULL AND TRIM(LOWER(CAST(camp AS STRING))) NOT IN {NON_CAMPAIGN_VALUES}) AS campaign_posts,
+        COUNTIF(LOWER(TRIM(CAST(paid AS STRING))) IN {PAID_VALUES}) AS paid_posts
+      FROM some_raw
     ),
     trad_by_narr AS (
       SELECT narr_label AS narrative_label, COUNT(*) AS trad_pubs
-      FROM trad_narr_raw
+      FROM trad_raw
+      WHERE narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')
+      GROUP BY narr_label
+    ),
+    some_by_narr AS (
+      SELECT narr_label AS narrative_label, COUNT(*) AS some_posts
+      FROM some_raw
       WHERE narr_label IS NOT NULL AND LOWER(narr_label) NOT IN ('noise', 'unknown')
       GROUP BY narr_label
     ),
@@ -453,19 +372,15 @@ def load_narratives_kpi() -> pd.DataFrame:
       tn.total_pubs,
       sn.posts_in_narrative,
       sn.total_posts,
-      tc.campaign_pubs + sc.campaign_posts AS campaign_items,
-      tc.total_pubs + sc.total_posts AS total_items_campaign,
-      tp.paid_pubs + sp.paid_posts AS paid_items,
+      tn.campaign_pubs + sn.campaign_posts AS campaign_items,
+      tn.total_pubs + sn.total_posts AS total_items_campaign,
+      tn.paid_pubs + sn.paid_posts AS paid_items,
       th.narrative_label AS top_some_heavy_narrative,
       td.narrative_label AS top_some_dominant_narrative
     FROM narr_totals n
     CROSS JOIN angle_totals a
-    CROSS JOIN trad_narr_stats tn
-    CROSS JOIN some_narr_stats sn
-    CROSS JOIN trad_campaign tc
-    CROSS JOIN some_campaign sc
-    CROSS JOIN trad_paid tp
-    CROSS JOIN some_paid sp
+    CROSS JOIN trad_agg tn
+    CROSS JOIN some_agg sn
     CROSS JOIN top_some_heavy th
     CROSS JOIN top_some_dominant td
     """
@@ -662,11 +577,7 @@ def load_narrative_top_publications() -> pd.DataFrame:
         COALESCE(NULLIF(TRIM(t.Title), ''), '(untitled)') AS Title,
         COALESCE({trad_summary_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(t.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case('t.Sentiment')} AS Sentiment,
         CAST(COALESCE(t.Reach, 0) AS INT64) AS Reach,
         CAST(NULL AS INT64) AS Engagement,
         COALESCE({trad_angle_id_expr}, '') AS Angle_ID,
@@ -687,11 +598,7 @@ def load_narrative_top_publications() -> pd.DataFrame:
         '' AS Title,
         COALESCE({some_content_expr}, '') AS Summary,
         COALESCE(NULLIF(TRIM(s.URL), ''), '') AS URL,
-        CASE
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%' THEN 'Positive'
-          WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%' THEN 'Negative'
-          ELSE 'Neutral'
-        END AS Sentiment,
+        {_sentiment_case(some_sentiment_expr)} AS Sentiment,
         CAST(COALESCE(s.Reach, 0) AS INT64) AS Reach,
         COALESCE(s.Engagement, 0) AS Engagement,
         COALESCE({some_angle_id_expr}, '') AS Angle_ID,

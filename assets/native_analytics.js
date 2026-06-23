@@ -17,6 +17,7 @@
   var COLLAPSE_STORAGE_KEY = "na-nav-collapsed";
   var collapseSyncing = false;
   var manualToggleInProgress = false;
+  var activeSidebarMode = "menu";
 
   function isNavCollapsed() {
     try {
@@ -60,8 +61,226 @@
       icon.click();
       setTimeout(function () {
         collapseSyncing = false;
+        syncMenuButtonState();
       }, 400);
     }
+    syncMenuButtonState();
+  }
+
+  function syncMenuButtonState() {
+    var collapseEl = document.getElementById("collapse-left-side");
+    var isOpen =
+      !!collapseEl &&
+      collapseEl.classList.contains("show") &&
+      !collapseEl.classList.contains("collapsing");
+    var mode = isOpen ? currentSidebarMode() : null;
+
+    [
+      ["na-menu-toggle", mode === "menu"],
+      ["ext-chat-toggle", mode === "chat"],
+      ["saved-views-toggle", mode === "views"],
+    ].forEach(function (entry) {
+      var button = document.getElementById(entry[0]);
+      if (!button) {
+        return;
+      }
+      button.classList.toggle("is-open", entry[1]);
+      button.setAttribute("aria-pressed", entry[1] ? "true" : "false");
+    });
+
+    var menuButton = document.getElementById("na-menu-toggle");
+    if (menuButton) {
+      menuButton.setAttribute("title", isOpen && mode === "menu" ? "Hide menu" : "Show menu");
+    }
+  }
+
+  function sidebarHost() {
+    return document.getElementById("nav-control-panel");
+  }
+
+  function sidebarCollapse() {
+    return document.getElementById("collapse-left-side");
+  }
+
+  function sidebarIcon() {
+    return document.getElementById("collapse-icon");
+  }
+
+  function ensureSidebarPanelPlacement() {
+    var host = sidebarHost();
+    if (!host) {
+      return;
+    }
+    ["ext-chat-root", "saved-views-panel"].forEach(function (id) {
+      var panel = document.getElementById(id);
+      if (panel && panel.parentNode !== host) {
+        host.appendChild(panel);
+      }
+    });
+  }
+
+  function chatPanelRoot() {
+    return document.getElementById("ext-chat-root");
+  }
+
+  function chatPanel() {
+    return document.getElementById("ext-chat-panel");
+  }
+
+  function viewsPanel() {
+    return document.getElementById("saved-views-panel");
+  }
+
+  function showChatPanel(show) {
+    var root = chatPanelRoot();
+    var panel = chatPanel();
+    if (root) {
+      root.classList.toggle("na-sidebar-panel-hidden", !show);
+    }
+    if (panel) {
+      panel.classList.toggle("ext-chat-hidden", !show);
+      panel.setAttribute("aria-hidden", show ? "false" : "true");
+      if (show) {
+        var input = panel.querySelector(".ext-chat-input");
+        if (input) {
+          setTimeout(function () {
+            input.focus();
+          }, 50);
+        }
+      }
+    }
+  }
+
+  function showViewsPanel(show) {
+    var panel = viewsPanel();
+    if (panel) {
+      panel.classList.toggle("na-sidebar-panel-hidden", !show);
+      panel.setAttribute("aria-hidden", show ? "false" : "true");
+    }
+  }
+
+  function showVizroControlPanel(show) {
+    var panel = document.getElementById("control-panel");
+    if (panel) {
+      panel.style.display = show ? "" : "none";
+      panel.setAttribute("aria-hidden", show ? "false" : "true");
+    }
+  }
+
+  function isSidebarOpen() {
+    var collapseEl = sidebarCollapse();
+    return !!collapseEl && collapseEl.classList.contains("show");
+  }
+
+  function ensureSidebarOpen() {
+    if (!isSidebarOpen()) {
+      var icon = sidebarIcon();
+      if (icon) {
+        icon.click();
+      }
+    }
+  }
+
+  function closeSidebar() {
+    activeSidebarMode = "menu";
+    showChatPanel(false);
+    showViewsPanel(false);
+    showVizroControlPanel(true);
+    if (isSidebarOpen()) {
+      var icon = sidebarIcon();
+      if (icon) {
+        icon.click();
+      }
+    }
+    setNavCollapsed(true);
+    setTimeout(syncMenuButtonState, 450);
+  }
+
+  function currentSidebarMode() {
+    var chatRoot = chatPanelRoot();
+    var chat = chatPanel();
+    var views = viewsPanel();
+    if (
+      chatRoot &&
+      chat &&
+      !chatRoot.classList.contains("na-sidebar-panel-hidden") &&
+      !chat.classList.contains("ext-chat-hidden")
+    ) {
+      return "chat";
+    }
+    if (views && !views.classList.contains("na-sidebar-panel-hidden")) {
+      return "views";
+    }
+    return "menu";
+  }
+
+  function showSidebarMode(mode) {
+    ensureSidebarPanelPlacement();
+    activeSidebarMode = mode;
+    ensureSidebarOpen();
+    if (mode === "chat") {
+      showVizroControlPanel(false);
+      showViewsPanel(false);
+      showChatPanel(true);
+    } else if (mode === "views") {
+      showVizroControlPanel(false);
+      showChatPanel(false);
+      showViewsPanel(true);
+    } else {
+      showChatPanel(false);
+      showViewsPanel(false);
+      showVizroControlPanel(true);
+      activeSidebarMode = "menu";
+    }
+    setNavCollapsed(false);
+    setTimeout(syncMenuButtonState, 80);
+  }
+
+  window.NativeAnalyticsSidebar = {
+    show: showSidebarMode,
+    close: closeSidebar,
+    sync: function () {
+      ensureSidebarPanelPlacement();
+      syncMenuButtonState();
+    },
+  };
+
+  function handleSidebarDockClick(event) {
+    var menuButton = event.target.closest && event.target.closest("#na-menu-toggle");
+    var chatButton = event.target.closest && event.target.closest("#ext-chat-toggle");
+    var viewsButton = event.target.closest && event.target.closest("#saved-views-toggle");
+
+    if (menuButton) {
+      event.preventDefault();
+      if (isSidebarOpen() && currentSidebarMode() === "menu") {
+        closeSidebar();
+      } else {
+        showSidebarMode("menu");
+      }
+      return true;
+    }
+
+    if (chatButton) {
+      event.preventDefault();
+      if (isSidebarOpen() && currentSidebarMode() === "chat") {
+        closeSidebar();
+      } else {
+        showSidebarMode("chat");
+      }
+      return true;
+    }
+
+    if (viewsButton) {
+      event.preventDefault();
+      if (isSidebarOpen() && currentSidebarMode() === "views") {
+        closeSidebar();
+      } else {
+        showSidebarMode("views");
+      }
+      return true;
+    }
+
+    return false;
   }
 
   function escapeRegExp(value) {
@@ -152,8 +371,17 @@
         manualToggleInProgress = true;
         setTimeout(function () {
           manualToggleInProgress = false;
+          if (!isSidebarOpen()) {
+            showChatPanel(false);
+            showViewsPanel(false);
+            showVizroControlPanel(true);
+            activeSidebarMode = "menu";
+          }
+          syncMenuButtonState();
         }, 400);
       }
+
+      handleSidebarDockClick(event);
     },
     true
   );
@@ -161,15 +389,24 @@
   var lastPath = window.location.pathname;
   var observeNav = function () {
     applyNavScope();
+    ensureSidebarPanelPlacement();
     syncNavCollapseState();
 
     var observer = new MutationObserver(function () {
       applyNavScope();
+      ensureSidebarPanelPlacement();
       syncNavCollapseState();
+      syncMenuButtonState();
       if (window.location.pathname !== lastPath) {
         lastPath = window.location.pathname;
         applyNavScope();
+        activeSidebarMode = "menu";
+        showChatPanel(false);
+        showViewsPanel(false);
+        showVizroControlPanel(true);
+        ensureSidebarPanelPlacement();
         syncNavCollapseState();
+        syncMenuButtonState();
       }
     });
 
@@ -188,11 +425,21 @@
       history[method] = function () {
         var result = original.apply(this, arguments);
         applyNavScope();
+        ensureSidebarPanelPlacement();
+        syncMenuButtonState();
         return result;
       };
     });
 
-    window.addEventListener("popstate", applyNavScope);
+    window.addEventListener("popstate", function () {
+      applyNavScope();
+      activeSidebarMode = "menu";
+      showChatPanel(false);
+      showViewsPanel(false);
+      showVizroControlPanel(true);
+      ensureSidebarPanelPlacement();
+      syncMenuButtonState();
+    });
   };
 
   // The Vizro bundle may load before or after this asset, so retry briefly

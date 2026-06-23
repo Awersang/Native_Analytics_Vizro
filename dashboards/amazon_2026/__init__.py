@@ -22,6 +22,8 @@ from dashboards.amazon_2026.data_campaigns import (
 from dashboards.amazon_2026.data_common import (
     ANGLES_KEY,
     ARCHIVE_SCATTER_KEY,
+    CAMPAIGN_NARRATIVES_KEY,
+    CAMPAIGN_PROFILE_KEY,
     CAMPAIGN_SOME_SENTIMENT_TIMELINE_KEY,
     CAMPAIGN_SOME_WEEKLY_ENGAGEMENT_KEY,
     CAMPAIGN_TIMELINE_KEY,
@@ -30,34 +32,34 @@ from dashboards.amazon_2026.data_common import (
     CAMPAIGN_TOP_PUBLISHERS_KEY,
     CAMPAIGN_TRAD_SENTIMENT_TIMELINE_KEY,
     CAMPAIGN_WEEKLY_REACH_KEY,
-    CAMPAIGN_PROFILE_KEY,
-    CAMPAIGN_NARRATIVES_KEY,
     DATASET_ID,
     DISCOVER_ITEMS_KEY,
     MEDIA_TYPE_PERIOD_KEY,
     NARRATIVE_DETAIL_KPI_KEY,
     NARRATIVE_OVERVIEW_KEY,
-    NARRATIVES_KEY,
-    NARRATIVE_WEEKLY_REACH_KEY,
-    NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY,
-    NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY,
-    NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY,
-    NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY,
     NARRATIVE_SOME_PLATFORM_TIMELINE_KEY,
-    NARRATIVES_KPI_KEY,
-    NARRATIVE_TOP_PUBLISHERS_KEY,
+    NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY,
+    NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY,
     NARRATIVE_TOP_JOURNALISTS_KEY,
     NARRATIVE_TOP_PUBLICATIONS_KEY,
+    NARRATIVE_TOP_PUBLISHERS_KEY,
+    NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY,
+    NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY,
+    NARRATIVE_WEEKLY_REACH_KEY,
+    NARRATIVES_KEY,
+    NARRATIVES_KPI_KEY,
     OVERVIEW_KEY,
     OVERVIEW_KPI_KEY,
     PARAM_SINK_KEY,
-    PUBLISHERS_KEY,
     PUBLISHER_SOME_TIMELINE_KEY,
     PUBLISHER_SOME_TOPIC_AREAS_KEY,
-    PUBLISHER_TOPIC_AREAS_KEY,
     PUBLISHER_TOP_PUBLICATIONS_KEY,
+    PUBLISHER_TOPIC_AREAS_KEY,
     PUBLISHER_TRAD_TIMELINE_KEY,
+    PUBLISHERS_KEY,
     SENTIMENT_SOURCE_MONTHLY_KEY,
+    SOME_PLATFORM_KEY,
+    SOURCE_SENTIMENT_MONTHLY_KEY,
     TOPIC_AREA_BREAKDOWN_KEY,
     TOPIC_AREA_CAMPAIGNS_KEY,
     TOPIC_AREA_MEDIA_KEY,
@@ -69,10 +71,8 @@ from dashboards.amazon_2026.data_common import (
     TOPIC_AREA_TOP_PUBLISHERS_KEY,
     TOPIC_AREA_TRAD_SENTIMENT_TIMELINE_KEY,
     TOPIC_AREA_WEEKLY_REACH_KEY,
-    SOME_PLATFORM_KEY,
-    SOURCE_SENTIMENT_MONTHLY_KEY,
-    TOP_ARTICLES_KEY,
-    TOP_POSTS_KEY,
+    TOP_ITEMS_KEY,
+    prime_schema_cache,
     _table,
 )
 from dashboards.amazon_2026.data_narratives import (
@@ -92,13 +92,12 @@ from dashboards.amazon_2026.data_narratives import (
 )
 from dashboards.amazon_2026.data_overview import (
     load_media_type_period,
-    load_overview_daily,
     load_overview_kpis,
     load_sentiment_source_monthly,
     load_some_platform,
     load_source_sentiment_monthly,
-    load_top_articles,
-    load_top_posts,
+    load_tml_split,
+    load_top_items,
 )
 from dashboards.amazon_2026.data_publishers import (
     load_publisher_some_topic_areas,
@@ -188,14 +187,13 @@ def data_health() -> list[DataSourceHealth]:
 
 
 def _register_data_sources() -> None:
-    data_manager[OVERVIEW_KEY] = load_overview_daily
+    data_manager[OVERVIEW_KEY] = load_tml_split
     data_manager[OVERVIEW_KPI_KEY] = load_overview_kpis
     data_manager[MEDIA_TYPE_PERIOD_KEY] = load_media_type_period
     data_manager[SENTIMENT_SOURCE_MONTHLY_KEY] = load_sentiment_source_monthly
     data_manager[SOURCE_SENTIMENT_MONTHLY_KEY] = load_source_sentiment_monthly
     data_manager[SOME_PLATFORM_KEY] = load_some_platform
-    data_manager[TOP_ARTICLES_KEY] = load_top_articles
-    data_manager[TOP_POSTS_KEY] = load_top_posts
+    data_manager[TOP_ITEMS_KEY] = load_top_items
     data_manager[NARRATIVES_KEY] = load_narratives
     data_manager[NARRATIVES_KPI_KEY] = load_narratives_kpi
     data_manager[NARRATIVE_DETAIL_KPI_KEY] = load_narrative_detail_kpis
@@ -217,8 +215,8 @@ def _register_data_sources() -> None:
     data_manager[PUBLISHER_SOME_TOPIC_AREAS_KEY] = load_publisher_some_topic_areas
     data_manager[PUBLISHER_TOP_PUBLICATIONS_KEY] = load_publisher_top_publications
     data_manager[TOPIC_AREA_BREAKDOWN_KEY] = load_topic_area_breakdown
-    data_manager[TOPIC_AREA_MEDIA_KEY] = load_topic_area_media
     data_manager[TOPIC_AREA_CAMPAIGNS_KEY] = load_topic_area_campaigns
+    data_manager[TOPIC_AREA_MEDIA_KEY] = load_topic_area_media
     data_manager[TOPIC_AREA_OVERVIEW_KEY] = load_topic_area_overview
     data_manager[TOPIC_AREA_WEEKLY_REACH_KEY] = load_topic_area_weekly_reach
     data_manager[TOPIC_AREA_SOME_WEEKLY_ENGAGEMENT_KEY] = load_topic_area_some_weekly_engagement
@@ -244,5 +242,187 @@ def _register_data_sources() -> None:
 
 def build_pages(ctx: BuildContext) -> list[vm.Page]:
     _register_data_sources()
+    prime_schema_cache()
+    _start_overview_preload()
+    _start_topic_area_preload()
+    _start_narratives_preload()
+    _start_campaigns_preload()
+    _start_publishers_preload()
     from dashboards.amazon_2026.pages import build_all_pages
     return build_all_pages(ctx, MANIFEST.base_path)
+
+
+def _start_overview_preload() -> None:
+    """Warm the data_manager cache for all Overview page datasets in parallel at startup.
+
+    The Overview is the first page most users land on, so cold queries on first
+    visit produce the worst perceived latency. Preloading in parallel here means
+    all seven datasets are typically ready before any user interaction.
+    """
+    import logging
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = logging.getLogger(__name__)
+
+    preload_keys = [
+        OVERVIEW_KPI_KEY,
+        OVERVIEW_KEY,
+        MEDIA_TYPE_PERIOD_KEY,
+        SENTIMENT_SOURCE_MONTHLY_KEY,
+        SOURCE_SENTIMENT_MONTHLY_KEY,
+        SOME_PLATFORM_KEY,
+        TOP_ITEMS_KEY,
+    ]
+
+    def _run() -> None:
+        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
+            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
+            for key, future in futures.items():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Overview preload failed for %s: %s", key, exc)
+        logger.info("Overview preload complete.")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _start_topic_area_preload() -> None:
+    """Warm the data_manager cache for Topic Areas detail datasets in parallel at startup.
+
+    Without this, the first user click on a topic area triggers 7 sequential BQ queries
+    inside a single callback.  Loading them upfront in parallel means the cache is ready
+    before any user interaction, so that first click is instant.
+    """
+    import logging
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = logging.getLogger(__name__)
+
+    preload_keys = [
+        TOPIC_AREA_BREAKDOWN_KEY,
+        TOPIC_AREA_MEDIA_KEY,
+        TOPIC_AREA_OVERVIEW_KEY,
+        TOPIC_AREA_WEEKLY_REACH_KEY,
+        TOPIC_AREA_SOME_WEEKLY_ENGAGEMENT_KEY,
+        TOPIC_AREA_TRAD_SENTIMENT_TIMELINE_KEY,
+        TOPIC_AREA_SOME_SENTIMENT_TIMELINE_KEY,
+        TOPIC_AREA_TOP_PUBLISHERS_KEY,
+        TOPIC_AREA_TOP_JOURNALISTS_KEY,
+        TOPIC_AREA_TOP_PUBLICATIONS_KEY,
+    ]
+
+    def _run() -> None:
+        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
+            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
+            for key, future in futures.items():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Topic area preload failed for %s: %s", key, exc)
+        logger.info("Topic area preload complete.")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _start_narratives_preload() -> None:
+    """Warm all Narratives page datasets in parallel so first click on a narrative is instant."""
+    import logging
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = logging.getLogger(__name__)
+
+    preload_keys = [
+        NARRATIVES_KEY,
+        NARRATIVES_KPI_KEY,
+        NARRATIVE_OVERVIEW_KEY,
+        NARRATIVE_DETAIL_KPI_KEY,
+        NARRATIVE_WEEKLY_REACH_KEY,
+        NARRATIVE_SOME_WEEKLY_ENGAGEMENT_KEY,
+        NARRATIVE_TRAD_SENTIMENT_TIMELINE_KEY,
+        NARRATIVE_SOME_SENTIMENT_TIMELINE_KEY,
+        NARRATIVE_TRAD_MEDIA_TYPE_TIMELINE_KEY,
+        NARRATIVE_SOME_PLATFORM_TIMELINE_KEY,
+        NARRATIVE_TOP_PUBLISHERS_KEY,
+        NARRATIVE_TOP_JOURNALISTS_KEY,
+        NARRATIVE_TOP_PUBLICATIONS_KEY,
+    ]
+
+    def _run() -> None:
+        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
+            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
+            for key, future in futures.items():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Narratives preload failed for %s: %s", key, exc)
+        logger.info("Narratives preload complete.")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _start_campaigns_preload() -> None:
+    """Warm all Campaigns page datasets in parallel so first click on a campaign is instant."""
+    import logging
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = logging.getLogger(__name__)
+
+    preload_keys = [
+        CAMPAIGN_TIMELINE_KEY,
+        CAMPAIGN_WEEKLY_REACH_KEY,
+        CAMPAIGN_SOME_WEEKLY_ENGAGEMENT_KEY,
+        CAMPAIGN_TRAD_SENTIMENT_TIMELINE_KEY,
+        CAMPAIGN_SOME_SENTIMENT_TIMELINE_KEY,
+        CAMPAIGN_TOP_PUBLISHERS_KEY,
+        CAMPAIGN_TOP_JOURNALISTS_KEY,
+        CAMPAIGN_TOP_PUBLICATIONS_KEY,
+        CAMPAIGN_PROFILE_KEY,
+        CAMPAIGN_NARRATIVES_KEY,
+    ]
+
+    def _run() -> None:
+        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
+            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
+            for key, future in futures.items():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Campaigns preload failed for %s: %s", key, exc)
+        logger.info("Campaigns preload complete.")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _start_publishers_preload() -> None:
+    """Warm all Publishers page datasets in parallel so first click on a publisher is instant."""
+    import logging
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    logger = logging.getLogger(__name__)
+
+    preload_keys = [
+        PUBLISHERS_KEY,
+        PUBLISHER_TRAD_TIMELINE_KEY,
+        PUBLISHER_SOME_TIMELINE_KEY,
+        PUBLISHER_TOPIC_AREAS_KEY,
+        PUBLISHER_SOME_TOPIC_AREAS_KEY,
+        PUBLISHER_TOP_PUBLICATIONS_KEY,
+    ]
+
+    def _run() -> None:
+        with ThreadPoolExecutor(max_workers=len(preload_keys)) as executor:
+            futures = {key: executor.submit(data_manager[key].load) for key in preload_keys}
+            for key, future in futures.items():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Publishers preload failed for %s: %s", key, exc)
+        logger.info("Publishers preload complete.")
+
+    threading.Thread(target=_run, daemon=True).start()

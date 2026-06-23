@@ -8,7 +8,7 @@ Architecture (see also the project README):
     Vizro is mounted under ``settings.vizro_mount_prefix`` (default ``/app/``)
     so that ``/`` stays free for our own pages.
   * Dashboards are plugins auto-discovered from ``dashboards/<slug>/``.
-  * The Flask server created by Vizro also serves our landing/login/admin
+  * The Flask server created by Vizro also serves our client-hub/login/admin
     blueprints, and a ``before_request`` gate enforces authentication and
     per-dashboard access grants.
 
@@ -69,23 +69,23 @@ def _idempotent_insert_callback(callback_list, callback_map, *args, **kwargs):
 
 _dc.insert_callback = _idempotent_insert_callback
 
-# Discovered once (cached); shared with the landing + admin blueprints, which
+# Discovered once (cached); shared with the client-hub + admin blueprints, which
 # import it from `dashboards` (NOT from `app`) to avoid re-executing this module.
 DASHBOARD_REGISTRY = get_registry()
 
 
 def _build_home_page() -> vm.Page:
     """Vizro forces the first page to path '/', so we reserve it for a small
-    overview that points users back to the curated panel at the site root."""
+    platform page that points users back to the Client Hub at the site root."""
     return vm.Page(
         id="overview",
-        title="Overview",
+        title="Client Hub",
         path="/overview",  # Vizro overrides the *first* page's path to '/'
         components=[
             vm.Card(
                 text=(
                     "### Native Analytics\n\n"
-                    "Use the [dashboard panel](/) to open the dashboards you have "
+                    "Use the [Client Hub](/) to open the dashboards you have "
                     "access to."
                 )
             )
@@ -94,21 +94,21 @@ def _build_home_page() -> vm.Page:
 
 
 class _PanelDashboard(vm.Dashboard):
-    """Vizro dashboard with a persistent 'Back to panel' link in the header.
+    """Vizro dashboard with a persistent 'Back to Client Hub' link in the header.
 
     The standard Vizro left navigation rail remains available, while the
-    in-dashboard header also offers a direct way back to the landing panel."""
+    in-dashboard header also offers a direct way back to the Client Hub."""
 
     def custom_header(self):
         return [
             html.A(
                 [
                     html.Span("arrow_back", className="material-symbols-outlined"),
-                    html.Span("Panel", className="back-to-panel-text"),
+                    html.Span("Client Hub", className="back-to-panel-text"),
                 ],
                 href="/",
                 className="back-to-panel",
-                title="Back to your dashboard panel",
+                title="Back to Client Hub",
             )
         ]
 
@@ -116,7 +116,7 @@ class _PanelDashboard(vm.Dashboard):
 def _build_navigation() -> vm.Navigation:
     """One NavBar entry per page.
 
-    Dashboard switching stays in the landing panel while the left icon rail is
+    Dashboard switching stays in the Client Hub while the left icon rail is
     used for page-to-page navigation inside the active dashboard.
     """
     items: list[vm.NavLink] = []
@@ -159,7 +159,7 @@ def _slug_for_path(path: str) -> str | None:
     """Map a request path under the mount prefix to a dashboard slug.
 
     e.g. '/app/d/timeline' → 'timeline'. Returns None for non-dashboard paths
-    (Vizro assets, callbacks, the overview page, ...).
+    (Vizro assets, callbacks, the Client Hub page, ...).
     """
     prefix = settings.vizro_mount_prefix.rstrip("/")
     if not path.startswith(prefix):
@@ -176,7 +176,7 @@ def _install_access_gate(server) -> None:
     @server.before_request
     def _gate():
         path = request.path
-        # Only guard the Vizro-mounted area; landing/login/admin manage their own.
+        # Only guard the Vizro-mounted area; client-hub/login/admin manage their own.
         if not path.startswith(mount):
             return None
 
@@ -246,7 +246,7 @@ def create_app() -> Vizro:
     # `extensions/` package + the matching `assets/ext_*` files to remove them.
     from extensions import install_extensions
 
-    install_extensions(server)
+    install_extensions(server, dash_app=viz.dash)
 
     _install_access_gate(server)
     logger.info(

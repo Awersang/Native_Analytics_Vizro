@@ -19,7 +19,7 @@ from dashboards.amazon_2026.data_common import (
     SENTIMENT_SOURCE_MONTHLY_KEY,
     SOME_PLATFORM_KEY,
     SOURCE_SENTIMENT_MONTHLY_KEY,
-    TOP_ARTICLES_KEY,
+    TOP_ITEMS_KEY,
 )
 from dashboards.amazon_2026.dev_ids import ref_label, ref_only
 from dashboards.amazon_2026.pages._shared import metric_filter
@@ -90,7 +90,7 @@ def build_overview_page(base_path: str) -> vm.Page:
                 components=[
                     vm.Figure(
                         id="amazon-2026-top-items",
-                        figure=overview_top_items_panel(data_frame=TOP_ARTICLES_KEY),
+                        figure=overview_top_items_panel(data_frame=TOP_ITEMS_KEY),
                     ),
                 ],
             ),

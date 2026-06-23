@@ -1,7 +1,7 @@
 /* Native Analytics — experimental chart context menu.
  *
- * Injects a small ⋮ button into the top-right corner of every .na-panel
- * on the Overview page. Clicking opens a dropdown with:
+ * Injects a small ⋮ button into the top-right corner of downloadable .na-panel
+ * elements on the Overview page. Clicking opens a dropdown with:
  *   - Copy Image to Clipboard
  *   - Download Image
  *   - Copy Data to Clipboard
@@ -13,36 +13,37 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "na-chart-menu-enabled";
-  var OVERVIEW_ID = "amazon-2026-overview";
+  var CHART_MENU_ENABLED = typeof window.__NA_CHART_MENU_ENABLED__ === "boolean"
+    ? window.__NA_CHART_MENU_ENABLED__
+    : true;
+  var PAGE_ROOT_IDS = [
+    "amazon-2026-overview",
+    "amazon-2026-topic-areas",
+    "amazon-2026-narratives",
+    "amazon-2026-campaigns",
+    "amazon-2026-publishers",
+    "amazon-2026-discover",
+    "amazon-2026-archive",
+  ];
   var ATTR = "data-chart-menu";
-
-  // -----------------------------------------------------------------------
-  // Toggle state
-  // -----------------------------------------------------------------------
+  var HOST_SELECTORS = [
+    ".amazon-publishers-mini-donut",
+    ".amazon-publishers-venn",
+    ".na-panel",
+    ".amazon-publishers-section",
+    ".figure-container",
+  ];
+  var HOST_SELECTOR = HOST_SELECTORS.join(", ");
+  var TITLE_SELECTOR = [
+    ".na-element-title",
+    ".amazon-publishers-mini-title",
+    ".amazon-publishers-section-header h2",
+    "h2",
+    "h3",
+  ].join(", ");
 
   function isEnabled() {
-    try {
-      var v = localStorage.getItem(STORAGE_KEY);
-      return v === null ? true : v === "true";
-    } catch (e) {
-      return true;
-    }
-  }
-
-  function setEnabled(val) {
-    try {
-      localStorage.setItem(STORAGE_KEY, val ? "true" : "false");
-    } catch (e) {}
-    updateAllBtnVisibility(val);
-    updateToggleWidget(val);
-  }
-
-  function updateAllBtnVisibility(enabled) {
-    var btns = document.querySelectorAll(".na-chart-menu-btn");
-    for (var i = 0; i < btns.length; i++) {
-      btns[i].style.display = enabled ? "" : "none";
-    }
+    return CHART_MENU_ENABLED;
   }
 
   // -----------------------------------------------------------------------
@@ -127,8 +128,25 @@
     return rows.join("\n");
   }
 
+  function closestHost(el) {
+    if (!el) return null;
+    for (var i = 0; i < HOST_SELECTORS.length; i++) {
+      var host = el.closest(HOST_SELECTORS[i]);
+      if (host) return host;
+    }
+    return null;
+  }
+
+  function tableElement(panel) {
+    var tables = panel.querySelectorAll("table");
+    for (var i = 0; i < tables.length; i++) {
+      if (closestHost(tables[i]) === panel) return tables[i];
+    }
+    return null;
+  }
+
   function tableDataToCsv(panel) {
-    var table = panel.querySelector("table");
+    var table = tableElement(panel);
     if (!table) return "";
     var rows = [];
     var allRows = table.querySelectorAll("tr");
@@ -168,9 +186,197 @@
   }
 
   function panelTitle(panel) {
-    var titleEl = panel.querySelector(".na-element-title");
-    if (titleEl) return titleEl.textContent.trim().replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+    var titleEl = panel.querySelector(TITLE_SELECTOR);
+    if (titleEl && titleEl.textContent) {
+      return titleEl.textContent.trim().replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+    }
+    if (panel.id) {
+      return panel.id.replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+    }
     return "chart";
+  }
+
+  function plotlyElement(panel) {
+    var plots = panel.querySelectorAll(".js-plotly-plot");
+    for (var i = 0; i < plots.length; i++) {
+      if (closestHost(plots[i]) === panel) return plots[i];
+    }
+    return null;
+  }
+
+  function hasDownloadableContent(panel) {
+    return !!(plotlyElement(panel) || tableElement(panel));
+  }
+
+  function updatePlotlyItemState(dropdown, hasPlotly) {
+    var items = dropdown.querySelectorAll(".na-chart-menu-item[data-requires-plotly='true']");
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle("na-chart-menu-item--disabled", !hasPlotly);
+      if (hasPlotly) {
+        items[i].removeAttribute("title");
+      } else {
+        items[i].title = "Not available for this panel type";
+      }
+    }
+  }
+
+  function clonePlain(value) {
+    return JSON.parse(JSON.stringify(value || {}));
+  }
+
+  function resolveCssColor(value, probe) {
+    if (typeof value !== "string" || value.indexOf("var(") === -1) return value;
+    probe.style.color = "";
+    probe.style.color = value;
+    var resolved = getComputedStyle(probe).color;
+    return resolved || value;
+  }
+
+  function resolveThemeColors(value, probe) {
+    if (Array.isArray(value)) {
+      return value.map(function (item) { return resolveThemeColors(item, probe); });
+    }
+    if (value && typeof value === "object") {
+      Object.keys(value).forEach(function (key) {
+        value[key] = resolveThemeColors(value[key], probe);
+      });
+      return value;
+    }
+    return resolveCssColor(value, probe);
+  }
+
+  function currentExportTheme(probe) {
+    var rootStyle = getComputedStyle(document.documentElement);
+    function cssVar(name) {
+      probe.style.color = "";
+      probe.style.color = rootStyle.getPropertyValue(name).trim();
+      return getComputedStyle(probe).color;
+    }
+    return {
+      text: cssVar("--na-text"),
+      muted: cssVar("--na-text-muted"),
+      grid: cssVar("--na-grid"),
+      border: cssVar("--na-border"),
+      surface: cssVar("--na-surface"),
+    };
+  }
+
+  function isObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function fontColorForKey(key, theme) {
+    return key === "tickfont" ? theme.muted : theme.text;
+  }
+
+  function themeFontObject(font, key, theme) {
+    if (!isObject(font)) return;
+    font.color = fontColorForKey(key, theme);
+  }
+
+  function applyPlotlyExportTheme(value, theme, key) {
+    if (Array.isArray(value)) {
+      value.forEach(function (item) {
+        applyPlotlyExportTheme(item, theme, key);
+      });
+      return;
+    }
+    if (!isObject(value)) return;
+
+    if (/font$/i.test(key || "")) {
+      themeFontObject(value, String(key).toLowerCase(), theme);
+    }
+
+    Object.keys(value).forEach(function (childKey) {
+      var child = value[childKey];
+      var lowerKey = childKey.toLowerCase();
+
+      if (isObject(child) || Array.isArray(child)) {
+        applyPlotlyExportTheme(child, theme, lowerKey);
+        return;
+      }
+
+      if (typeof child !== "string") return;
+
+      if (/font$/i.test(key || "") && lowerKey === "color") {
+        value[childKey] = fontColorForKey(String(key).toLowerCase(), theme);
+      } else if (lowerKey === "gridcolor") {
+        value[childKey] = theme.grid;
+      } else if (lowerKey === "linecolor" || lowerKey === "zerolinecolor" || lowerKey === "tickcolor") {
+        value[childKey] = theme.border;
+      } else if (lowerKey === "bordercolor") {
+        value[childKey] = theme.border;
+      }
+    });
+  }
+
+  function applyExportDefaults(data, layout, theme) {
+    layout.font = layout.font || {};
+    layout.font.color = theme.text;
+    layout.legend = layout.legend || {};
+    layout.legend.font = layout.legend.font || {};
+    layout.legend.font.color = theme.text;
+    layout.legend.bgcolor = "rgba(0,0,0,0)";
+    layout.hoverlabel = layout.hoverlabel || {};
+    layout.hoverlabel.bgcolor = theme.surface;
+    layout.hoverlabel.bordercolor = theme.border;
+    layout.hoverlabel.font = layout.hoverlabel.font || {};
+    layout.hoverlabel.font.color = theme.text;
+
+    data.forEach(function (trace) {
+      if (trace.text || trace.texttemplate || trace.textinfo || trace.type === "pie" || trace.type === "bar") {
+        trace.textfont = trace.textfont || {};
+        trace.textfont.color = theme.text;
+        trace.insidetextfont = trace.insidetextfont || {};
+        trace.insidetextfont.color = theme.text;
+        trace.outsidetextfont = trace.outsidetextfont || {};
+        trace.outsidetextfont.color = theme.text;
+      }
+    });
+  }
+
+  function themedExportPayload(plotEl) {
+    var probe = document.createElement("span");
+    probe.style.display = "none";
+    document.body.appendChild(probe);
+    var fullLayout = plotEl._fullLayout || {};
+    var layout = resolveThemeColors(clonePlain(plotEl.layout), probe);
+    var data = resolveThemeColors(clonePlain(plotEl.data || []), probe);
+    var theme = currentExportTheme(probe);
+    document.body.removeChild(probe);
+
+    applyExportDefaults(data, layout, theme);
+    applyPlotlyExportTheme(layout, theme, "layout");
+    applyPlotlyExportTheme(data, theme, "data");
+    layout.width = fullLayout.width || plotEl.clientWidth || layout.width;
+    layout.height = fullLayout.height || plotEl.clientHeight || layout.height;
+    layout.autosize = false;
+    return { data: data, layout: layout, theme: theme };
+  }
+
+  function withThemedExportPlot(plotEl, callback) {
+    var payload = themedExportPayload(plotEl);
+    var exportEl = document.createElement("div");
+    exportEl.style.position = "fixed";
+    exportEl.style.left = "-10000px";
+    exportEl.style.top = "-10000px";
+    exportEl.style.width = (payload.layout.width || plotEl.clientWidth || 700) + "px";
+    exportEl.style.height = (payload.layout.height || plotEl.clientHeight || 450) + "px";
+    exportEl.style.pointerEvents = "none";
+    document.body.appendChild(exportEl);
+
+    return window.Plotly.newPlot(exportEl, payload.data, payload.layout, {
+      displayModeBar: false,
+      responsive: false,
+      staticPlot: true,
+    })
+      .then(function () {
+        return callback(exportEl);
+      })
+      .finally(function () {
+        window.Plotly.purge(exportEl);
+        exportEl.remove();
+      });
   }
 
   // -----------------------------------------------------------------------
@@ -187,9 +393,11 @@
   }
 
   function handleCopyImage(panel) {
-    var plotEl = panel.querySelector(".js-plotly-plot");
+    var plotEl = plotlyElement(panel);
     if (!plotEl || !window.Plotly) { showToast("No chart to export"); return; }
-    window.Plotly.toImage(plotEl, { format: "png", scale: 2 })
+    withThemedExportPlot(plotEl, function (exportEl) {
+      return window.Plotly.toImage(exportEl, { format: "png", scale: 2 });
+    })
       .then(function (src) {
         var blob = dataUrlToBlob(src);
         return navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
@@ -199,21 +407,18 @@
   }
 
   function handleDownloadImage(panel) {
-    var plotEl = panel.querySelector(".js-plotly-plot");
+    var plotEl = plotlyElement(panel);
     if (!plotEl || !window.Plotly) { showToast("No chart to export"); return; }
-    var filename = (panelTitle(panel) || "chart") + ".png";
-    // Same as copy: toImage → blob → blob URL. Plotly.downloadImage internally uses
-    // a data: URL href which Chrome 65+ silently ignores for programmatic <a> clicks.
-    window.Plotly.toImage(plotEl, { format: "png", scale: 2 })
-      .then(function (src) {
-        triggerDownload(dataUrlToBlob(src), filename, "image/png");
-        showToast("Image downloaded");
-      })
-      .catch(function (e) { console.error("toImage failed:", e); showToast("Could not download image"); });
+    var filename = panelTitle(panel) || "chart";
+    withThemedExportPlot(plotEl, function (exportEl) {
+      return window.Plotly.downloadImage(exportEl, { format: "png", filename: filename, scale: 2 });
+    })
+      .then(function () { showToast("Downloading image..."); })
+      .catch(function (e) { console.error("downloadImage failed:", e); showToast("Could not download image"); });
   }
 
   function handleCopyData(panel) {
-    var plotEl = panel.querySelector(".js-plotly-plot");
+    var plotEl = plotlyElement(panel);
     var csv;
     if (plotEl && window.Plotly) {
       csv = plotlyDataToCsv(plotEl);
@@ -227,7 +432,7 @@
   }
 
   function handleDownloadData(panel) {
-    var plotEl = panel.querySelector(".js-plotly-plot");
+    var plotEl = plotlyElement(panel);
     var csv;
     if (plotEl && window.Plotly) {
       csv = plotlyDataToCsv(plotEl);
@@ -253,10 +458,24 @@
   ];
 
   function injectIntoPanel(panel) {
+    if (!isEnabled()) {
+      var disabledBtn = panel.querySelector(":scope > .na-chart-menu-btn");
+      if (disabledBtn) disabledBtn.remove();
+      panel.removeAttribute(ATTR);
+      return;
+    }
+
+    if (!hasDownloadableContent(panel)) {
+      var existingBtn = panel.querySelector(":scope > .na-chart-menu-btn");
+      if (existingBtn) existingBtn.remove();
+      panel.removeAttribute(ATTR);
+      return;
+    }
+
     if (panel.getAttribute(ATTR)) return;
     panel.setAttribute(ATTR, "true");
 
-    var hasPlotly = !!panel.querySelector(".js-plotly-plot");
+    var hasPlotly = !!plotlyElement(panel);
 
     // Trigger button
     var btn = document.createElement("button");
@@ -264,8 +483,6 @@
     btn.title = "Chart options";
     btn.setAttribute("aria-label", "Chart options");
     btn.textContent = "⋮";
-    if (!isEnabled()) btn.style.display = "none";
-
     // Dropdown
     var dropdown = document.createElement("div");
     dropdown.className = "na-chart-menu-dropdown";
@@ -279,10 +496,7 @@
       }
       var el = document.createElement("button");
       el.className = "na-chart-menu-item";
-      if (item.requiresPlotly && !hasPlotly) {
-        el.classList.add("na-chart-menu-item--disabled");
-        el.title = "Not available for this panel type";
-      }
+      if (item.requiresPlotly) el.setAttribute("data-requires-plotly", "true");
       var iconSpan = document.createElement("span");
       iconSpan.className = "na-chart-menu-item-icon";
       iconSpan.textContent = item.icon;
@@ -291,15 +505,18 @@
       el.appendChild(iconSpan);
       el.appendChild(labelSpan);
 
-      if (!(item.requiresPlotly && !hasPlotly)) {
-        el.addEventListener("click", function (e) {
-          e.stopPropagation();
-          closeDropdown(btn, dropdown);
-          item.action(panel);
-        });
-      }
+      el.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (item.requiresPlotly && !plotlyElement(panel)) {
+          showToast("No chart to export");
+          return;
+        }
+        closeDropdown(btn, dropdown);
+        item.action(panel);
+      });
       dropdown.appendChild(el);
     });
+    updatePlotlyItemState(dropdown, hasPlotly);
 
     btn.appendChild(dropdown);
     panel.appendChild(btn);
@@ -311,14 +528,10 @@
       closeAllDropdowns();
       if (!isOpen) {
         // Re-check hasPlotly — Plotly mounts after panel (async)
-        var nowHasPlotly = !!panel.querySelector(".js-plotly-plot");
+        var nowHasPlotly = !!plotlyElement(panel);
         if (nowHasPlotly !== hasPlotly) {
           hasPlotly = nowHasPlotly;
-          var disabledItems = dropdown.querySelectorAll(".na-chart-menu-item--disabled");
-          disabledItems.forEach(function (el) {
-            el.classList.remove("na-chart-menu-item--disabled");
-            el.removeAttribute("title");
-          });
+          updatePlotlyItemState(dropdown, hasPlotly);
         }
         dropdown.classList.add("na-chart-menu-dropdown--open");
         btn.classList.add("na-chart-menu-btn--open");
@@ -346,11 +559,13 @@
   });
 
   function injectAll() {
-    var overview = document.getElementById(OVERVIEW_ID);
-    if (!overview) return;
-    var panels = overview.querySelectorAll(".na-panel");
-    for (var i = 0; i < panels.length; i++) {
-      injectIntoPanel(panels[i]);
+    for (var rootIndex = 0; rootIndex < PAGE_ROOT_IDS.length; rootIndex++) {
+      var root = document.getElementById(PAGE_ROOT_IDS[rootIndex]);
+      if (!root) continue;
+      var panels = root.querySelectorAll(HOST_SELECTOR);
+      for (var i = 0; i < panels.length; i++) {
+        injectIntoPanel(panels[i]);
+      }
     }
   }
 
@@ -358,52 +573,11 @@
   // Toggle widget
   // -----------------------------------------------------------------------
 
-  function createToggleWidget() {
-    if (document.getElementById("na-chart-menu-toggle-root")) return;
-    var root = document.createElement("div");
-    root.id = "na-chart-menu-toggle-root";
-
-    var btn = document.createElement("button");
-    btn.className = "na-chart-menu-toggle-btn";
-    btn.id = "na-chart-menu-toggle-btn";
-
-    var label = document.createElement("span");
-    label.textContent = "Chart Menu";
-
-    var pill = document.createElement("span");
-    pill.className = "na-chart-menu-toggle-pill";
-    pill.id = "na-chart-menu-toggle-pill";
-
-    btn.appendChild(label);
-    btn.appendChild(pill);
-    root.appendChild(btn);
-    document.body.appendChild(root);
-
-    btn.addEventListener("click", function () {
-      setEnabled(!isEnabled());
-    });
-
-    updateToggleWidget(isEnabled());
-  }
-
-  function updateToggleWidget(enabled) {
-    var pill = document.getElementById("na-chart-menu-toggle-pill");
-    if (!pill) return;
-    if (enabled) {
-      pill.textContent = "ON";
-      pill.classList.add("na-chart-menu-toggle-pill--on");
-    } else {
-      pill.textContent = "OFF";
-      pill.classList.remove("na-chart-menu-toggle-pill--on");
-    }
-  }
-
   // -----------------------------------------------------------------------
   // Observer — re-inject when Dash re-renders the overview
   // -----------------------------------------------------------------------
 
   function observe() {
-    createToggleWidget();
     injectAll();
 
     var observer = new MutationObserver(function () {

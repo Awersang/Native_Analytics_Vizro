@@ -36,9 +36,9 @@ from dashboards.amazon_2026.charts_shared import (
 from dashboards.amazon_2026.dev_ids import ref_label
 
 
-def _topic_area_breakdown_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
+def _topic_area_records(data_frame: pd.DataFrame, str_columns: list[str]) -> list[dict[str, Any]]:
     df = data_frame.copy() if data_frame is not None else pd.DataFrame()
-    for column in ["topic_area", "theme", "source"]:
+    for column in str_columns:
         if column not in df.columns:
             df[column] = ""
     for column in ["publications", "reach"]:
@@ -48,9 +48,17 @@ def _topic_area_breakdown_records(data_frame: pd.DataFrame) -> list[dict[str, An
     return [_json_safe(record) for record in df.to_dict("records")]
 
 
+def _topic_area_breakdown_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
+    return _topic_area_records(data_frame, ["topic_area", "theme", "source"])
+
+
+def _topic_area_media_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
+    return _topic_area_records(data_frame, ["media_label", "topic_area", "source"])
+
+
 def _topic_area_available_sources(records: list[dict[str, Any]]) -> list[str]:
     sources = {str(record.get("source", "")) for record in records}
-    return [source for source in ["Trad", "SoMe"] if source in sources]
+    return [s for s in ["Trad", "SoMe"] if s in sources]
 
 
 def _topic_area_theme_rows(
@@ -75,6 +83,21 @@ def _topic_area_theme_rows(
     ]
 
 
+def _topic_area_metric_labels(
+    selected_sources: list[str], basic_metric: str
+) -> tuple[str, str]:
+    """Return (total_label, value_label) for annotations and hover based on active sources and metric."""
+    both = len(selected_sources) > 1
+    some_only = selected_sources == ["SoMe"]
+    if basic_metric == "reach":
+        total = "Total reach and engagement" if both else ("Total engagement" if some_only else "Total reach")
+        value = "Reach and Engagement" if both else ("Engagement" if some_only else "Reach")
+    else:
+        total = "Total publications and posts" if both else ("Total posts" if some_only else "Total publications")
+        value = "Publications and Posts" if both else ("Posts" if some_only else "Publications")
+    return total, value
+
+
 def _topic_area_theme_treemap_figure(
     records: list[dict[str, Any]],
     selected_sources: list[str] | None,
@@ -82,22 +105,7 @@ def _topic_area_theme_treemap_figure(
 ) -> go.Figure:
     selected_sources = _normalize_sources(selected_sources, _topic_area_available_sources(records))
     rows = _topic_area_theme_rows(records, selected_sources, basic_metric)
-
-    is_reach = basic_metric == "reach"
-    if is_reach:
-        total_label = "Total reach and engagement" if len(selected_sources) > 1 else (
-            "Total engagement" if selected_sources == ["SoMe"] else "Total reach"
-        )
-        hover_label = "Engagement" if selected_sources == ["SoMe"] else (
-            "Reach and Engagement" if len(selected_sources) > 1 else "Reach"
-        )
-    else:
-        total_label = "Total publications and posts" if len(selected_sources) > 1 else (
-            "Total posts" if selected_sources == ["SoMe"] else "Total publications"
-        )
-        hover_label = "Posts" if selected_sources == ["SoMe"] else (
-            "Publications and Posts" if len(selected_sources) > 1 else "Publications"
-        )
+    total_label, hover_label = _topic_area_metric_labels(selected_sources, basic_metric)
 
     fig = go.Figure()
 
@@ -195,7 +203,7 @@ def _topic_area_theme_treemap_figure(
 
 def build_topic_area_treemap_section(records: list[dict[str, Any]]) -> html.Div:
     available_sources = _topic_area_available_sources(records)
-    selected_sources = _normalize_sources(available_sources, available_sources)
+    selected_sources = available_sources
     basic_metric = "publications"
     controls = html.Div(
         className="amazon-publishers-chart-controls",
@@ -230,21 +238,7 @@ def build_topic_area_treemap_section(records: list[dict[str, Any]]) -> html.Div:
 # ---------------------------------------------------------------------------
 
 
-def _topic_area_media_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
-    df = data_frame.copy() if data_frame is not None else pd.DataFrame()
-    for column in ["media_label", "topic_area", "source"]:
-        if column not in df.columns:
-            df[column] = ""
-    for column in ["publications", "reach"]:
-        if column not in df.columns:
-            df[column] = 0
-        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
-    return [_json_safe(record) for record in df.to_dict("records")]
-
-
-def _topic_area_media_available_sources(records: list[dict[str, Any]]) -> list[str]:
-    sources = {str(record.get("source", "")) for record in records}
-    return [source for source in ["Trad", "SoMe"] if source in sources]
+_topic_area_media_available_sources = _topic_area_available_sources
 
 
 # Links below this share of total publications are hidden as visual noise.
@@ -256,24 +250,10 @@ def _topic_area_media_sankey_figure(
     selected_sources: list[str] | None,
     basic_metric: str = "publications",
 ) -> go.Figure:
-    available_sources = _topic_area_media_available_sources(records)
+    available_sources = _topic_area_available_sources(records)
     selected_sources = _normalize_sources(selected_sources, available_sources)
     value_key = "reach" if basic_metric == "reach" else "publications"
-
-    if value_key == "reach":
-        value_label = "Engagement" if selected_sources == ["SoMe"] else (
-            "Reach and Engagement" if len(selected_sources) > 1 else "Reach"
-        )
-        total_label = "Total reach and engagement" if len(selected_sources) > 1 else (
-            "Total engagement" if selected_sources == ["SoMe"] else "Total reach"
-        )
-    else:
-        value_label = "Posts" if selected_sources == ["SoMe"] else (
-            "Publications and Posts" if len(selected_sources) > 1 else "Publications"
-        )
-        total_label = "Total publications and posts" if len(selected_sources) > 1 else (
-            "Total posts" if selected_sources == ["SoMe"] else "Total publications"
-        )
+    total_label, value_label = _topic_area_metric_labels(selected_sources, basic_metric)
 
     rows: dict[tuple[str, str], float] = {}
     for record in records:
@@ -393,8 +373,8 @@ def _topic_area_media_sankey_figure(
 
 
 def build_topic_area_media_sankey_section(records: list[dict[str, Any]]) -> html.Div:
-    available_sources = _topic_area_media_available_sources(records)
-    selected_sources = _normalize_sources(available_sources, available_sources)
+    available_sources = _topic_area_available_sources(records)
+    selected_sources = available_sources
     controls = html.Div(
         className="amazon-publishers-chart-controls",
         style={"display": "none"} if len(available_sources) <= 1 else None,

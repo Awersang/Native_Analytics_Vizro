@@ -30,6 +30,9 @@ from dashboards.amazon_2026.charts_shared import (
     TOP_TABLE_STYLE_CELL,
     TOP_TABLE_STYLE_HEADER,
     TRAD_SOME_OPTIONS,
+    _DETAIL_CUMULATIVE_DASH,
+    _DETAIL_SOURCE_STYLE,
+    _apply_detail_weekly_layout,
     _hex_to_rgba,
     _json_safe,
     _kpi_card,
@@ -38,10 +41,13 @@ from dashboards.amazon_2026.charts_shared import (
     _narratives_table_columns,
     _normalize_sources,
     _num,
+    detail_combined_weekly_figure,
+    detail_weekly_figure,
     load_and_filter,
     na_panel,
     trad_some_controls,
     build_top_items_panel,
+    build_top_items_table_data,
     _timeline_available_sources,
     _timeline_chart_title,
     _timeline_figure,
@@ -49,6 +55,11 @@ from dashboards.amazon_2026.charts_shared import (
     media_split_timeline_figure,
     top_reach_flags,
 )
+
+# Backward-compat aliases used by internal callers in this file.
+_narrative_detail_weekly_figure = detail_weekly_figure
+_narrative_detail_combined_weekly_figure = detail_combined_weekly_figure
+_apply_narrative_weekly_layout = _apply_detail_weekly_layout
 from dashboards.amazon_2026.data_common import (
     ANGLES_KEY,
     NARRATIVE_SOME_PLATFORM_TIMELINE_KEY,
@@ -448,185 +459,6 @@ def _narrative_weekly_figure(
     return fig
 
 
-# Trad/SoMe line styling shared between the single-source and combined
-# Trad+SoMe weekly detail charts — kept distinct from SENTIMENT_COLORS and
-# matching the dash/marker convention used by the P2S4G2 sentiment timeline
-# (Trad: solid line + circle marker, SoMe: dotted line + diamond marker).
-# Cumulative lines reuse the source color but use a dashed line so they
-# remain distinguishable from both the Trad and SoMe weekly lines.
-_DETAIL_SOURCE_STYLE = {
-    "Trad": {"color": ACCENT_TRAD, "dash": "solid", "marker": "circle"},
-    "SoMe": {"color": ACCENT_SOME, "dash": "dot", "marker": "diamond"},
-}
-_DETAIL_CUMULATIVE_DASH = "dash"
-
-
-def _narrative_detail_weekly_figure(
-    data_frame: pd.DataFrame,
-    metric_col: str,
-    y_title: str,
-    cum_title: str,
-    source: str = "Trad",
-    x_range: list[str] | None = None,
-    dtick: int | None = None,
-) -> go.Figure:
-    """Single-narrative weekly line with a cumulative line on a secondary y-axis."""
-    style = _DETAIL_SOURCE_STYLE.get(source, _DETAIL_SOURCE_STYLE["Trad"])
-    color = style["color"]
-
-    df = data_frame.copy() if data_frame is not None else pd.DataFrame()
-    fig = go.Figure()
-    if df.empty or "week_start" not in df.columns:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
-        _apply_narrative_weekly_layout(fig, y_title, x_range, dtick=dtick)
-        return fig
-
-    df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce")
-    df[metric_col] = pd.to_numeric(df.get(metric_col, 0), errors="coerce").fillna(0)
-    df = df.dropna(subset=["week_start"]).sort_values("week_start")
-
-    if df.empty:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
-        _apply_narrative_weekly_layout(fig, y_title, x_range, dtick=dtick)
-        return fig
-
-    cumulative = df[metric_col].cumsum()
-
-    fig.add_trace(
-        go.Scatter(
-            x=df["week_start"],
-            y=df[metric_col],
-            name=y_title,
-            mode="lines+markers",
-            line=dict(width=2.5, color=color, shape="spline", smoothing=0.45, dash=style["dash"]),
-            marker=dict(size=5, color=color, symbol=style["marker"]),
-            fill="tozeroy",
-            fillcolor=_hex_to_rgba(color, 0.12),
-            hovertemplate=f"{y_title}: %{{y:,.0f}}<extra></extra>",
-            yaxis="y",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df["week_start"],
-            y=cumulative,
-            name=cum_title,
-            mode="lines",
-            line=dict(width=2, color=color, dash=_DETAIL_CUMULATIVE_DASH),
-            hovertemplate=f"{cum_title}: %{{y:,.0f}}<extra></extra>",
-            yaxis="y2",
-        )
-    )
-
-    _apply_narrative_weekly_layout(fig, y_title, x_range, dtick=dtick)
-    fig.update_layout(
-        hovermode="closest",
-        yaxis2=dict(
-            title=cum_title,
-            tickformat=",",
-            rangemode="tozero",
-            overlaying="y",
-            side="right",
-            showgrid=False,
-        ),
-    )
-    return fig
-
-
-def _narrative_detail_combined_weekly_figure(
-    trad_df: pd.DataFrame,
-    some_df: pd.DataFrame,
-    trad_metric_col: str,
-    trad_label: str,
-    trad_cum_label: str,
-    some_metric_col: str,
-    some_label: str,
-    some_cum_label: str,
-    y_title: str,
-    cum_title: str,
-    x_range: list[str] | None = None,
-    dtick: int | None = None,
-) -> go.Figure:
-    """Trad + SoMe weekly metric, each with its own cumulative line."""
-    fig = go.Figure()
-
-    def _prep(data_frame: pd.DataFrame, metric_col: str) -> pd.DataFrame:
-        df = data_frame.copy() if data_frame is not None else pd.DataFrame()
-        if df.empty or "week_start" not in df.columns:
-            return pd.DataFrame()
-        df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce")
-        df[metric_col] = pd.to_numeric(df.get(metric_col, 0), errors="coerce").fillna(0)
-        return df.dropna(subset=["week_start"]).sort_values("week_start")
-
-    series = [
-        ("Trad", _prep(trad_df, trad_metric_col), trad_metric_col, trad_label, trad_cum_label),
-        ("SoMe", _prep(some_df, some_metric_col), some_metric_col, some_label, some_cum_label),
-    ]
-
-    for source, df, metric_col, weekly_label, cum_label in series:
-        if df.empty:
-            continue
-        style = _DETAIL_SOURCE_STYLE[source]
-        color = style["color"]
-        cumulative = df[metric_col].cumsum()
-        fig.add_trace(
-            go.Scatter(
-                x=df["week_start"],
-                y=df[metric_col],
-                name=weekly_label,
-                mode="lines+markers",
-                line=dict(width=2.5, color=color, shape="spline", smoothing=0.45, dash=style["dash"]),
-                marker=dict(size=5, color=color, symbol=style["marker"]),
-                fill="tozeroy",
-                fillcolor=_hex_to_rgba(color, 0.1),
-                hovertemplate=f"{weekly_label}: %{{y:,.0f}}<extra></extra>",
-                yaxis="y",
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=df["week_start"],
-                y=cumulative,
-                name=cum_label,
-                mode="lines",
-                line=dict(width=2, color=color, dash=_DETAIL_CUMULATIVE_DASH),
-                hovertemplate=f"{cum_label}: %{{y:,.0f}}<extra></extra>",
-                yaxis="y2",
-            )
-        )
-
-    if not fig.data:
-        fig.add_annotation(
-            text="No data available",
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(color=THEME_TEXT_MUTED, size=13),
-        )
-
-    _apply_narrative_weekly_layout(fig, y_title, x_range, dtick=dtick)
-    fig.update_layout(
-        hovermode="closest",
-        yaxis2=dict(
-            title=cum_title,
-            tickformat=",",
-            rangemode="tozero",
-            overlaying="y",
-            side="right",
-            showgrid=False,
-        ),
-    )
-    return fig
-
 
 def _narrative_small_multiples_figure(
     data_frame: pd.DataFrame,
@@ -742,56 +574,6 @@ def _narrative_small_multiples_figure(
     return fig, height_px
 
 
-def _apply_narrative_weekly_layout(
-    fig: go.Figure, y_title: str, x_range: list[str] | None = None, dtick: int | None = None
-) -> None:
-    xaxis_cfg: dict = dict(
-        title=None,
-        tickformat="%d %b",
-        hoverformat="%d %b %Y",
-        showgrid=True,
-        gridcolor=THEME_GRID,
-    )
-    if x_range:
-        xaxis_cfg["range"] = x_range
-    if dtick:
-        xaxis_cfg["dtick"] = dtick
-
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=THEME_TEXT),
-        margin=dict(l=95, r=20, t=10, b=46),
-        hovermode="x unified",
-        legend=dict(
-            orientation="v",
-            x=0.01,
-            y=0.99,
-            xanchor="left",
-            yanchor="top",
-            bgcolor=THEME_SURFACE,
-            bordercolor=THEME_BORDER,
-            borderwidth=1,
-            font=dict(size=10),
-            title=None,
-        ),
-        xaxis=xaxis_cfg,
-        yaxis=dict(
-            title=y_title,
-            tickformat=",",
-            rangemode="tozero",
-            automargin=False,
-            showgrid=True,
-            gridcolor=THEME_GRID,
-        ),
-        hoverlabel=dict(
-            bgcolor=THEME_SURFACE,
-            bordercolor=THEME_BORDER,
-            font=dict(color=THEME_TEXT, size=13),
-            namelength=-1,
-            align="left",
-        ),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1250,21 +1032,7 @@ def _angles_data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict
         },
     ]
     for column_id in [col for col in ANGLE_BAR_COLORS if col in visible_ids]:
-        max_value = max((_num(row, column_id) for row in table_data), default=0)
-        if max_value <= 0:
-            continue
-        for row in table_data:
-            pct = max(0, min(100, (_num(row, column_id) / max_value) * 100))
-            row_bg = THEME_ROW_ODD if int(row["row_id"]) % 2 else THEME_ROW_EVEN
-            styles.append(
-                {
-                    "if": {"filter_query": f"{{row_id}} = {row['row_id']}", "column_id": column_id},
-                    "background": (
-                        f"linear-gradient(90deg, {ANGLE_BAR_COLORS[column_id]} 0%, "
-                        f"{ANGLE_BAR_COLORS[column_id]} {pct:.2f}%, {row_bg} {pct:.2f}%, {row_bg} 100%)"
-                    ),
-                }
-            )
+        styles += _data_bar_column_styles(table_data, column_id, ANGLE_BAR_COLORS[column_id])
     return styles
 
 
@@ -1324,30 +1092,8 @@ def _narrative_angles_table_panel(
                 cell_selectable=True,
                 style_as_list_view=True,
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
-                style_cell={
-                    "backgroundColor": THEME_ROW_EVEN,
-                    "border": f"1px solid {THEME_BORDER}",
-                    "color": THEME_TEXT,
-                    "fontSize": "12px",
-                    "height": "38px",
-                    "padding": "5px 9px",
-                    "textAlign": "right",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
-                style_header={
-                    "backgroundColor": "var(--amazon-publishers-header-bg)",
-                    "border": f"1px solid {THEME_BORDER}",
-                    "borderTop": "none",
-                    "color": THEME_TEXT,
-                    "fontWeight": "700",
-                    "height": "34px",
-                    "textAlign": "center",
-                    "whiteSpace": "nowrap",
-                    "overflow": "hidden",
-                    "textOverflow": "ellipsis",
-                },
+                style_cell=TOP_TABLE_STYLE_CELL,
+                style_header=TOP_TABLE_STYLE_HEADER,
                 style_data_conditional=_angles_data_bar_styles(table_rows, table_cols),
                 css=[
                     {"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"},
@@ -1538,15 +1284,8 @@ def _top_journalists_table_columns() -> list[dict[str, Any]]:
     ]
 
 
-_UNKNOWN_JOURNALIST_NAMES = {"unknown", "brak", "brak danych", "n/a", "na", "none", "-", ""}
-
-
 def _top_journalists_table_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    filtered = [
-        r for r in records
-        if str(r.get("journalist", "")).strip().lower() not in _UNKNOWN_JOURNALIST_NAMES
-    ]
-    sorted_records = sorted(filtered, key=lambda r: _num(r, "reach"), reverse=True)
+    sorted_records = sorted(records, key=lambda r: _num(r, "reach"), reverse=True)
     rows = []
     for idx, record in enumerate(sorted_records[:_TOP_TABLES_LIMIT]):
         rows.append(
@@ -1630,46 +1369,11 @@ def _filter_top_items_by_angle(records: list[dict[str, Any]], angle_filter: str 
 
 def _narrative_top_items_panel(selected_label: str) -> html.Div:
     df = load_and_filter(NARRATIVE_TOP_PUBLICATIONS_KEY, "narrative_label", selected_label)
-
     records = [_json_safe(row) for row in df.to_dict("records")]
-    trad_rows = [r for r in records if str(r.get("Source", "")) == "Trad"]
-    some_rows = [r for r in records if str(r.get("Source", "")) == "SoMe"]
-
-    trad_table_data = [
-        {
-            "Date": str(r.get("Date", "") or ""),
-            "Media_Type": str(r.get("Type", "")),
-            "Publication": str(r.get("Publication", "") or ""),
-            "Title": str(r.get("Title", "")),
-            "Summary": str(r.get("Summary", "")),
-            "URL": f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
-            "Sentiment": str(r.get("Sentiment", "")),
-            "Reach": _num(r, "Reach"),
-            "Angle_ID": str(r.get("Angle_ID", "") or ""),
-            "Angle": str(r.get("Angle", "") or ""),
-        }
-        for r in trad_rows
-    ]
-    some_table_data = [
-        {
-            "Date": str(r.get("Date", "") or ""),
-            "Platform": str(r.get("Type", "")),
-            "Author": str(r.get("Author", "") or ""),
-            "Post_Content": str(r.get("Summary", "")),
-            "URL": f"[link]({r.get('URL', '')})" if str(r.get("URL", "")).startswith("http") else "",
-            "Sentiment": str(r.get("Sentiment", "")),
-            "Reach": _num(r, "Reach"),
-            "Engagement": _num(r, "Engagement"),
-            "Angle_ID": str(r.get("Angle_ID", "") or ""),
-            "Angle": str(r.get("Angle", "") or ""),
-        }
-        for r in some_rows
-    ]
-
-    panel_title = ref_label("Top Publications / Posts", "P2S4T4")
+    trad_table_data, some_table_data = build_top_items_table_data(records)
     return build_top_items_panel(
         "amazon-2026-narrative",
-        panel_title,
+        ref_label("Top Publications / Posts", "P2S4T4"),
         trad_table_data,
         some_table_data,
         show_publication_col=True,

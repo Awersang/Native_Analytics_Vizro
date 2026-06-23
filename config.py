@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     firebase_auth_domain: str = ""
     # Path to the Firebase Admin service-account JSON. Empty → use ADC.
     firebase_credentials_file: str = ""
+    # Firestore database ID. "(default)" is the default; set to your named DB if needed.
+    firestore_database: str = "(default)"
 
     # ── BigQuery ──────────────────────────────────────────────────────────────
     # Each client's data lives in its own dataset, conventionally named

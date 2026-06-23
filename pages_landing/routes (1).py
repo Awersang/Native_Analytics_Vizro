@@ -1,9 +1,9 @@
 """
-Public-facing routes: the Client Hub, login and logout.
+Public-facing routes: the user panel (landing), login and logout.
 
-The Client Hub is the curated home page: it lists exactly the dashboards the
-current user may open. Login uses Firebase when ``AUTH_ENABLED=true`` and is a
-no-op redirect in dev.
+The landing page is the curated "user panel": it lists exactly the dashboards
+the current user may open. Login uses Firebase when ``AUTH_ENABLED=true`` and is
+a no-op redirect in dev.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from tenancy.access import accessible_slugs
 bp = Blueprint("landing", __name__)
 
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{3,8}$")
-_ASSET_BASE = f"{settings.vizro_mount_prefix.rstrip('/')}/assets"
 
 
 def _branding(user) -> tuple[str, str]:
@@ -59,61 +58,31 @@ def index():
     registry = _registry()
     all_slugs = [d.manifest.slug for d in registry]
     visible = set(accessible_slugs(user, all_slugs))
-    visible_dashboards = [d for d in registry if d.manifest.slug in visible]
 
-    category_names: list[str] = []
-    for dashboard in visible_dashboards:
-        category = dashboard.manifest.category or "General"
-        if category not in category_names:
-            category_names.append(category)
-
-    def _card_html(manifest) -> str:
-        href = f"{settings.vizro_mount_prefix.rstrip('/')}{manifest.base_path}"
+    cards = []
+    def _card_html(m):
+        href = f"{settings.vizro_mount_prefix.rstrip('/')}{m.base_path}"
         return (
-            f'<a class="card" data-slug="{escape(manifest.slug)}" data-title="{escape(manifest.title)}" '
-            f'data-category="{escape(manifest.category)}" '
-            f'href="{escape(href)}" onclick="naRecordRecent(\'{escape(manifest.slug)}\')">'
-            f'<button type="button" class="fav-star" data-slug="{escape(manifest.slug)}" '
-            f'onclick="naToggleFav(event, \'{escape(manifest.slug)}\')" title="Toggle favourite">&#9734;</button>'
-            f"<h3>{escape(manifest.title)}</h3><p>{escape(manifest.description)}</p></a>"
+            f'<a class="card" data-slug="{escape(m.slug)}" data-title="{escape(m.title)}" '
+            f'data-category="{escape(m.category)}" '
+            f'href="{escape(href)}" onclick="naRecordRecent(\'{escape(m.slug)}\')">'
+            f'<button type="button" class="fav-star" data-slug="{escape(m.slug)}" '
+            f'onclick="naToggleFav(event, \'{escape(m.slug)}\')" title="Toggle favourite">&#9734;</button>'
+            f"<h3>{escape(m.title)}</h3><p>{escape(m.description)}</p></a>"
         )
 
+    # Group visible dashboards by category, preserving registry (title) order.
     categories: dict[str, list[str]] = {}
-    for dashboard in visible_dashboards:
-        categories.setdefault(dashboard.manifest.category or "General", []).append(_card_html(dashboard.manifest))
+    for d in registry:
+        if d.manifest.slug not in visible:
+            continue
+        categories.setdefault(d.manifest.category or "General", []).append(_card_html(d.manifest))
 
-    requestable_count = max(len(registry) - len(visible_dashboards), 0)
-    summary_pills = [
-        f'<span class="hub-stat-pill">{len(visible_dashboards)} dashboards</span>',
-        f'<span class="hub-stat-pill">{len(category_names)} categories</span>',
-    ]
-    if not user.is_admin and requestable_count:
-        summary_pills.append(f'<span class="hub-stat-pill">{requestable_count} available on request</span>')
-
-    sections = [
-        (
-            '<section class="hub-hero section">'
-            '<div class="hub-hero-copy">'
-            '<p class="hub-eyebrow">Client Hub</p>'
-            '<h1>Open the dashboards that matter to your client work.</h1>'
-            '<p class="hub-hero-text">This space now follows the same visual language as Amazon 2026, '
-            'so moving from the hub into a dashboard feels like one continuous product experience.</p>'
-            f'<div class="hub-stat-row">{"".join(summary_pills)}</div>'
-            '</div>'
-            '<div class="hub-hero-mark">'
-            f'<img src="{escape(_ASSET_BASE)}/logo/logo_sygnet.svg" alt="Native Analytics">'
-            '</div>'
-            '</section>'
-        )
-    ]
-
+    sections = []
     if categories:
         search = (
-            '<div class="hub-search-row">'
-            '<input id="dash-search" type="search" placeholder="Search dashboards..." '
-            'oninput="naFilterCards(this.value)">'
-            '<a class="hub-secondary-link" href="/account">Review access</a>'
-            '</div>'
+            '<input id="dash-search" type="search" placeholder="Search dashboards…" '
+            'oninput="naFilterCards(this.value)" style="width:100%;max-width:360px;margin-bottom:18px;">'
         )
         cat_blocks = "".join(
             f'<div class="cat-section"><h3 class="muted cat-heading">{escape(cat)}</h3>'
@@ -121,8 +90,8 @@ def index():
             for cat, cat_cards in categories.items()
         )
         sections.append(
-            '<section class="section"><h2>Your dashboards</h2>'
-            '<p class="muted">Choose a dashboard to open. Click the star to keep your most-used workspaces close.</p>'
+            '<div class="section"><h2>Your dashboards</h2>'
+            '<p class="muted">Choose a dashboard to open. Click the star to favourite one.</p>'
             f"{search}"
             '<div id="fav-section" class="section" style="display:none">'
             '<h3 class="muted">Favourites</h3><div class="grid" id="fav-grid"></div></div>'
@@ -130,47 +99,48 @@ def index():
             '<h3 class="muted">Recently opened</h3><div class="grid" id="recent-grid"></div></div>'
             f'<div id="dash-all">{cat_blocks}</div>'
             '<p class="muted" id="no-results" style="display:none">No dashboards match your search.</p>'
-            "</section>"
+            "</div>"
         )
     else:
         sections.append(
-            '<section class="section"><h2>No dashboards yet</h2>'
-            '<p class="muted">You have not been granted access to any dashboard.</p></section>'
+            '<div class="section"><h2>No dashboards yet</h2>'
+            '<p class="muted">You have not been granted access to any dashboard.</p></div>'
         )
 
+    # Self-service access requests: dashboards the user cannot yet open.
     if not user.is_admin:
         store = _store()
         pending = {r.slug for r in store.list_access_requests("pending") if r.uid == user.uid}
         request_rows = []
-        for dashboard in registry:
-            manifest = dashboard.manifest
-            if manifest.slug in visible:
+        for d in registry:
+            m = d.manifest
+            if m.slug in visible:
                 continue
-            if manifest.slug in pending:
+            if m.slug in pending:
                 state = '<span class="pill">Requested · pending</span>'
             else:
                 state = (
                     f'<form class="inline" method="post" action="/request-access">'
                     f"{csrf_input()}"
-                    f'<input type="hidden" name="slug" value="{escape(manifest.slug)}">'
+                    f'<input type="hidden" name="slug" value="{escape(m.slug)}">'
                     f'<button type="submit" class="secondary">Request access</button></form>'
                 )
             request_rows.append(
-                f"<tr><td>{escape(manifest.title)}</td>"
-                f'<td class="muted">{escape(manifest.description)}</td>'
+                f"<tr><td>{escape(m.title)}</td>"
+                f'<td class="muted">{escape(m.description)}</td>'
                 f"<td>{state}</td></tr>"
             )
         if request_rows:
             sections.append(
-                '<section class="section"><h2>Request access</h2>'
+                '<div class="section"><h2>Request access</h2>'
                 '<p class="muted">Ask an administrator to grant you these dashboards.</p>'
                 "<table><thead><tr><th>Dashboard</th><th>Description</th><th></th></tr></thead>"
-                f'<tbody>{"".join(request_rows)}</tbody></table></section>'
+                f'<tbody>{"".join(request_rows)}</tbody></table></div>'
             )
 
     body = "".join(sections) + _PANEL_JS
     brand, accent = _branding(user)
-    return page("Client Hub", body, user=user, accent=accent, brand=brand, page_class="client-hub-shell")
+    return page("Dashboards", body, user=user, accent=accent, brand=brand)
 
 
 @bp.route("/account")
@@ -201,7 +171,7 @@ def account():
         f"<table>{table}</table></div>"
     )
     brand, accent = _branding(user)
-    return page("My account", body, user=user, accent=accent, brand=brand, page_class="client-hub-shell")
+    return page("My account", body, user=user, accent=accent, brand=brand)
 
 
 @bp.route("/request-access", methods=["POST"])
@@ -263,6 +233,7 @@ _PANEL_JS = """
       c.style.display = match ? "" : "none";
       if (match) shown++;
     });
+    // Hide category headings whose cards are all filtered out.
     document.querySelectorAll("#dash-all .cat-section").forEach(sec => {
       const anyVisible = Array.from(sec.querySelectorAll(".card"))
         .some(c => c.style.display !== "none");
@@ -304,139 +275,19 @@ _PANEL_JS = """
 })();
 </script>
 <style>
-  .client-hub-shell .hub-hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.7fr);
-    gap: 24px;
-    align-items: center;
-    overflow: hidden;
-  }
-  .client-hub-shell .hub-hero-copy h1 {
-    margin: 0 0 12px;
-    max-width: 12ch;
-    font-size: clamp(34px, 4.4vw, 54px);
-    line-height: 0.98;
-    letter-spacing: -0.03em;
-  }
-  .client-hub-shell .hub-eyebrow {
-    margin: 0 0 10px;
-    color: var(--na-text-soft);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-  .client-hub-shell .hub-hero-text {
-    max-width: 60ch;
-    margin: 0;
-    color: var(--na-text-muted);
-    font-size: 15px;
-    line-height: 1.7;
-  }
-  .client-hub-shell .hub-stat-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 22px;
-  }
-  .client-hub-shell .hub-stat-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 34px;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid var(--na-border);
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--na-text);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .client-hub-shell .hub-hero-mark {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-  }
-  .client-hub-shell .hub-hero-mark img {
-    width: min(100%, 320px);
-    height: auto;
-    opacity: 0.92;
-    filter: drop-shadow(0 18px 48px rgba(0, 0, 0, 0.22));
-  }
-  .client-hub-shell .hub-search-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    margin: 20px 0 18px;
-  }
-  .client-hub-shell .hub-search-row input {
-    width: min(100%, 430px);
-  }
-  .client-hub-shell .hub-secondary-link {
-    color: var(--na-link);
-    font-size: 13px;
-    font-weight: 600;
-    text-decoration: none;
-  }
-  .client-hub-shell .hub-secondary-link:hover {
-    text-decoration: underline;
-  }
-  .client-hub-shell .card {
-    position: relative;
-  }
-  .client-hub-shell .cat-section {
-    margin-bottom: 24px;
-  }
-  .client-hub-shell .cat-heading {
-    margin: 0 0 10px;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    font-size: 12px;
-  }
-  .client-hub-shell .fav-star {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    color: rgba(255, 215, 0, 0.72);
-    font-size: 20px;
-    line-height: 1;
-    padding: 0;
-    cursor: pointer;
-  }
-  .client-hub-shell .fav-star:hover {
-    color: #ffd700;
-    background: transparent;
-    transform: none;
-  }
-  .client-hub-shell .fav-star.on {
-    color: #ffd700;
-  }
-  @media (max-width: 880px) {
-    .client-hub-shell .hub-hero {
-      grid-template-columns: 1fr;
-    }
-    .client-hub-shell .hub-hero-mark {
-      justify-content: flex-start;
-    }
-  }
-  @media (max-width: 640px) {
-    .client-hub-shell .hub-search-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-    .client-hub-shell .hub-search-row input {
-      width: 100%;
-    }
-  }
+  .card { position: relative; }
+  .cat-section { margin-bottom:24px; }
+  .cat-heading { margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; font-size:12px; }
+  .fav-star { position:absolute; top:12px; right:12px; background:transparent; border:none;
+              color:#caca40; font-size:20px; line-height:1; padding:0; cursor:pointer; }
+  .fav-star:hover { color:#ffd700; background:transparent; }
+  .fav-star.on { color:#ffd700; }
 </style>
 """
 
 
+
+# ── Login / logout ────────────────────────────────────────────────────────────
 _LOGIN_HTML = """
 <h2>Sign in</h2>
 <p class="muted">Sign in with your account to continue.</p>
@@ -451,19 +302,15 @@ _LOGIN_HTML = """
   const btn = document.createElement("button");
   btn.textContent = "Sign in with Google";
   btn.onclick = async () => {{
-    try {{
-      const cred = await signInWithPopup(auth, new GoogleAuthProvider());
-      const idToken = await cred.user.getIdToken();
-      const r = await fetch("/sessionLogin", {{
-        method: "POST",
-        headers: {{ "Content-Type": "application/json" }},
-        body: JSON.stringify({{ idToken }}),
-      }});
-      if (r.ok) window.location = "{next}";
-      else root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Sign-in failed. Please try again.</p>");
-    }} catch (err) {{
-      root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Error: " + err.message + "</p>");
-    }}
+    const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+    const idToken = await cred.user.getIdToken();
+    const r = await fetch("/sessionLogin", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify({{ idToken }}),
+    }});
+    if (r.ok) window.location = "{next}";
+    else root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Sign-in failed.</p>");
   }};
   root.appendChild(btn);
 </script>
@@ -480,10 +327,7 @@ def login():
         auth_domain=settings.firebase_auth_domain,
         next=nxt,
     )
-    resp = Response(page("Sign in", body, page_class="client-hub-shell"), mimetype="text/html")
-    # Allow Firebase popup to communicate back across origins.
-    resp.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
-    return resp
+    return page("Sign in", body)
 
 
 @bp.route("/sessionLogin", methods=["POST"])
@@ -519,6 +363,7 @@ def logout():
     return resp
 
 
+# ── Dev-only "View as" switcher (active only when AUTH_ENABLED=false) ──────────
 _DEV_COOKIE = "na_dev_as"
 
 
@@ -530,6 +375,7 @@ def dev_switch():
         abort(404)
     store = _store()
     cur = current_user()
+    # Admins first, then by email, for a stable, readable list.
     people = sorted(store.list_users(), key=lambda u: (not u.is_admin, u.email))
     rows = []
     for u in people:
@@ -553,7 +399,7 @@ def dev_switch():
         '<p style="margin-top:16px"><a class="btn" href="/dev/exit">'
         '<button class="secondary">Reset to Dev Admin</button></a></p></div>'
     )
-    return page("Dev switcher", body, user=cur, page_class="client-hub-shell")
+    return page("Dev switcher", body, user=cur)
 
 
 @bp.route("/dev/as/<uid>")

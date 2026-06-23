@@ -8,10 +8,8 @@ import vizro.models as vm
 from dash import Input, Output, State, callback, html, no_update
 from vizro.models.types import capture
 
-from dashboards.amazon_2026.charts_campaigns import _campaign_detail_content
+from dashboards.amazon_2026.charts_campaigns import build_detail_content
 from dashboards.amazon_2026.charts_narratives import (
-    _narrative_detail_combined_weekly_figure,
-    _narrative_detail_weekly_figure,
     _top_publishers_data_bar_styles,
     _top_publishers_table_rows,
 )
@@ -27,6 +25,8 @@ from dashboards.amazon_2026.charts_shared import (
     _normalize_sources,
     _timeline_available_sources,
     _timeline_figure,
+    detail_combined_weekly_figure,
+    detail_weekly_figure,
     register_top_items_callback,
 )
 from dashboards.amazon_2026.charts_topic_areas import (
@@ -215,7 +215,7 @@ def _select_topic_area_from_table(active_cell, viewport_rows, table_rows):
     State("amazon-2026-topic-area-overview-data", "data"),
 )
 def _update_topic_area_details(selected_topic_area: str | None, records: list[dict[str, Any]] | None):
-    return _campaign_detail_content(
+    return build_detail_content(
         selected_topic_area,
         "amazon-2026-ta-topicarea",
         "P6S4",
@@ -250,8 +250,8 @@ def _update_topic_area_detail_timeline(source: list[str] | None, basic_metric: s
         store_data,
         ref_code="P6S4G1",
         make_ref_label=ref_label,
-        combined_builder=_narrative_detail_combined_weekly_figure,
-        single_builder=_narrative_detail_weekly_figure,
+        combined_builder=detail_combined_weekly_figure,
+        single_builder=detail_weekly_figure,
         dtick=7 * 24 * 60 * 60 * 1000,
     )
 
