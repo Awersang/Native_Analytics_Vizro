@@ -305,7 +305,7 @@ def load_campaign_top_journalists() -> pd.DataFrame:
     trad_campaign_expr = _optional_string_expr(
         "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
-    journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist", "Byline", "Author"])
+    journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist"])
 
     sql = f"""
     WITH journalist_base AS (

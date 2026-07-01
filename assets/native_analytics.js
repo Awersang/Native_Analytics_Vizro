@@ -106,16 +106,34 @@
     return document.getElementById("collapse-icon");
   }
 
-  function ensureSidebarPanelPlacement() {
-    var host = sidebarHost();
-    if (!host) {
+  // The saved-views and chat panels live OUTSIDE Dash's #page-container (the
+  // saved-views shell is a sibling of the whole Vizro layout; the chat root is
+  // appended to <body>), so navigation never destroys them. We used to
+  // appendChild them into Vizro's #nav-control-panel, but Dash rebuilds that
+  // subtree on every page change — React then destroyed or misplaced the
+  // grafted node, leaving an empty panel and a dock button stuck "open". Now we
+  // leave them in place and overlay them on the left column with position:fixed,
+  // measuring the live nav-control-panel box so the overlay tracks the header
+  // height, nav-rail width, and responsive zoom.
+  function positionSidebarPanels() {
+    var anchor = sidebarHost();
+    if (!anchor) {
       return;
     }
-    ["ext-chat-root", "saved-views-panel"].forEach(function (id) {
-      var panel = document.getElementById(id);
-      if (panel && panel.parentNode !== host) {
-        host.appendChild(panel);
+    var rect = anchor.getBoundingClientRect();
+    // Collapsed/hidden (or mid-animation): panels are hidden too, so keep the
+    // last good geometry rather than snapping the overlay to a zero-size box.
+    if (rect.width < 10 || rect.height < 10) {
+      return;
+    }
+    [chatPanelRoot(), viewsPanel()].forEach(function (panel) {
+      if (!panel) {
+        return;
       }
+      panel.style.top = rect.top + "px";
+      panel.style.left = rect.left + "px";
+      panel.style.width = rect.width + "px";
+      panel.style.height = rect.height + "px";
     });
   }
 
@@ -172,11 +190,18 @@
     return !!collapseEl && collapseEl.classList.contains("show");
   }
 
+  // Set while ensureSidebarOpen() synthesizes a click to expand the panel for
+  // a specific mode, so the collapse-icon click listener below doesn't treat
+  // a slow open transition as the user collapsing it and revert to "menu".
+  var openingSidebarForMode = false;
+
   function ensureSidebarOpen() {
     if (!isSidebarOpen()) {
       var icon = sidebarIcon();
       if (icon) {
+        openingSidebarForMode = true;
         icon.click();
+        openingSidebarForMode = false;
       }
     }
   }
@@ -211,11 +236,17 @@
     if (views && !views.classList.contains("na-sidebar-panel-hidden")) {
       return "views";
     }
-    return "menu";
+    // Only "menu" if Vizro's own control panel is actually showing. If no panel
+    // is visible (e.g. a panel failed to render), return null so no dock button
+    // is wrongly lit as "open".
+    var controlPanel = document.getElementById("control-panel");
+    if (controlPanel && controlPanel.style.display !== "none") {
+      return "menu";
+    }
+    return null;
   }
 
   function showSidebarMode(mode) {
-    ensureSidebarPanelPlacement();
     activeSidebarMode = mode;
     ensureSidebarOpen();
     if (mode === "chat") {
@@ -233,14 +264,21 @@
       activeSidebarMode = "menu";
     }
     setNavCollapsed(false);
-    setTimeout(syncMenuButtonState, 80);
+    positionSidebarPanels();
+    setTimeout(function () {
+      positionSidebarPanels();
+      syncMenuButtonState();
+    }, 80);
+    // Re-measure after the collapse open-animation settles (opening from a
+    // collapsed sidebar grows the column from 0 → full width over ~350ms).
+    setTimeout(positionSidebarPanels, 420);
   }
 
   window.NativeAnalyticsSidebar = {
     show: showSidebarMode,
     close: closeSidebar,
     sync: function () {
-      ensureSidebarPanelPlacement();
+      positionSidebarPanels();
       syncMenuButtonState();
     },
   };
@@ -283,45 +321,9 @@
     return false;
   }
 
-  function escapeRegExp(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  function currentDashboardPrefix() {
-    var mountPrefix = "/app";
-    var pattern = new RegExp(
-      "^" + escapeRegExp(mountPrefix.replace(/\/$/, "")) + "/d/([^/]+)"
-    );
-    var match = window.location.pathname.match(pattern);
-    return match ? mountPrefix.replace(/\/$/, "") + "/d/" + match[1] : null;
-  }
-
-  function navContainer(node) {
-    return (
-      node.closest(
-        ".accordion-item, .mantine-Accordion-item, .nav-item, li, [role='treeitem']"
-      ) || node
-    );
-  }
-
-  function applyNavScope() {
-    var dashboardPrefix = currentDashboardPrefix();
-    var links = document.querySelectorAll("#nav-bar a[href], a.nav-link[href]");
-
-    links.forEach(function (link) {
-      var href = link.getAttribute("href") || "";
-      var isDashboardRoute = href.indexOf("/d/") !== -1;
-      var shouldShow =
-        !dashboardPrefix ||
-        !isDashboardRoute ||
-        href === dashboardPrefix ||
-        href.indexOf(dashboardPrefix + "/") === 0;
-      var target = navContainer(link);
-
-      target.style.display = shouldShow ? "" : "none";
-      link.setAttribute("aria-hidden", shouldShow ? "false" : "true");
-    });
-  }
+  // Nav-rail scoping (which dashboard's pages are visible) is computed
+  // server-side, per page render, by app.py's ScopedNavBar — no DOM-querying
+  // or MutationObserver-based client-side filtering needed here at all.
 
   function patch() {
     var dc = window.dash_clientside;
@@ -368,10 +370,11 @@
     function (event) {
       var icon = document.getElementById("collapse-icon");
       if (icon && (event.target === icon || icon.contains(event.target))) {
+        var openedForMode = openingSidebarForMode;
         manualToggleInProgress = true;
         setTimeout(function () {
           manualToggleInProgress = false;
-          if (!isSidebarOpen()) {
+          if (!isSidebarOpen() && !openedForMode) {
             showChatPanel(false);
             showViewsPanel(false);
             showVizroControlPanel(true);
@@ -388,23 +391,23 @@
 
   var lastPath = window.location.pathname;
   var observeNav = function () {
-    applyNavScope();
-    ensureSidebarPanelPlacement();
+    positionSidebarPanels();
     syncNavCollapseState();
 
+    // NB: deliberately no positionSidebarPanels() here — this fires on every
+    // DOM mutation (Plotly churns the DOM heavily while charts render) and
+    // getBoundingClientRect forces a reflow. Geometry only changes on
+    // navigation/resize/open, which are handled explicitly below.
     var observer = new MutationObserver(function () {
-      applyNavScope();
-      ensureSidebarPanelPlacement();
       syncNavCollapseState();
       syncMenuButtonState();
       if (window.location.pathname !== lastPath) {
         lastPath = window.location.pathname;
-        applyNavScope();
         activeSidebarMode = "menu";
         showChatPanel(false);
         showViewsPanel(false);
         showVizroControlPanel(true);
-        ensureSidebarPanelPlacement();
+        positionSidebarPanels();
         syncNavCollapseState();
         syncMenuButtonState();
       }
@@ -424,20 +427,20 @@
       }
       history[method] = function () {
         var result = original.apply(this, arguments);
-        applyNavScope();
-        ensureSidebarPanelPlacement();
+        positionSidebarPanels();
         syncMenuButtonState();
         return result;
       };
     });
 
+    window.addEventListener("resize", positionSidebarPanels);
+
     window.addEventListener("popstate", function () {
-      applyNavScope();
       activeSidebarMode = "menu";
       showChatPanel(false);
       showViewsPanel(false);
       showVizroControlPanel(true);
-      ensureSidebarPanelPlacement();
+      positionSidebarPanels();
       syncMenuButtonState();
     });
   };

@@ -7,9 +7,9 @@
 ----------------------------------------------------------------------- */
 
 #amazon-2026-campaigns .dash-table-container .current-page {
-  color: var(--amazon-publishers-text) !important;
-  background: var(--amazon-publishers-surface) !important;
-  border-color: var(--amazon-publishers-border) !important;
+  color: var(--na-text) !important;
+  background: var(--na-surface) !important;
+  border-color: var(--na-border) !important;
 }
 
 #amazon-2026-campaigns .dash-table-container .current-page input,
@@ -20,8 +20,8 @@
 #amazon-2026-campaigns .dash-table-container .dash-table-pagination,
 #amazon-2026-campaigns .dash-table-container .dash-table-pagination *,
 #amazon-2026-campaigns .dash-table-container input.current-page {
-  color: var(--amazon-publishers-text) !important;
-  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  color: var(--na-text) !important;
+  -webkit-text-fill-color: var(--na-text) !important;
   opacity: 1 !important;
 }
 
@@ -29,5 +29,5 @@
 #amazon-2026-campaigns .dash-table-container .previous-page,
 #amazon-2026-campaigns .dash-table-container .next-page,
 #amazon-2026-campaigns .dash-table-container .last-page {
-  color: var(--amazon-publishers-text) !important;
+  color: var(--na-text) !important;
 }

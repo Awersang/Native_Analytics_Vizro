@@ -12,8 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import uuid4
 
-Role = Literal["admin", "user"]
-RequestStatus = Literal["pending", "approved", "denied"]
+Role = Literal["admin", "operator", "user"]
 
 
 @dataclass
@@ -28,6 +27,11 @@ class Client:
     # Per-tenant branding shown on the user panel / account / admin shell.
     brand_name: str = ""
     accent_color: str = ""
+    # Uploaded logo, stored inline as a data: URI (small images only - this
+    # rides in the same Firestore doc as everything else, so no separate
+    # file storage/bucket is needed for what's expected to be a handful of
+    # KB per client).
+    logo_data_uri: str = ""
     # Dashboards assigned to this company. Every user of the company inherits
     # access to these (this is the primary access-control mechanism).
     dashboard_slugs: list[str] = field(default_factory=list)
@@ -40,6 +44,7 @@ class Client:
             bq_dataset=data.get("bq_dataset", ""),
             brand_name=data.get("brand_name", ""),
             accent_color=data.get("accent_color", ""),
+            logo_data_uri=data.get("logo_data_uri", ""),
             dashboard_slugs=list(data.get("dashboard_slugs", [])),
         )
 
@@ -49,6 +54,7 @@ class Client:
             "bq_dataset": self.bq_dataset,
             "brand_name": self.brand_name,
             "accent_color": self.accent_color,
+            "logo_data_uri": self.logo_data_uri,
             "dashboard_slugs": self.dashboard_slugs,
         }
 
@@ -57,10 +63,13 @@ class Client:
 class User:
     """An authenticated principal.
 
-    * ``role == "admin"`` → full access to every dashboard + the admin panel.
-    * ``role == "user"``  → access derives mainly from the user's company
-      (``client_id`` → ``Client.dashboard_slugs``). ``dashboard_slugs`` here are
-      optional per-user *extra* grants layered on top of the company's set.
+    * ``role == "admin"``    -> full access to every dashboard + the admin panel.
+    * ``role == "operator"`` -> cross-client access to whole companies
+      (``allowed_client_ids``), inheriting every dashboard those companies
+      own - the same inheritance model as a company user's own client.
+    * ``role == "user"``     -> access derives from the user's company
+      (``client_id`` -> ``Client.dashboard_slugs``), minus any per-user
+      restrictions.
     """
 
     uid: str
@@ -68,72 +77,53 @@ class User:
     role: Role = "user"
     client_id: str = ""
     display_name: str = ""
-    # Slugs of dashboards this user may open (ignored for admins, who see all).
-    dashboard_slugs: list[str] = field(default_factory=list)
+    # Operator-only: companies whose dashboards they may access.
+    allowed_client_ids: list[str] = field(default_factory=list)
+    # Company-user-only dashboard removals from the inherited company scope.
+    restricted_dashboard_slugs: list[str] = field(default_factory=list)
+    # Legacy additive grants kept only long enough to surface migration gaps.
+    legacy_dashboard_slugs: list[str] = field(default_factory=list, repr=False, compare=False)
+    # Suspended accounts are denied at the auth layer (auth/middleware.py)
+    # without losing their grants/audit history, unlike delete.
+    disabled: bool = False
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
 
+    @property
+    def is_operator(self) -> bool:
+        return self.role == "operator"
+
+    @property
+    def is_company_user(self) -> bool:
+        return self.role == "user"
+
     @classmethod
     def from_doc(cls, doc_id: str, data: dict[str, Any]) -> "User":
+        role = data.get("role", "user")
+        client_id = data.get("client_id", "")
         return cls(
             uid=doc_id,
             email=data.get("email", ""),
-            role=data.get("role", "user"),
-            client_id=data.get("client_id", ""),
+            role=role,
+            client_id=client_id if role == "user" else "",
             display_name=data.get("display_name", ""),
-            dashboard_slugs=list(data.get("dashboard_slugs", [])),
+            allowed_client_ids=list(data.get("allowed_client_ids", [])),
+            restricted_dashboard_slugs=list(data.get("restricted_dashboard_slugs", [])),
+            legacy_dashboard_slugs=list(data.get("dashboard_slugs", [])),
+            disabled=bool(data.get("disabled", False)),
         )
 
     def to_doc(self) -> dict[str, Any]:
         return {
             "email": self.email,
             "role": self.role,
-            "client_id": self.client_id,
+            "client_id": self.client_id if self.role == "user" else "",
             "display_name": self.display_name,
-            "dashboard_slugs": self.dashboard_slugs,
-        }
-
-
-@dataclass
-class AccessRequest:
-    """A user's self-service request for access to a dashboard.
-
-    Created from the user panel and resolved (approved/denied) by an admin in
-    the admin queue. ``id`` is deterministic per (uid, slug) so re-requesting
-    the same dashboard updates the existing pending row rather than piling up.
-    """
-
-    uid: str
-    email: str
-    slug: str
-    status: RequestStatus = "pending"
-    created_at: str = ""
-    id: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.id:
-            self.id = f"{self.uid}__{self.slug}"
-
-    @classmethod
-    def from_doc(cls, doc_id: str, data: dict[str, Any]) -> "AccessRequest":
-        return cls(
-            id=doc_id,
-            uid=data.get("uid", ""),
-            email=data.get("email", ""),
-            slug=data.get("slug", ""),
-            status=data.get("status", "pending"),
-            created_at=data.get("created_at", ""),
-        )
-
-    def to_doc(self) -> dict[str, Any]:
-        return {
-            "uid": self.uid,
-            "email": self.email,
-            "slug": self.slug,
-            "status": self.status,
-            "created_at": self.created_at,
+            "allowed_client_ids": self.allowed_client_ids,
+            "restricted_dashboard_slugs": self.restricted_dashboard_slugs,
+            "disabled": self.disabled,
         }
 
 

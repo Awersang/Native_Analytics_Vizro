@@ -4,9 +4,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Input, Output, State, callback, dcc, html
-from vizro.models.types import capture
 
-from dashboards.amazon_2026.charts_shared import (
+from dashboards.amazon_2026.theme import (
     ACCENT_SOME,
     ACCENT_TRAD,
     MEDIA_TYPE_COLORS,
@@ -14,11 +13,14 @@ from dashboards.amazon_2026.charts_shared import (
     SENTIMENT_COLORS,
     THEME_SURFACE,
     THEME_TEXT,
-    _kpi_card,
-    _num,
-    _theme_hoverlabel,
+    theme_hoverlabel,
+)
+from dashboards.amazon_2026.ui_components import (
     build_top_items_panel,
+    capture,
+    kpi_card,
     na_panel,
+    num,
     register_top_items_callback,
 )
 from dashboards.amazon_2026.data_common import MEDIA_TYPE_ORDER, MONTH_ORDER
@@ -107,7 +109,7 @@ def _trad_tml_donut_figure(data_frame: pd.DataFrame, metric_title: str):
         font=dict(color=THEME_TEXT),
         margin=dict(l=12, r=12, t=12, b=12),
         showlegend=False,
-        hoverlabel=_theme_hoverlabel(),
+        hoverlabel=theme_hoverlabel(),
     )
     return fig
 
@@ -151,7 +153,7 @@ def _trad_media_type_period_donut_figure(data_frame: pd.DataFrame, metric_title:
         uniformtext_minsize=11,
         uniformtext_mode="hide",
         legend=dict(orientation="v", x=1.02, y=0.5, title=None),
-        hoverlabel=_theme_hoverlabel(),
+        hoverlabel=theme_hoverlabel(),
     )
     return fig
 
@@ -194,7 +196,7 @@ def _some_platform_donut_figure(data_frame: pd.DataFrame, metric_label: str):
         uniformtext_minsize=11,
         uniformtext_mode="hide",
         legend=dict(orientation="v", x=1.02, y=0.5, title=None),
-        hoverlabel=_theme_hoverlabel(),
+        hoverlabel=theme_hoverlabel(),
     )
     return fig
 
@@ -300,7 +302,7 @@ def _pubs_posts_reach_by_source_figure(data_frame: pd.DataFrame, metric: str, y_
         yaxis=dict(title=y_label, tickformat=",", tickfont=dict(size=11), title_font=dict(size=11), range=[0, y_axis_max]),
         legend=dict(orientation="v", x=1.02, y=0.5, title=None),
         annotations=month_annotations,
-        hoverlabel=_theme_hoverlabel(),
+        hoverlabel=theme_hoverlabel(),
     )
     return fig
 
@@ -415,7 +417,7 @@ def _trad_source_sentiment_monthly_split_figure(data_frame: pd.DataFrame, visibl
         yaxis=dict(title="Share", title_font=dict(size=11), ticksuffix="%", range=[0, 100]),
         legend=dict(orientation="v", x=1.02, y=0.5, title=None),
         annotations=month_annotations,
-        hoverlabel=_theme_hoverlabel(),
+        hoverlabel=theme_hoverlabel(),
     )
     return fig
 
@@ -476,7 +478,7 @@ def overview_top_items_panel(data_frame: pd.DataFrame):
             "Summary": str(row.get("Summary", "") or ""),
             "URL": f"[link]({row['URL']})" if str(row.get("URL", "")).startswith("http") else "",
             "Sentiment": str(row.get("Sentiment", "")),
-            "Reach": _num(row, "Reach"),
+            "Reach": num(row, "Reach"),
         }
         for _, row in trad_df.iterrows()
     ]
@@ -488,8 +490,8 @@ def overview_top_items_panel(data_frame: pd.DataFrame):
             "Post_Content": str(row.get("Post_Content", "") or ""),
             "URL": f"[link]({row['URL']})" if str(row.get("URL", "")).startswith("http") else "",
             "Sentiment": str(row.get("Sentiment", "")),
-            "Reach": _num(row, "Reach"),
-            "Engagement": _num(row, "Engagement"),
+            "Reach": num(row, "Reach"),
+            "Engagement": num(row, "Engagement"),
         }
         for _, row in some_df.iterrows()
     ]
@@ -512,20 +514,20 @@ register_top_items_callback("amazon-2026-overview", show_publication_col=True, s
 def overview_kpi_panel(data_frame: pd.DataFrame):
     row = data_frame.iloc[0].to_dict() if not data_frame.empty else {}
 
-    reach_mln = _num(row, "total_reach") / 1_000_000
-    pubs_k = _num(row, "total_publications") / 1_000
-    posts_k = _num(row, "total_posts") / 1_000
-    engagement_k = _num(row, "total_engagement") / 1_000
-    trad_with_some = int(_num(row, "trad_with_some"))
+    reach_mln = num(row, "total_reach") / 1_000_000
+    pubs_k = num(row, "total_publications") / 1_000
+    posts_k = num(row, "total_posts") / 1_000
+    engagement_k = num(row, "total_engagement") / 1_000
+    trad_with_some = int(num(row, "trad_with_some"))
 
     trad_panel = na_panel(
         ref_label("Traditional Media", "P1S1N1"),
         html.Div(
             className="amazon-publishers-kpis",
             children=[
-                _kpi_card(ref_label("Total Reach", "P1S1N1C1"), f"{reach_mln:,.1f} mln"),
-                _kpi_card(ref_label("Publications", "P1S1N1C2"), f"{pubs_k:,.1f} k"),
-                _kpi_card(ref_label("Linked Trad+SoMe", "P1S1N1C3"), f"{trad_with_some:,}"),
+                kpi_card(ref_label("Total Reach", "P1S1N1C1"), f"{reach_mln:,.1f} mln"),
+                kpi_card(ref_label("Publications", "P1S1N1C2"), f"{pubs_k:,.1f} k"),
+                kpi_card(ref_label("Linked Trad+SoMe", "P1S1N1C3"), f"{trad_with_some:,}"),
             ],
         ),
         box="outline",
@@ -535,8 +537,8 @@ def overview_kpi_panel(data_frame: pd.DataFrame):
         html.Div(
             className="amazon-publishers-kpis amazon-publishers-kpis--2col",
             children=[
-                _kpi_card(ref_label("Posts", "P1S1N2C1"), f"{posts_k:,.1f} k"),
-                _kpi_card(ref_label("Engagement", "P1S1N2C2"), f"{engagement_k:,.1f} k"),
+                kpi_card(ref_label("Posts", "P1S1N2C1"), f"{posts_k:,.1f} k"),
+                kpi_card(ref_label("Engagement", "P1S1N2C2"), f"{engagement_k:,.1f} k"),
             ],
         ),
         box="outline",

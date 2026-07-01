@@ -8,30 +8,30 @@ import plotly.graph_objects as go
 from dash import dcc, html
 
 from dashboards.amazon_2026.charts_campaigns import _campaign_table_records, build_campaign_details_section
-from dashboards.amazon_2026.charts_publishers import (
-    SOURCE_OPTIONS,
-    _cell_width_styles,
-    _data_bar_styles,
-    _dev_inline_label,
-    _header_divider_styles,
-    _table_columns,
-    _table_records,
-)
-from dashboards.amazon_2026.charts_shared import (
+from dashboards.amazon_2026.theme import (
     THEME_BORDER,
     THEME_SURFACE,
     THEME_SURFACE_ALT,
     THEME_TEXT,
     THEME_TEXT_MUTED,
+    hex_to_rgba,
+    media_label_color,
+    topic_area_color_map,
+)
+from dashboards.amazon_2026.timeline_charts import normalize_sources
+from dashboards.amazon_2026.ui_components import (
+    SOURCE_OPTIONS,
     TRAD_SOME_OPTIONS,
     _coerce_float,
-    _hex_to_rgba,
-    _json_safe,
-    _normalize_sources,
     build_overview_table_section,
-    media_label_color,
+    cell_width_styles,
+    data_bar_styles,
+    dev_inline_label,
+    header_divider_styles,
+    json_safe,
     na_panel,
-    topic_area_color_map,
+    table_columns,
+    table_records,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
 
@@ -45,7 +45,7 @@ def _topic_area_records(data_frame: pd.DataFrame, str_columns: list[str]) -> lis
         if column not in df.columns:
             df[column] = 0
         df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
-    return [_json_safe(record) for record in df.to_dict("records")]
+    return [json_safe(record) for record in df.to_dict("records")]
 
 
 def _topic_area_breakdown_records(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -103,7 +103,7 @@ def _topic_area_theme_treemap_figure(
     selected_sources: list[str] | None,
     basic_metric: str,
 ) -> go.Figure:
-    selected_sources = _normalize_sources(selected_sources, _topic_area_available_sources(records))
+    selected_sources = normalize_sources(selected_sources, _topic_area_available_sources(records))
     rows = _topic_area_theme_rows(records, selected_sources, basic_metric)
     total_label, hover_label = _topic_area_metric_labels(selected_sources, basic_metric)
 
@@ -249,7 +249,7 @@ def _topic_area_media_sankey_figure(
     basic_metric: str = "publications",
 ) -> go.Figure:
     available_sources = _topic_area_available_sources(records)
-    selected_sources = _normalize_sources(selected_sources, available_sources)
+    selected_sources = normalize_sources(selected_sources, available_sources)
     value_key = "reach" if basic_metric == "reach" else "publications"
     total_label, value_label = _topic_area_metric_labels(selected_sources, basic_metric)
 
@@ -323,7 +323,7 @@ def _topic_area_media_sankey_figure(
         link_sources.append(node_index[media_label])
         link_targets.append(node_index[topic_area])
         link_values.append(value)
-        link_colors.append(_hex_to_rgba(color_map[topic_area], 0.35))
+        link_colors.append(hex_to_rgba(color_map[topic_area], 0.35))
         link_labels.append(f"{media_label} -> {topic_area}")
 
     fig.add_trace(
@@ -408,8 +408,8 @@ def build_topic_area_media_sankey_section(records: list[dict[str, Any]]) -> html
 
 def build_topic_area_overview_section(data_frame: pd.DataFrame) -> html.Div:
     records = _campaign_table_records(data_frame, id_column="topic_area")
-    table_data = _table_records(records)
-    columns = _table_columns("All")
+    table_data = table_records(records)
+    columns = table_columns("All")
     columns[0] = {"name": ["", "Topic Area"], "id": "display_name"}
     controls = html.Div(
         className="amazon-publishers-controls",
@@ -435,13 +435,13 @@ def build_topic_area_overview_section(data_frame: pd.DataFrame) -> html.Div:
         store_id="amazon-2026-topic-area-overview-data",
         section_title=ref_label("Topic Areas Overview", "P6S3"),
         controls=controls,
-        dev_label=_dev_inline_label("P6S3T1", "Topic Areas Table"),
+        dev_label=dev_inline_label("P6S3T1", "Topic Areas Table"),
         table_id="amazon-2026-topic-area-overview-table",
         table_data=table_data,
         columns=columns,
-        style_cell_conditional=_cell_width_styles(),
-        style_header_conditional=_header_divider_styles(columns),
-        style_data_conditional=_data_bar_styles(table_data, columns),
+        style_cell_conditional=cell_width_styles(),
+        style_header_conditional=header_divider_styles(columns),
+        style_data_conditional=data_bar_styles(table_data, columns),
     )
 
 
@@ -455,4 +455,5 @@ def build_topic_area_details_section(data_frame: pd.DataFrame) -> html.Div:
         selector_label="Topic Area",
         placeholder="Select topic area…",
         empty_label="Select a topic area to see details.",
+        render_content=False,
     )

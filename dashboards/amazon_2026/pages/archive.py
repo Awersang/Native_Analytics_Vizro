@@ -3,19 +3,21 @@ from __future__ import annotations
 
 import pandas as pd
 import vizro.models as vm
-from vizro.models.types import capture
 
 from dashboards.amazon_2026.charts_archive import build_archive_scatter_section
 from dashboards.amazon_2026.data_common import ARCHIVE_SCATTER_KEY
-from dashboards.amazon_2026.dev_ids import ref_label
+from dashboards.amazon_2026.pages._shared import build_standard_page
+from dashboards.amazon_2026.ui_components import capture
 
 
 def build_archive_page(base_path: str) -> vm.Page:
-    return vm.Page(
-        id="amazon-2026-archive",
-        title=ref_label("Clusters", "P5"),
-        path=f"{base_path}/archive",
+    return build_standard_page(
+        base_path=base_path,
+        slug="archive",
+        display_name="Clusters",
+        ref_code="P5",
         description="Clustered charts for historical comparison.",
+        layout=None,
         components=[
             vm.Figure(
                 id="amazon-2026-archive-scatter-section",

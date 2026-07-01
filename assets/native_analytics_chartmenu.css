@@ -1,11 +1,14 @@
-/* Native Analytics — experimental chart context menu.
+/* Native Analytics — chart context menu.
  *
- * Scoped to the Overview page for now. The toggle widget persists state
- * in localStorage so it survives page navigation.
+ * Markup is rendered server-side by chart_menu_button() (ui_components.py);
+ * native_analytics_chartmenu.js only wires up click behavior. See that file
+ * for details.
  */
 
 /* -----------------------------------------------------------------------
-   Menu trigger button — absolute top-right corner of each .na-panel
+   Menu trigger button — absolute top-right corner of each .na-panel,
+   unless `.na-chart-menu-btn--inline` (joins an existing header row instead
+   — see chart_menu_button(inline=...) / na_panel() / donut_panel())
 ----------------------------------------------------------------------- */
 
 .na-chart-menu-btn {
@@ -30,11 +33,11 @@
   user-select: none;
 }
 
-[data-chart-menu="true"] {
+.na-chart-menu-host {
   position: relative;
 }
 
-[data-chart-menu="true"]:hover > .na-chart-menu-btn,
+.na-chart-menu-host:hover > .na-chart-menu-btn,
 .na-chart-menu-btn.na-chart-menu-btn--open {
   opacity: 1;
 }
@@ -46,14 +49,31 @@
   border-color: var(--na-border);
 }
 
+/* Inline variant: a normal flex item alongside the Trad/SoMe toggle pills
+   (.amazon-publishers-radio label) instead of an absolute corner overlay —
+   matches their height/border/radius and stays always-visible like them,
+   since it's now a peer control rather than a discreet hover-only extra. */
+.na-chart-menu-btn--inline {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: auto;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 8px;
+  opacity: 1;
+  margin-left: auto;
+}
+
 /* -----------------------------------------------------------------------
    Dropdown panel
 ----------------------------------------------------------------------- */
 
 .na-chart-menu-dropdown {
   position: absolute;
-  top: 38px;
-  right: 8px;
+  top: calc(100% + 6px);
+  right: 0;
   z-index: 1100;
   min-width: 210px;
   padding: 4px 0;

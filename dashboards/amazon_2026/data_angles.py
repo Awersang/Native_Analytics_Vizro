@@ -17,7 +17,7 @@ def load_angles() -> pd.DataFrame:
     angle_columns = _table_column_map("amazon_2026_angles")
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
-    angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id", "id"])
+    angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id"])
     trad_angle_id_expr = _optional_string_expr("t", trad_columns, ANGLE_ID_CANDIDATES)
     some_angle_id_expr = _optional_string_expr("s", some_columns, ANGLE_ID_CANDIDATES)
     trad_angle_expr = _optional_string_expr("t", trad_columns, ANGLE_LABEL_CANDIDATES)

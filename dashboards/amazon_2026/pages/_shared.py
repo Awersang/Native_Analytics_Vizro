@@ -6,7 +6,57 @@ from typing import Any, Callable
 import pandas as pd
 import vizro.models as vm
 from dash import html
-from vizro.models.types import capture
+
+from dashboards.amazon_2026.dev_ids import ref_label
+from dashboards.amazon_2026.ui_components import capture
+
+_DEFAULT_LAYOUT = object()  # sentinel: build a fresh vm.Flex per call, never share one instance
+
+
+def build_standard_page(
+    *,
+    base_path: str,
+    slug: str,
+    display_name: str,
+    ref_code: str,
+    description: str,
+    components: list,
+    path: str | None = None,
+    layout: Any = _DEFAULT_LAYOUT,
+    controls: list | None = None,
+) -> vm.Page:
+    """Build the `vm.Page(...)` skeleton shared by every Amazon 2026 page.
+
+    `id`/`title`/`path` are derived from `slug` + `display_name` + `ref_code`; only the
+    page-specific `components`/`controls` (and the rare `path`/`layout` override) vary.
+    """
+    kwargs: dict[str, Any] = {
+        "id": f"amazon-2026-{slug}",
+        "title": ref_label(display_name, ref_code),
+        "path": path or f"{base_path}/{slug}",
+        "description": description,
+        "components": components,
+    }
+    if layout is _DEFAULT_LAYOUT:
+        kwargs["layout"] = vm.Flex(direction="column", gap="20px")
+    elif layout is not None:
+        kwargs["layout"] = layout
+    if controls is not None:
+        kwargs["controls"] = controls
+    return vm.Page(**kwargs)
+
+
+def detail_content_scope(content: Any) -> html.Div:
+    """Wrap detail content in the ``.amazon-*-details`` scope classes the detail-grid CSS
+    is keyed on.
+
+    The detail content used to live inside the ``.amazon-publishers-section`` shell (which
+    carried these classes). It now lives in its own ``vm.Figure`` so that ``_on_page_load``
+    and the populate callback write the *same* prop (no nested-store conflict / collapse).
+    Re-applying the scope hooks here keeps the grid/column CSS working. These classes only
+    scope selectors — they add no box styling (that is ``.amazon-publishers-section``).
+    """
+    return html.Div(className="amazon-publishers-details amazon-narrative-details", children=content)
 
 
 @capture("figure")
@@ -74,7 +124,7 @@ def build_detail_timeline_response(
     has_trad = "Trad" in sources
     has_some = "SoMe" in sources
 
-    shared_kwargs: dict[str, Any] = {"x_range": x_range}
+    shared_kwargs: dict[str, Any] = {"x_range": x_range, "load_failed": bool(data.get("load_failed"))}
     if dtick is not None:
         shared_kwargs["dtick"] = dtick
 

@@ -130,11 +130,11 @@ def load_topic_area_campaigns() -> pd.DataFrame:
         COUNT(*) AS trad_article_count,
         SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS trad_total_reach,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('t.Sentiment')} = 'Positive', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(t.Reach, 0) AS INT64))
         ) AS trad_positive_pct,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('t.Sentiment')} = 'Negative', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(t.Reach, 0) AS INT64))
         ) AS trad_negative_pct
       FROM {_table('amazon_2026_trad')} AS t
@@ -150,11 +150,11 @@ def load_topic_area_campaigns() -> pd.DataFrame:
         SUM(COALESCE(s.Engagement, 0)) AS some_total_engagement,
         AVG(COALESCE(s.Engagement, 0)) AS some_avg_engagement,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(s.Sentiment, ''))) LIKE 'pos%', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('s.Sentiment')} = 'Positive', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(s.Reach, 0) AS INT64))
         ) AS some_positive_pct,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(s.Sentiment, ''))) LIKE 'neg%', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('s.Sentiment')} = 'Negative', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(s.Reach, 0) AS INT64))
         ) AS some_negative_pct,
         SUM({some_engagement_positive_expr}) AS some_engagement_positive,
@@ -205,11 +205,11 @@ def load_topic_area_overview() -> pd.DataFrame:
         COUNT(*) AS trad_article_count,
         SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS trad_total_reach,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('t.Sentiment')} = 'Positive', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(t.Reach, 0) AS INT64))
         ) AS trad_positive_pct,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('t.Sentiment')} = 'Negative', CAST(COALESCE(t.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(t.Reach, 0) AS INT64))
         ) AS trad_negative_pct
       FROM {_table('amazon_2026_trad')} AS t
@@ -223,11 +223,11 @@ def load_topic_area_overview() -> pd.DataFrame:
         SUM(COALESCE(s.Engagement, 0)) AS some_total_engagement,
         AVG(COALESCE(s.Engagement, 0)) AS some_avg_engagement,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(s.Sentiment, ''))) LIKE 'pos%', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('s.Sentiment')} = 'Positive', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(s.Reach, 0) AS INT64))
         ) AS some_positive_pct,
         SAFE_DIVIDE(
-          SUM(IF(LOWER(TRIM(COALESCE(s.Sentiment, ''))) LIKE 'neg%', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
+          SUM(IF({_sentiment_case('s.Sentiment')} = 'Negative', CAST(COALESCE(s.Reach, 0) AS INT64), 0)),
           SUM(CAST(COALESCE(s.Reach, 0) AS INT64))
         ) AS some_negative_pct,
         SUM({some_engagement_positive_expr}) AS some_engagement_positive,
@@ -412,7 +412,7 @@ def load_topic_area_top_publishers() -> pd.DataFrame:
 def load_topic_area_top_journalists() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     trad_topic_area_expr = _optional_string_expr("t", trad_columns, ["Topic_Area"])
-    journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist", "Byline", "Author"])
+    journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist"])
 
     sql = f"""
     WITH journalist_base AS (

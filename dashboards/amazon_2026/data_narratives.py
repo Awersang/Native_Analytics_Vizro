@@ -40,8 +40,8 @@ from data_sources.bq import safe_query
 
 
 def _narrative_label_expr(alias: str, columns: dict[str, str]) -> str:
-    """Return a SQL expression for the narrative label column, preferring dominant_narrative."""
-    return _optional_string_expr(alias, columns, ["dominant_narrative", "narrative_label"])
+    """Return a SQL expression for the narrative label column."""
+    return _optional_string_expr(alias, columns, ["narrative_label"])
 
 
 def load_narratives() -> pd.DataFrame:
@@ -82,9 +82,9 @@ def load_narrative_overview() -> pd.DataFrame:
         NULLIF(TRIM({trad_label_expr}), '') AS narrative_label,
         COUNT(*) AS trad_publications,
         SUM(CAST(COALESCE(t.Reach, 0) AS INT64)) AS trad_reach,
-        SUM(CASE WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'pos%'
+        SUM(CASE WHEN {_sentiment_case('t.Sentiment')} = 'Positive'
                  THEN CAST(COALESCE(t.Reach, 0) AS INT64) ELSE 0 END) AS trad_positive_reach,
-        SUM(CASE WHEN LOWER(TRIM(COALESCE(t.Sentiment, ''))) LIKE 'neg%'
+        SUM(CASE WHEN {_sentiment_case('t.Sentiment')} = 'Negative'
                  THEN CAST(COALESCE(t.Reach, 0) AS INT64) ELSE 0 END) AS trad_negative_reach
       FROM {_table('amazon_2026_trad')} AS t
       WHERE NULLIF(TRIM({trad_label_expr}), '') IS NOT NULL
@@ -96,9 +96,9 @@ def load_narrative_overview() -> pd.DataFrame:
         COUNT(*) AS some_posts,
         SUM(CAST(COALESCE(s.Reach, 0) AS INT64)) AS some_reach,
         SUM(COALESCE(s.Engagement, 0)) AS some_engagement,
-        SUM(CASE WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'pos%'
+        SUM(CASE WHEN {_sentiment_case(some_sentiment_expr)} = 'Positive'
                  THEN CAST(COALESCE(s.Reach, 0) AS INT64) ELSE 0 END) AS some_positive_reach,
-        SUM(CASE WHEN LOWER(TRIM(COALESCE({some_sentiment_expr}, ''))) LIKE 'neg%'
+        SUM(CASE WHEN {_sentiment_case(some_sentiment_expr)} = 'Negative'
                  THEN CAST(COALESCE(s.Reach, 0) AS INT64) ELSE 0 END) AS some_negative_reach
       FROM {_table('amazon_2026_some')} AS s
       WHERE NULLIF(TRIM({some_label_expr}), '') IS NOT NULL
@@ -292,8 +292,8 @@ def load_narratives_kpi() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
 
-    trad_narr_expr = _optional_string_expr("t", trad_columns, ["narrative_label", "dominant_narrative"])
-    some_narr_expr = _optional_string_expr("s", some_columns, ["narrative_label", "dominant_narrative"])
+    trad_narr_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
+    some_narr_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
     trad_campaign_expr = _optional_string_expr(
         "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
@@ -406,8 +406,8 @@ def load_narrative_detail_kpis() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
 
-    trad_narr_expr = _optional_string_expr("t", trad_columns, ["narrative_label", "dominant_narrative"])
-    some_narr_expr = _optional_string_expr("s", some_columns, ["narrative_label", "dominant_narrative"])
+    trad_narr_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
+    some_narr_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
     trad_campaign_expr = _optional_string_expr(
         "t", trad_columns, CAMPAIGN_COLUMN_CANDIDATES
     )
@@ -533,7 +533,7 @@ def load_narrative_top_publishers() -> pd.DataFrame:
 def load_narrative_top_journalists() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
-    journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist", "Byline", "Author"])
+    journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist"])
 
     sql = f"""
     WITH journalist_base AS (
@@ -560,7 +560,7 @@ def load_narrative_top_publications() -> pd.DataFrame:
     trad_columns = _table_column_map("amazon_2026_trad")
     some_columns = _table_column_map("amazon_2026_some")
 
-    angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id", "id"])
+    angle_id_expr = _optional_string_expr("a", angle_columns, ["angle_id"])
     trad_label_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
     some_label_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
     trad_summary_expr = _coalesce_string_expr("t", trad_columns, TRAD_SUMMARY_CANDIDATES)

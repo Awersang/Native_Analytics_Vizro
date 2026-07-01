@@ -19,6 +19,8 @@ import time
 from functools import lru_cache
 from typing import Any
 
+import requests
+
 from config import settings
 
 # Session cookies live for 5 days; the browser must re-login afterwards.
@@ -30,9 +32,29 @@ SESSION_COOKIE_TTL = datetime.timedelta(days=5)
 # using a monotonic clock.
 _claims_cache: dict[str, tuple[dict[str, Any], float, float]] = {}
 
+# A cache entry is normally popped lazily when its own key is looked up again
+# after expiry — which never happens for a user who simply doesn't come back,
+# so the dict would otherwise grow forever over the process's lifetime. Sweep
+# everything past the cookie's own max lifetime every Nth insert instead of
+# pulling in a TTL-cache dependency for one dict.
+_CACHE_SWEEP_EVERY = 200
+_inserts_since_sweep = 0
+
 
 def _cookie_key(cookie: str) -> str:
     return hashlib.sha256(cookie.encode("utf-8")).hexdigest()
+
+
+def _maybe_sweep_claims_cache(now: float) -> None:
+    global _inserts_since_sweep
+    _inserts_since_sweep += 1
+    if _inserts_since_sweep < _CACHE_SWEEP_EVERY:
+        return
+    _inserts_since_sweep = 0
+    max_age = SESSION_COOKIE_TTL.total_seconds()
+    stale = [key for key, (_, verified_at, _) in _claims_cache.items() if now - verified_at > max_age]
+    for key in stale:
+        _claims_cache.pop(key, None)
 
 
 
@@ -102,5 +124,32 @@ def verify_session_cookie(cookie: str) -> dict[str, Any]:
     # Cache miss / expired: verify fully (including revocation).
     claims = fb_auth.verify_session_cookie(cookie, check_revoked=True)
     _claims_cache[key] = (claims, now, now)
+    _maybe_sweep_claims_cache(now)
     return claims
+
+
+def send_signin_link_email(email: str, continue_url: str) -> None:
+    """Email a passwordless sign-in link, using Firebase's own hosted email
+    templates - no SMTP/SendGrid setup needed. Used both for self-service
+    "email me a link" sign-in and for admin-issued invites (same mechanism).
+
+    Requires "Email link (passwordless sign-in)" enabled in the Firebase
+    console and ``continue_url``'s host listed under Authorized domains.
+    """
+    resp = requests.post(
+        "https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode",
+        params={"key": settings.firebase_api_key},
+        json={
+            "requestType": "EMAIL_SIGNIN",
+            "email": email,
+            "continueUrl": continue_url,
+            "canHandleCodeInApp": True,
+        },
+        timeout=10,
+    )
+    if not resp.ok:
+        # requests' default HTTPError drops the response body, which is where
+        # Identity Toolkit puts the actual reason (e.g. OPERATION_NOT_ALLOWED
+        # when email-link sign-in isn't enabled in the Firebase console).
+        raise RuntimeError(f"sendOobCode failed ({resp.status_code}): {resp.text}")
 

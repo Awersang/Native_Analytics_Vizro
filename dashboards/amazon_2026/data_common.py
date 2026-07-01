@@ -1,13 +1,48 @@
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 import pandas as pd
 
+from config import settings
 from data_sources.bq import safe_query, table_ref
 
-PROJECT_ID = "native-analytics-486522"
-DATASET_ID = "amazon_2026"
+logger = logging.getLogger(__name__)
+
+# The Client record (tenancy/models.py) that owns this dashboard's data. This
+# dashboard is a bespoke, single-client build (see IMPROVEMENT_PLAN.md §14) —
+# not a template reused across clients — so resolving the dataset once here
+# is sufficient; there is no per-request tenant switching to do.
+AMAZON_CLIENT_ID = "amazon"
+
+# Historical hardcoded fallback, used when no "amazon" Client record exists
+# yet (dev/tests without that fixture, or a store lookup failure at startup).
+_FALLBACK_PROJECT_ID = "native-analytics-486522"
+_FALLBACK_DATASET_ID = "amazon_2026"
+
+
+def _resolve_dataset() -> tuple[str, str]:
+    """Resolve (project, dataset) for this dashboard's one client.
+
+    Looks up the "amazon" Client record's ``bq_dataset`` override; falls back
+    to the historical literals if the record doesn't exist or the store isn't
+    reachable, so this never blocks dashboard startup.
+    """
+    project = settings.gcp_project_id or _FALLBACK_PROJECT_ID
+    dataset = _FALLBACK_DATASET_ID
+    try:
+        from tenancy.users import get_user_store
+
+        client = get_user_store().get_client(AMAZON_CLIENT_ID)
+        if client and client.bq_dataset:
+            dataset = client.bq_dataset
+    except Exception:
+        logger.warning("Could not resolve amazon_2026's Client record; using fallback dataset")
+    return project, dataset
+
+
+PROJECT_ID, DATASET_ID = _resolve_dataset()
 
 OVERVIEW_KEY = "amazon_2026_overview_tml_split"
 OVERVIEW_KPI_KEY = "amazon_2026_overview_kpi"
@@ -61,6 +96,13 @@ CAMPAIGN_PROFILE_KEY = "amazon_2026_campaign_profile"
 CAMPAIGN_NARRATIVES_KEY = "amazon_2026_campaign_narratives"
 DISCOVER_ITEMS_KEY = "amazon_2026_discover_items"
 
+# Materialized table backing Discover's semantic search (charts_discover.py).
+# A materialized TABLE, not a VIEW: BigQuery's VECTOR_SEARCH rejects logical
+# views and also rejects function/expression columns in its base-table query,
+# so `stable_id`/`embedding_vector` must already be plain stored columns. See
+# IMPROVEMENT_PLAN.md §5.27 for the CTAS that (re)builds it and when to rerun it.
+DISCOVER_VECTORS_TABLE = "amazon_2026_discover_vectors"
+
 MEDIA_TYPE_ORDER = [
     "Online",
     "Radio",
@@ -87,18 +129,18 @@ PAID_VALUES = "('paid', 'sponsored', 'branded', 'advertorial', 'promoted')"
 # SQL filter excluding placeholder/missing journalist names from top-journalists queries.
 JOURNALIST_EXCLUSION_FILTER = "LOWER(journalist) NOT IN ('unknown', 'brak', 'brak danych', 'n/a', 'na', 'none', '-')"
 
-# Column-name fallback lists for schema drift across data_*.py modules — every
-# call site needs the same candidates because the underlying tables disagree
-# on capitalization/naming across clients.
-CAMPAIGN_COLUMN_CANDIDATES = ["campaign_announcement", "Campaign_Announcement", "campaign"]
+# Verified single column name per logical field (against the live amazon_2026_trad
+# /amazon_2026_some schema). Lists with >1 entry are deliberate per-row COALESCE
+# chains (e.g. Description vs Main_Text), not name guessing.
+CAMPAIGN_COLUMN_CANDIDATES = ["Campaign_Announcement"]
 SOME_SENTIMENT_CANDIDATES = ["Sentiment"]
-PUBLISHER_DISPLAY_CANDIDATES = ["publisher_display", "Publisher_Display"]
-TRAD_SUMMARY_CANDIDATES = ["Description", "_3P_Description", "Main_Text", "Summary"]
+PUBLISHER_DISPLAY_CANDIDATES = ["publisher_display"]
+TRAD_SUMMARY_CANDIDATES = ["Description", "_3P_Description", "Main_Text"]
 SOME_CONTENT_CANDIDATES = ["Main_Text", "Description", "_3P_Description"]
-PAID_COLUMN_CANDIDATES = ["paid", "Paid", "paid_earned", "Paid_Earned", "content_type", "Content_Type"]
-TRAD_ANGLE_CANDIDATES = ["dominant_angle"]
-SOME_ANGLE_CANDIDATES = ["angle", "dominant_angle"]
-ANGLE_ID_CANDIDATES = ["dominant_angle_id", "angle_id"]
+PAID_COLUMN_CANDIDATES = ["Paid_Earned"]
+TRAD_ANGLE_CANDIDATES = ["dominant_angle_label"]
+SOME_ANGLE_CANDIDATES = ["dominant_angle_label"]
+ANGLE_ID_CANDIDATES = ["dominant_angle_id"]
 ANGLE_LABEL_CANDIDATES = ["dominant_angle_label"]
 
 
@@ -113,6 +155,17 @@ PUBLISHER_SEED_CTE = f"""publisher_seed AS (
       FROM {_table('amazon_2026_publishers')}
       GROUP BY display_key
     )"""
+
+
+def _publisher_uid_expr(display_expr: str, *, source_uid_expr: str | None = None, seed_alias: str | None = None) -> str:
+    """COALESCE chain resolving a stable publisher_uid: explicit source uid -> publisher_seed join -> MD5 hash of display name."""
+    candidates = []
+    if source_uid_expr:
+        candidates.append(source_uid_expr)
+    if seed_alias:
+        candidates.append(f"{seed_alias}.publisher_uid")
+    candidates.append(f"TO_HEX(MD5(LOWER({display_expr})))")
+    return f"COALESCE({', '.join(candidates)})"
 
 
 @lru_cache

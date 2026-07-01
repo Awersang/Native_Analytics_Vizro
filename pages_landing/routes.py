@@ -8,40 +8,52 @@ no-op redirect in dev.
 
 from __future__ import annotations
 
+import random
 import re
-from datetime import datetime, timezone
+from types import SimpleNamespace
 
-from flask import Blueprint, Response, abort, redirect, request
+from flask import Blueprint, Response, redirect, request
 from markupsafe import escape
 
-from auth.middleware import current_user, login_required
+from auth.middleware import current_user, login_required, real_admin_required, real_user
 from config import settings
 from pages_landing.shell import page
-from security import csrf_input, csrf_protect
+from security import csrf_protect, csrf_token
 from tenancy.access import accessible_slugs
+from tenancy.events import record_audit
 
 bp = Blueprint("landing", __name__)
 
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 _ASSET_BASE = f"{settings.vizro_mount_prefix.rstrip('/')}/assets"
 
+_WELCOME_MESSAGES = [
+    "See what's shaping the conversation.",
+    "Everything important, one level deeper.",
+    "What's moving the narrative today?",
+    "Every signal. Every source. One place.",
+    "The narrative is already forming. Want in?",
+    "What shaped today's conversation?",
+    "What's underneath the headlines today?",
+]
 
-def _branding(user) -> tuple[str, str]:
-    """Resolve (brand_name, accent_color) for a user's tenant.
+
+def _branding(user) -> tuple[str, str, str]:
+    """Resolve (brand_name, accent_color, logo_data_uri) for a user's tenant.
 
     The accent is validated against a strict hex pattern so a malformed/hostile
     client record can never inject arbitrary CSS into the shell.
     """
     try:
         if user is None or not getattr(user, "client_id", ""):
-            return "", ""
+            return "", "", ""
         client = _store().get_client(user.client_id)
         if client is None:
-            return "", ""
+            return "", "", ""
         accent = client.accent_color if _HEX_COLOR.match(client.accent_color or "") else ""
-        return client.brand_name or "", accent
+        return client.brand_name or "", accent, client.logo_data_uri or ""
     except Exception:
-        return "", ""
+        return "", "", ""
 
 
 def _registry():
@@ -56,6 +68,8 @@ def _registry():
 @login_required
 def index():
     user = current_user()
+    brand, accent, logo = _branding(user)
+    hero_logo = logo or f"{_ASSET_BASE}/logo/logo_sygnet.svg"
     registry = _registry()
     all_slugs = [d.manifest.slug for d in registry]
     visible = set(accessible_slugs(user, all_slugs))
@@ -82,26 +96,21 @@ def index():
     for dashboard in visible_dashboards:
         categories.setdefault(dashboard.manifest.category or "General", []).append(_card_html(dashboard.manifest))
 
-    requestable_count = max(len(registry) - len(visible_dashboards), 0)
     summary_pills = [
         f'<span class="hub-stat-pill">{len(visible_dashboards)} dashboards</span>',
         f'<span class="hub-stat-pill">{len(category_names)} categories</span>',
     ]
-    if not user.is_admin and requestable_count:
-        summary_pills.append(f'<span class="hub-stat-pill">{requestable_count} available on request</span>')
 
     sections = [
         (
             '<section class="hub-hero section">'
             '<div class="hub-hero-copy">'
             '<p class="hub-eyebrow">Client Hub</p>'
-            '<h1>Open the dashboards that matter to your client work.</h1>'
-            '<p class="hub-hero-text">This space now follows the same visual language as Amazon 2026, '
-            'so moving from the hub into a dashboard feels like one continuous product experience.</p>'
+            f'<h1>{escape(random.choice(_WELCOME_MESSAGES))}</h1>'
             f'<div class="hub-stat-row">{"".join(summary_pills)}</div>'
             '</div>'
             '<div class="hub-hero-mark">'
-            f'<img src="{escape(_ASSET_BASE)}/logo/logo_sygnet.svg" alt="Native Analytics">'
+            f'<img src="{escape(hero_logo)}" alt="{escape(brand or "Native Analytics")}">'
             '</div>'
             '</section>'
         )
@@ -138,38 +147,7 @@ def index():
             '<p class="muted">You have not been granted access to any dashboard.</p></section>'
         )
 
-    if not user.is_admin:
-        store = _store()
-        pending = {r.slug for r in store.list_access_requests("pending") if r.uid == user.uid}
-        request_rows = []
-        for dashboard in registry:
-            manifest = dashboard.manifest
-            if manifest.slug in visible:
-                continue
-            if manifest.slug in pending:
-                state = '<span class="pill">Requested · pending</span>'
-            else:
-                state = (
-                    f'<form class="inline" method="post" action="/request-access">'
-                    f"{csrf_input()}"
-                    f'<input type="hidden" name="slug" value="{escape(manifest.slug)}">'
-                    f'<button type="submit" class="secondary">Request access</button></form>'
-                )
-            request_rows.append(
-                f"<tr><td>{escape(manifest.title)}</td>"
-                f'<td class="muted">{escape(manifest.description)}</td>'
-                f"<td>{state}</td></tr>"
-            )
-        if request_rows:
-            sections.append(
-                '<section class="section"><h2>Request access</h2>'
-                '<p class="muted">Ask an administrator to grant you these dashboards.</p>'
-                "<table><thead><tr><th>Dashboard</th><th>Description</th><th></th></tr></thead>"
-                f'<tbody>{"".join(request_rows)}</tbody></table></section>'
-            )
-
     body = "".join(sections) + _PANEL_JS
-    brand, accent = _branding(user)
     return page("Client Hub", body, user=user, accent=accent, brand=brand, page_class="client-hub-shell")
 
 
@@ -186,7 +164,12 @@ def account():
         "".join(f'<span class="pill">{escape(titles.get(s, s))}</span>' for s in visible)
         or '<span class="muted">None</span>'
     )
-    role_label = "Administrator" if user.is_admin else "User"
+    if user.is_admin:
+        role_label = "Administrator"
+    elif user.is_operator:
+        role_label = "Operator"
+    else:
+        role_label = "User"
     rows = [
         ("Email", escape(user.email or "—")),
         ("Name", escape(user.display_name or "—")),
@@ -200,33 +183,8 @@ def account():
         '<p class="muted">Your profile and the dashboards you can access.</p>'
         f"<table>{table}</table></div>"
     )
-    brand, accent = _branding(user)
+    brand, accent, _logo = _branding(user)
     return page("My account", body, user=user, accent=accent, brand=brand, page_class="client-hub-shell")
-
-
-@bp.route("/request-access", methods=["POST"])
-@login_required
-@csrf_protect
-def request_access():
-    user = current_user()
-    slug = request.form.get("slug", "").strip()
-    registry = _registry()
-    all_slugs = {d.manifest.slug for d in registry}
-    visible = set(accessible_slugs(user, list(all_slugs)))
-    # Only allow requesting a real dashboard the user cannot already open.
-    if slug in all_slugs and slug not in visible and not user.is_admin:
-        from tenancy.models import AccessRequest
-
-        store = _store()
-        store.add_access_request(
-            AccessRequest(
-                uid=user.uid,
-                email=user.email,
-                slug=slug,
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        )
-    return redirect("/")
 
 
 def _store():
@@ -303,187 +261,158 @@ _PANEL_JS = """
   document.addEventListener("DOMContentLoaded", render);
 })();
 </script>
-<style>
-  .client-hub-shell .hub-hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.7fr);
-    gap: 24px;
-    align-items: center;
-    overflow: hidden;
-  }
-  .client-hub-shell .hub-hero-copy h1 {
-    margin: 0 0 12px;
-    max-width: 12ch;
-    font-size: clamp(34px, 4.4vw, 54px);
-    line-height: 0.98;
-    letter-spacing: -0.03em;
-  }
-  .client-hub-shell .hub-eyebrow {
-    margin: 0 0 10px;
-    color: var(--na-text-soft);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-  .client-hub-shell .hub-hero-text {
-    max-width: 60ch;
-    margin: 0;
-    color: var(--na-text-muted);
-    font-size: 15px;
-    line-height: 1.7;
-  }
-  .client-hub-shell .hub-stat-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 22px;
-  }
-  .client-hub-shell .hub-stat-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 34px;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid var(--na-border);
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--na-text);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .client-hub-shell .hub-hero-mark {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-  }
-  .client-hub-shell .hub-hero-mark img {
-    width: min(100%, 320px);
-    height: auto;
-    opacity: 0.92;
-    filter: drop-shadow(0 18px 48px rgba(0, 0, 0, 0.22));
-  }
-  .client-hub-shell .hub-search-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    margin: 20px 0 18px;
-  }
-  .client-hub-shell .hub-search-row input {
-    width: min(100%, 430px);
-  }
-  .client-hub-shell .hub-secondary-link {
-    color: var(--na-link);
-    font-size: 13px;
-    font-weight: 600;
-    text-decoration: none;
-  }
-  .client-hub-shell .hub-secondary-link:hover {
-    text-decoration: underline;
-  }
-  .client-hub-shell .card {
-    position: relative;
-  }
-  .client-hub-shell .cat-section {
-    margin-bottom: 24px;
-  }
-  .client-hub-shell .cat-heading {
-    margin: 0 0 10px;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    font-size: 12px;
-  }
-  .client-hub-shell .fav-star {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    color: rgba(255, 215, 0, 0.72);
-    font-size: 20px;
-    line-height: 1;
-    padding: 0;
-    cursor: pointer;
-  }
-  .client-hub-shell .fav-star:hover {
-    color: #ffd700;
-    background: transparent;
-    transform: none;
-  }
-  .client-hub-shell .fav-star.on {
-    color: #ffd700;
-  }
-  @media (max-width: 880px) {
-    .client-hub-shell .hub-hero {
-      grid-template-columns: 1fr;
-    }
-    .client-hub-shell .hub-hero-mark {
-      justify-content: flex-start;
-    }
-  }
-  @media (max-width: 640px) {
-    .client-hub-shell .hub-search-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-    .client-hub-shell .hub-search-row input {
-      width: 100%;
-    }
-  }
-</style>
 """
 
 
 _LOGIN_HTML = """
+<div class="auth-page">
+<div class="section auth-card">
 <h2>Sign in</h2>
 <p class="muted">Sign in with your account to continue.</p>
-<div id="firebaseui"></div>
+<div id="firebaseui" class="auth-providers"></div>
+<div class="auth-divider"><span>or</span></div>
+<form id="email-link-form" class="auth-email-form">
+  <label>Email<input id="email-link-input" type="email" placeholder="you@company.com" required></label>
+  <button type="submit">Email me a sign-in link</button>
+</form>
+<label class="auth-remember"><input type="checkbox" id="remember-me" checked> Stay signed in on this device</label>
+<p id="email-link-status" class="muted"></p>
+</div>
+</div>
 <script type="module">
   import {{ initializeApp }} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import {{ getAuth, GoogleAuthProvider, signInWithPopup }}
-    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import {{
+    getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup,
+    isSignInWithEmailLink, signInWithEmailLink,
+  }} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   const app = initializeApp({{ apiKey: "{api_key}", authDomain: "{auth_domain}" }});
   const auth = getAuth(app);
   const root = document.getElementById("firebaseui");
+  const statusEl = document.getElementById("email-link-status");
+  const EMAIL_KEY = "na_email_link_address";
+
+  async function finishSessionLogin(cred) {{
+    const idToken = await cred.user.getIdToken();
+    const remember = document.getElementById("remember-me").checked;
+    const r = await fetch("/sessionLogin", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify({{ idToken, remember }}),
+    }});
+    if (r.ok) window.location = "{next}";
+    else root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Sign-in failed. Please try again.</p>");
+  }}
+
   const btn = document.createElement("button");
   btn.textContent = "Sign in with Google";
   btn.onclick = async () => {{
     try {{
       const cred = await signInWithPopup(auth, new GoogleAuthProvider());
-      const idToken = await cred.user.getIdToken();
-      const r = await fetch("/sessionLogin", {{
-        method: "POST",
-        headers: {{ "Content-Type": "application/json" }},
-        body: JSON.stringify({{ idToken }}),
-      }});
-      if (r.ok) window.location = "{next}";
-      else root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Sign-in failed. Please try again.</p>");
+      await finishSessionLogin(cred);
     }} catch (err) {{
       root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Error: " + err.message + "</p>");
     }}
   }};
   root.appendChild(btn);
+
+  const msBtn = document.createElement("button");
+  msBtn.type = "button";
+  msBtn.id = "ms-signin-btn";
+  msBtn.className = "secondary";
+  msBtn.textContent = "Sign in with Microsoft";
+  msBtn.onclick = async () => {{
+    try {{
+      const cred = await signInWithPopup(auth, new OAuthProvider("microsoft.com"));
+      await finishSessionLogin(cred);
+    }} catch (err) {{
+      root.insertAdjacentHTML("beforeend", "<p style='color:#f55'>Error: " + err.message + "</p>");
+    }}
+  }};
+  root.appendChild(msBtn);
+
+  // Completing a sign-in that arrived via an emailed magic link.
+  if (isSignInWithEmailLink(auth, window.location.href)) {{
+    let email = window.localStorage.getItem(EMAIL_KEY);
+    if (!email) email = window.prompt("Confirm your email to finish signing in:");
+    if (email) {{
+      signInWithEmailLink(auth, email, window.location.href)
+        .then((cred) => {{
+          window.localStorage.removeItem(EMAIL_KEY);
+          return finishSessionLogin(cred);
+        }})
+        .catch((err) => {{
+          statusEl.textContent = "Sign-in link error: " + err.message;
+        }});
+    }}
+  }}
+
+  document.getElementById("email-link-form").addEventListener("submit", async (e) => {{
+    e.preventDefault();
+    const email = document.getElementById("email-link-input").value.trim();
+    statusEl.textContent = "Sending...";
+    try {{
+      const r = await fetch("/login/email", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/x-www-form-urlencoded" }},
+        body: new URLSearchParams({{ email, _csrf_token: "{csrf_token}" }}),
+      }});
+      if (r.ok) {{
+        window.localStorage.setItem(EMAIL_KEY, email);
+        statusEl.textContent = "Check your inbox for a sign-in link.";
+      }} else {{
+        statusEl.textContent = "Could not send the link. Please try again.";
+      }}
+    }} catch (err) {{
+      statusEl.textContent = "Error: " + err.message;
+    }}
+  }});
 </script>
 """
+
+
+def _sanitize_next(nxt: str) -> str:
+    """The access gate sends ``next`` as the raw path a visitor was denied,
+    which for a bookmark/typed URL at the bare Vizro mount (e.g. "/app/") is
+    the empty Dash container, not a real dashboard - land there on Client Hub
+    instead."""
+    mount = settings.vizro_mount_prefix.rstrip("/")
+    if not nxt or nxt in (mount, f"{mount}/"):
+        return "/"
+    return nxt
 
 
 @bp.route("/login")
 def login():
     if not settings.auth_enabled:
-        return redirect(request.args.get("next", "/"))
-    nxt = request.args.get("next", "/")
+        return redirect(_sanitize_next(request.args.get("next", "/")))
+    nxt = _sanitize_next(request.args.get("next", "/"))
     body = _LOGIN_HTML.format(
         api_key=settings.firebase_api_key,
         auth_domain=settings.firebase_auth_domain,
         next=nxt,
+        csrf_token=csrf_token(),
     )
     resp = Response(page("Sign in", body, page_class="client-hub-shell"), mimetype="text/html")
     # Allow Firebase popup to communicate back across origins.
     resp.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
     return resp
+
+
+@bp.route("/login/email", methods=["POST"])
+@csrf_protect
+def login_email():
+    if not settings.auth_enabled:
+        return Response(status=204)
+    email = (request.form.get("email") or "").strip().lower()
+    if not email:
+        return Response("Email required", status=400)
+    try:
+        from auth.firebase import send_signin_link_email
+
+        send_signin_link_email(email, continue_url=f"{request.url_root}login")
+    except Exception:
+        return Response("Could not send sign-in link", status=502)
+    return Response(status=204)
 
 
 @bp.route("/sessionLogin", methods=["POST"])
@@ -492,19 +421,29 @@ def session_login():
         return Response(status=204)
     data = request.get_json(silent=True) or {}
     id_token = data.get("idToken", "")
+    remember = bool(data.get("remember", True))
     try:
         from auth.firebase import create_session_cookie, verify_id_token
 
-        verify_id_token(id_token)  # validate before minting a session cookie
+        claims = verify_id_token(id_token)  # validate before minting a session cookie
         cookie, ttl = create_session_cookie(id_token)
     except Exception:
         return Response("Invalid token", status=401)
+
+    record_audit(
+        "auth.login",
+        target=claims.get("uid") or claims.get("sub", ""),
+        actor=SimpleNamespace(uid=claims.get("uid") or claims.get("sub", ""), email=claims.get("email", "")),
+    )
 
     resp = Response(status=200)
     resp.set_cookie(
         settings.session_cookie_name,
         cookie,
-        max_age=int(ttl.total_seconds()),
+        # "Stay signed in" unchecked -> omit max_age so the browser treats it as
+        # a session cookie (gone when the browser closes); the underlying
+        # Firebase cookie still expires server-side after `ttl` either way.
+        max_age=int(ttl.total_seconds()) if remember else None,
         httponly=True,
         secure=not settings.is_dev,
         samesite="Lax",
@@ -523,53 +462,66 @@ _DEV_COOKIE = "na_dev_as"
 
 
 @bp.route("/dev")
+@real_admin_required
 def dev_switch():
-    """Pick which fixture user to impersonate so both the user and admin UIs
-    are reachable in local development. 404s entirely when real auth is on."""
-    if settings.auth_enabled:
-        abort(404)
+    """Pick a user to impersonate ("view as") so an admin can see exactly what
+    that user sees. Always available to the fixture admin in dev; in prod,
+    restricted to real admins (see ``admin_required``)."""
     store = _store()
     cur = current_user()
     people = sorted(store.list_users(), key=lambda u: (not u.is_admin, u.email))
     rows = []
     for u in people:
         is_cur = cur is not None and cur.uid == u.uid
-        role = "admin" if u.is_admin else (u.client_id or "user")
-        action = (
-            '<span class="pill">current</span>'
-            if is_cur
-            else f'<a class="btn" href="/dev/as/{escape(u.uid)}"><button>View as</button></a>'
-        )
+        if u.is_admin:
+            role = "admin"
+        elif u.is_operator:
+            role = "operator"
+        else:
+            role = u.client_id or "user"
+        if is_cur:
+            action = '<span class="pill">current</span>'
+        elif u.is_admin:
+            action = '<span class="muted" title="Impersonating another admin is not allowed">n/a</span>'
+        else:
+            action = f'<a class="btn" href="/dev/as/{escape(u.uid)}"><button>View as</button></a>'
+        suspended_note = ' <span class="muted">(suspended)</span>' if u.disabled else ""
         rows.append(
-            f"<tr><td>{escape(u.email)}<br><span class='muted'>{escape(u.uid)}</span></td>"
+            f"<tr><td>{escape(u.email)}{suspended_note}"
+            f"<br><span class='muted'>{escape(u.uid)}</span></td>"
             f"<td>{escape(role)}</td><td>{action}</td></tr>"
         )
+    helper = (
+        "Development helper — auth is disabled, so this lists fixture users."
+        if not settings.auth_enabled
+        else "Impersonate any non-admin user to see their exact dashboard experience. "
+        "Each switch is recorded in the audit log."
+    )
     body = (
-        '<div class="section"><h2>Dev: view as user</h2>'
-        '<p class="muted">Development helper (AUTH_ENABLED=false). Impersonate any '
-        "fixture user to see their experience, then switch back to the admin.</p>"
+        '<div class="section"><h2>View as user</h2>'
+        f'<p class="muted">{helper}</p>'
         "<table><tr><th>User</th><th>Role / company</th><th></th></tr>"
         f"{''.join(rows)}</table>"
         '<p style="margin-top:16px"><a class="btn" href="/dev/exit">'
-        '<button class="secondary">Reset to Dev Admin</button></a></p></div>'
+        '<button class="secondary">Reset to admin</button></a></p></div>'
     )
-    return page("Dev switcher", body, user=cur, page_class="client-hub-shell")
+    return page("View as", body, user=cur, page_class="client-hub-shell")
 
 
 @bp.route("/dev/as/<uid>")
+@real_admin_required
 def dev_become(uid: str):
-    if settings.auth_enabled:
-        abort(404)
     resp = redirect("/")
-    if _store().get_user(uid) is not None:
-        resp.set_cookie(_DEV_COOKIE, uid, httponly=True, samesite="Lax")
+    target = _store().get_user(uid)
+    if target is not None and not target.disabled and not target.is_admin:
+        resp.set_cookie(_DEV_COOKIE, uid, httponly=True, secure=not settings.is_dev, samesite="Lax")
+        record_audit("user.impersonate_start", target=uid, actor=real_user())
     return resp
 
 
 @bp.route("/dev/exit")
+@real_admin_required
 def dev_exit():
-    if settings.auth_enabled:
-        abort(404)
     resp = redirect("/")
     resp.delete_cookie(_DEV_COOKIE)
     return resp

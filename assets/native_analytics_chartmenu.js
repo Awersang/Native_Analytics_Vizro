@@ -1,14 +1,22 @@
-/* Native Analytics — experimental chart context menu.
+/* Native Analytics — chart context menu.
  *
- * Injects a small ⋮ button into the top-right corner of downloadable .na-panel
- * elements on the Overview page. Clicking opens a dropdown with:
+ * The `.na-chart-menu-btn` + dropdown markup is rendered server-side by
+ * `chart_menu_button()` (ui_components.py) as a normal child of each
+ * `.na-panel` / `.amazon-publishers-mini-donut` / `.amazon-publishers-venn`
+ * that has a chart or table — Dash/React owns those nodes from the start.
+ * This file only attaches behavior to that existing markup via event
+ * delegation; it never creates or inserts DOM nodes itself, so there's
+ * nothing here that can desync React's reconciliation for those panels
+ * (previously this injected the button with a raw `appendChild`, which did
+ * exactly that and caused the panel's content to revert unpredictably on
+ * the next render — see git history for the narrative/publisher/campaign
+ * detail-panel collapse bug).
+ *
+ * Click opens a dropdown with:
  *   - Copy Image to Clipboard
  *   - Download Image
  *   - Copy Data to Clipboard
  *   - Download Data
- *
- * A global toggle widget (fixed bottom-right) persists enabled/disabled
- * state in localStorage so it survives page navigation.
  */
 (function () {
   "use strict";
@@ -16,24 +24,12 @@
   var CHART_MENU_ENABLED = typeof window.__NA_CHART_MENU_ENABLED__ === "boolean"
     ? window.__NA_CHART_MENU_ENABLED__
     : true;
-  var PAGE_ROOT_IDS = [
-    "amazon-2026-overview",
-    "amazon-2026-topic-areas",
-    "amazon-2026-narratives",
-    "amazon-2026-campaigns",
-    "amazon-2026-publishers",
-    "amazon-2026-discover",
-    "amazon-2026-archive",
-  ];
-  var ATTR = "data-chart-menu";
   var HOST_SELECTORS = [
     ".amazon-publishers-mini-donut",
     ".amazon-publishers-venn",
     ".na-panel",
     ".amazon-publishers-section",
-    ".figure-container",
   ];
-  var HOST_SELECTOR = HOST_SELECTORS.join(", ");
   var TITLE_SELECTOR = [
     ".na-element-title",
     ".amazon-publishers-mini-title",
@@ -202,22 +198,6 @@
       if (closestHost(plots[i]) === panel) return plots[i];
     }
     return null;
-  }
-
-  function hasDownloadableContent(panel) {
-    return !!(plotlyElement(panel) || tableElement(panel));
-  }
-
-  function updatePlotlyItemState(dropdown, hasPlotly) {
-    var items = dropdown.querySelectorAll(".na-chart-menu-item[data-requires-plotly='true']");
-    for (var i = 0; i < items.length; i++) {
-      items[i].classList.toggle("na-chart-menu-item--disabled", !hasPlotly);
-      if (hasPlotly) {
-        items[i].removeAttribute("title");
-      } else {
-        items[i].title = "Not available for this panel type";
-      }
-    }
   }
 
   function clonePlain(value) {
@@ -446,153 +426,74 @@
   }
 
   // -----------------------------------------------------------------------
-  // Menu injection
+  // Menu behavior — event delegation against server-rendered markup
   // -----------------------------------------------------------------------
 
-  var MENU_ITEMS = [
-    { label: "Copy Image to Clipboard", icon: "⧉", action: handleCopyImage, requiresPlotly: true },
-    { label: "Download Image", icon: "↓", action: handleDownloadImage, requiresPlotly: true },
-    { separator: true },
-    { label: "Copy Data to Clipboard", icon: "⬚", action: handleCopyData, requiresPlotly: false },
-    { label: "Download Data", icon: "↓", action: handleDownloadData, requiresPlotly: false },
-  ];
+  var ACTIONS = {
+    "copy-image": handleCopyImage,
+    "download-image": handleDownloadImage,
+    "copy-data": handleCopyData,
+    "download-data": handleDownloadData,
+  };
 
-  function injectIntoPanel(panel) {
-    if (!isEnabled()) {
-      var disabledBtn = panel.querySelector(":scope > .na-chart-menu-btn");
-      if (disabledBtn) disabledBtn.remove();
-      panel.removeAttribute(ATTR);
-      return;
-    }
-
-    if (!hasDownloadableContent(panel)) {
-      var existingBtn = panel.querySelector(":scope > .na-chart-menu-btn");
-      if (existingBtn) existingBtn.remove();
-      panel.removeAttribute(ATTR);
-      return;
-    }
-
-    if (panel.getAttribute(ATTR)) return;
-    panel.setAttribute(ATTR, "true");
-
-    var hasPlotly = !!plotlyElement(panel);
-
-    // Trigger button
-    var btn = document.createElement("button");
-    btn.className = "na-chart-menu-btn";
-    btn.title = "Chart options";
-    btn.setAttribute("aria-label", "Chart options");
-    btn.textContent = "⋮";
-    // Dropdown
-    var dropdown = document.createElement("div");
-    dropdown.className = "na-chart-menu-dropdown";
-
-    MENU_ITEMS.forEach(function (item) {
-      if (item.separator) {
-        var sep = document.createElement("div");
-        sep.className = "na-chart-menu-separator";
-        dropdown.appendChild(sep);
-        return;
-      }
-      var el = document.createElement("button");
-      el.className = "na-chart-menu-item";
-      if (item.requiresPlotly) el.setAttribute("data-requires-plotly", "true");
-      var iconSpan = document.createElement("span");
-      iconSpan.className = "na-chart-menu-item-icon";
-      iconSpan.textContent = item.icon;
-      var labelSpan = document.createElement("span");
-      labelSpan.textContent = item.label;
-      el.appendChild(iconSpan);
-      el.appendChild(labelSpan);
-
-      el.addEventListener("click", function (e) {
-        e.stopPropagation();
-        if (item.requiresPlotly && !plotlyElement(panel)) {
-          showToast("No chart to export");
-          return;
-        }
-        closeDropdown(btn, dropdown);
-        item.action(panel);
-      });
-      dropdown.appendChild(el);
-    });
-    updatePlotlyItemState(dropdown, hasPlotly);
-
-    btn.appendChild(dropdown);
-    panel.appendChild(btn);
-
-    btn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      var isOpen = dropdown.classList.contains("na-chart-menu-dropdown--open");
-      // Close all other open dropdowns first
-      closeAllDropdowns();
-      if (!isOpen) {
-        // Re-check hasPlotly — Plotly mounts after panel (async)
-        var nowHasPlotly = !!plotlyElement(panel);
-        if (nowHasPlotly !== hasPlotly) {
-          hasPlotly = nowHasPlotly;
-          updatePlotlyItemState(dropdown, hasPlotly);
-        }
-        dropdown.classList.add("na-chart-menu-dropdown--open");
-        btn.classList.add("na-chart-menu-btn--open");
-      }
-    });
-  }
-
-  function closeDropdown(btn, dropdown) {
-    dropdown.classList.remove("na-chart-menu-dropdown--open");
+  function closeDropdown(btn) {
+    var dropdown = btn.querySelector(".na-chart-menu-dropdown");
+    if (dropdown) dropdown.classList.remove("na-chart-menu-dropdown--open");
     btn.classList.remove("na-chart-menu-btn--open");
   }
 
   function closeAllDropdowns() {
-    var open = document.querySelectorAll(".na-chart-menu-dropdown--open");
+    var open = document.querySelectorAll(".na-chart-menu-btn--open");
     for (var i = 0; i < open.length; i++) {
-      open[i].classList.remove("na-chart-menu-dropdown--open");
-      var b = open[i].closest(".na-chart-menu-btn");
-      if (b) b.classList.remove("na-chart-menu-btn--open");
+      closeDropdown(open[i]);
     }
   }
 
-  document.addEventListener("click", closeAllDropdowns);
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") closeAllDropdowns();
+  document.addEventListener("click", function (e) {
+    if (!isEnabled()) {
+      closeAllDropdowns();
+      return;
+    }
+
+    var item = e.target.closest(".na-chart-menu-item");
+    if (item) {
+      e.stopPropagation();
+      if (item.classList.contains("na-chart-menu-item--disabled")) return;
+      var btn = item.closest(".na-chart-menu-btn");
+      var panel = btn && closestHost(btn);
+      var action = ACTIONS[item.getAttribute("data-action")];
+      if (btn) closeDropdown(btn);
+      if (panel && action) action(panel);
+      return;
+    }
+
+    var btn2 = e.target.closest(".na-chart-menu-btn");
+    if (btn2) {
+      e.stopPropagation();
+      var dropdown = btn2.querySelector(".na-chart-menu-dropdown");
+      var isOpen = dropdown && dropdown.classList.contains("na-chart-menu-dropdown--open");
+      closeAllDropdowns();
+      if (!isOpen && dropdown) {
+        dropdown.classList.add("na-chart-menu-dropdown--open");
+        btn2.classList.add("na-chart-menu-btn--open");
+      }
+      return;
+    }
+
+    closeAllDropdowns();
   });
 
-  function injectAll() {
-    for (var rootIndex = 0; rootIndex < PAGE_ROOT_IDS.length; rootIndex++) {
-      var root = document.getElementById(PAGE_ROOT_IDS[rootIndex]);
-      if (!root) continue;
-      var panels = root.querySelectorAll(HOST_SELECTOR);
-      for (var i = 0; i < panels.length; i++) {
-        injectIntoPanel(panels[i]);
-      }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      closeAllDropdowns();
+      return;
     }
-  }
-
-  // -----------------------------------------------------------------------
-  // Toggle widget
-  // -----------------------------------------------------------------------
-
-  // -----------------------------------------------------------------------
-  // Observer — re-inject when Dash re-renders the overview
-  // -----------------------------------------------------------------------
-
-  function observe() {
-    injectAll();
-
-    var observer = new MutationObserver(function () {
-      injectAll();
-    });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", observe);
-  } else {
-    observe();
-  }
+    if (e.key !== "Enter" && e.key !== " ") return;
+    // Only the trigger is a plain div[role=button]; dropdown items are real
+    // <button>s and already get native Enter/Space activation.
+    var target = e.target.closest(".na-chart-menu-btn");
+    if (!target || target !== e.target) return;
+    e.preventDefault();
+    target.click();
+  });
 })();

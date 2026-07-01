@@ -31,6 +31,8 @@ imports from here.
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
 from typing import Callable
 
 import pandas as pd
@@ -46,6 +48,24 @@ bp = Blueprint("ext_chat", __name__)
 _MAX_QUESTION_LEN = 500
 _SAMPLE_ROWS = 15
 
+# Per-user rate limit on this endpoint — each call can hit a billed Gemini
+# request, so an authenticated user looping it has a real cost, not just a
+# load concern. ponytail: an in-process sliding window, not Flask-Limiter —
+# one dict is enough at this app's scale, and (like the existing
+# /internal/cache/refresh SimpleCache caveat) it only limits per-process; add
+# a shared backend (e.g. Redis) only if multi-instance abuse is observed.
+_RATE_LIMIT_CALLS = 20
+_RATE_LIMIT_WINDOW_SECONDS = 60
+_recent_calls: dict[str, list[float]] = defaultdict(list)
+
+
+def _rate_limited(uid: str) -> bool:
+    now = time.monotonic()
+    calls = [t for t in _recent_calls[uid] if now - t < _RATE_LIMIT_WINDOW_SECONDS]
+    calls.append(now)
+    _recent_calls[uid] = calls
+    return len(calls) > _RATE_LIMIT_CALLS
+
 
 # ── Per-dashboard data providers ──────────────────────────────────────────────
 # Kept here (rather than inside each dashboard package) so the whole feature
@@ -53,15 +73,15 @@ _SAMPLE_ROWS = 15
 # ``(DataFrame, human-readable description)``.
 
 def _provider_timeline() -> tuple[pd.DataFrame, str]:
-    from data import df_weekly
+    from dashboards.timeline.data import load_weekly
 
-    return df_weekly, "Weekly reach & engagement by narrative and sentiment."
+    return load_weekly(), "Weekly reach & engagement by narrative and sentiment."
 
 
 def _provider_breakdown() -> tuple[pd.DataFrame, str]:
-    from data import df_weekly_narratives
+    from dashboards.breakdown.data import load_weekly_narratives
 
-    return df_weekly_narratives, "Weekly reach & engagement per narrative (no aggregate)."
+    return load_weekly_narratives(), "Weekly reach & engagement per narrative (no aggregate)."
 
 
 def _provider_bq_sample() -> tuple[pd.DataFrame, str]:
@@ -70,10 +90,30 @@ def _provider_bq_sample() -> tuple[pd.DataFrame, str]:
     return load_disinformation_timeline(), "Daily publication counts per disinformation-lifecycle stage."
 
 
+def _provider_amazon_2026() -> tuple[pd.DataFrame, str]:
+    # Aggregated keys only (never the raw amazon_2026_trad/amazon_2026_some
+    # tables) — narratives is the richest one row-per-entity table for the
+    # groupby/sum/max heuristics in _local_answer; overall totals are folded
+    # into the label since they're a single row, not a groupable frame.
+    from vizro.managers import data_manager
+
+    from dashboards.amazon_2026.data_common import NARRATIVES_KEY, OVERVIEW_KPI_KEY
+
+    narratives = data_manager[NARRATIVES_KEY].load()
+    kpis = data_manager[OVERVIEW_KPI_KEY].load()
+    totals = kpis.iloc[0].to_dict() if not kpis.empty else {}
+    label = (
+        "Amazon 2026 media coverage — one row per narrative (reach, sentiment mix, "
+        f"campaign/paid share). Overall totals across all narratives: {totals}."
+    )
+    return narratives, label
+
+
 _DATA_PROVIDERS: dict[str, Callable[[], tuple[pd.DataFrame, str]]] = {
     "timeline": _provider_timeline,
     "breakdown": _provider_breakdown,
     "bq_sample": _provider_bq_sample,
+    "amazon_2026": _provider_amazon_2026,
 }
 
 
@@ -191,6 +231,8 @@ def ask():
     user = current_user()
     if user is None:
         return jsonify(error="Not authenticated."), 401
+    if _rate_limited(user.uid):
+        return jsonify(error="Too many questions — please wait a moment and try again."), 429
 
     payload = request.get_json(silent=True) or {}
     slug = str(payload.get("slug", "")).strip()

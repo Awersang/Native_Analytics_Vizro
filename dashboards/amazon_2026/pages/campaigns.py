@@ -5,35 +5,35 @@ from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, no_update
-from vizro.models.types import capture
+from dash import Input, Output, State, callback, clientside_callback, no_update
 
 from dashboards.amazon_2026.charts_campaigns import (
     build_detail_content,
-    _data_bar_styles,
-    _header_divider_styles,
     _load_narrative_sentiment_data,
-    _table_columns,
-    _table_records,
     build_campaign_campaigns_section,
     build_campaign_details_section,
     build_campaign_timeline_panel,
 )
 from dashboards.amazon_2026.charts_publishers import _filter_records
-from dashboards.amazon_2026.charts_narratives import (
-    _top_publishers_data_bar_styles,
-    _top_publishers_table_rows,
-)
-from dashboards.amazon_2026.charts_shared import (
+from dashboards.amazon_2026.timeline_charts import (
     TIMELINE_BASE_HEIGHT_PX,
-    _detail_metric_values,
-    _normalize_sources,
-    _timeline_available_sources,
-    _timeline_figure,
     _timeline_with_narratives_figure,
+    normalize_sources,
+    timeline_available_sources,
+    timeline_figure,
+)
+from dashboards.amazon_2026.ui_components import (
+    capture,
+    data_bar_styles,
     detail_combined_weekly_figure,
+    detail_metric_values,
     detail_weekly_figure,
+    header_divider_styles,
     register_top_items_callback,
+    table_columns,
+    table_records,
+    top_publishers_data_bar_styles,
+    top_publishers_table_rows,
 )
 from dashboards.amazon_2026.data_common import (
     CAMPAIGN_NARRATIVES_KEY,
@@ -46,18 +46,20 @@ from dashboards.amazon_2026.pages._shared import (
     basic_metric_sink,
     build_detail_timeline_response,
     build_overview_table_response,
+    build_standard_page,
+    detail_content_scope,
     metric_parameter,
     select_active_table_value,
 )
 
 
 def build_campaigns_page(base_path: str) -> vm.Page:
-    return vm.Page(
-        id="amazon-2026-campaigns",
-        title=ref_label("Campaigns", "P7"),
-        path=f"{base_path}/campaigns",
+    return build_standard_page(
+        base_path=base_path,
+        slug="campaigns",
+        display_name="Campaigns",
+        ref_code="P7",
         description="Campaign performance and narrative interactions.",
-        layout=vm.Flex(direction="column", gap="20px"),
         components=[
             vm.Figure(
                 id="amazon-2026-campaign-timeline",
@@ -70,6 +72,11 @@ def build_campaigns_page(base_path: str) -> vm.Page:
             vm.Figure(
                 id="amazon-2026-campaign-details-section",
                 figure=campaign_details_panel(data_frame=CAMPAIGN_TIMELINE_KEY),
+            ),
+            # Content in its own figure — see topic_areas.py / detail_content_scope for why.
+            vm.Figure(
+                id="amazon-2026-campaign-details-content",
+                figure=campaign_content_panel(data_frame=CAMPAIGN_TIMELINE_KEY),
             ),
             vm.Figure(
                 id="amazon-2026-campaign-basic-metric-sink",
@@ -97,7 +104,14 @@ def campaign_campaigns_panel(data_frame: pd.DataFrame):
 
 @capture("figure")
 def campaign_details_panel(data_frame: pd.DataFrame):
-    return build_campaign_details_section(data_frame)
+    return build_campaign_details_section(data_frame, render_content=False)
+
+
+@capture("figure")
+def campaign_content_panel(data_frame: pd.DataFrame):
+    return detail_content_scope(
+        build_detail_content(None, "amazon-2026-campaign", "P7S2", empty_label="Select a campaign to see details.")
+    )
 
 
 @callback(
@@ -116,10 +130,10 @@ def _update_campaign_campaigns_table(
         records=records,
         source_filter=source_filter,
         filter_records=_filter_records,
-        table_records=_table_records,
-        table_columns=_table_columns,
-        header_styles=_header_divider_styles,
-        data_styles=_data_bar_styles,
+        table_records=table_records,
+        table_columns=table_columns,
+        header_styles=header_divider_styles,
+        data_styles=data_bar_styles,
         first_column_label="Campaign",
     )
 
@@ -142,18 +156,32 @@ def _select_campaign_from_campaigns_table(active_cell, viewport_rows, table_rows
     )
 
 
-@callback(
-    Output("amazon-2026-campaign-details-content", "children"),
-    Input("amazon-2026-campaign-detail-select", "value"),
-    State("amazon-2026-campaign-campaigns-data", "data"),
+clientside_callback(
+    "function(_children){ return Date.now(); }",
+    Output("amazon-2026-campaign-detail-nonce", "data"),
+    Input("amazon-2026-campaign-details-section", "children"),
+    prevent_initial_call=True,
 )
-def _update_campaign_details(selected_campaign: str | None, records: list[dict[str, Any]] | None):
-    return build_detail_content(
+
+
+@callback(
+    Output("amazon-2026-campaign-details-content", "children", allow_duplicate=True),
+    Input("amazon-2026-campaign-detail-select", "value"),
+    Input("amazon-2026-campaign-detail-nonce", "data"),
+    State("amazon-2026-campaign-campaigns-data", "data"),
+    prevent_initial_call=True,
+)
+def _update_campaign_details(
+    selected_campaign: str | None,
+    _nonce: Any,
+    records: list[dict[str, Any]] | None,
+):
+    return detail_content_scope(build_detail_content(
         selected_campaign,
         records=records or [],
         narratives_key=CAMPAIGN_NARRATIVES_KEY,
         show_top_journalists=False,
-    )
+    ))
 
 
 @callback(
@@ -191,11 +219,11 @@ def _update_campaign_sentiment_timeline(
     timeline_data: dict[str, Any] | None,
 ):
     payload = dict(timeline_data or {})
-    trad_metric, some_metric = _detail_metric_values(basic_metric or "publications")
+    trad_metric, some_metric = detail_metric_values(basic_metric or "publications")
     payload["trad_metric"] = trad_metric
     payload["some_metric"] = some_metric
-    available_sources = _timeline_available_sources(payload)
-    selected_sources = _normalize_sources(source_filter, available_sources)
+    available_sources = timeline_available_sources(payload)
+    selected_sources = normalize_sources(source_filter, available_sources)
     raw_values = source_filter if isinstance(source_filter, list) else [source_filter] if source_filter else []
     narratives_on = "Narratives" in raw_values and bool(payload.get("narrative_labels"))
     if narratives_on:
@@ -205,7 +233,7 @@ def _update_campaign_sentiment_timeline(
             payload["narrative_some_timeline"] = some_records
         fig, height_px = _timeline_with_narratives_figure(payload, selected_sources, id_field="campaign")
         return fig, {"height": f"{height_px}px"}, [*selected_sources, "Narratives"]
-    fig = _timeline_figure(payload, selected_sources, id_field="campaign")
+    fig = timeline_figure(payload, selected_sources, id_field="campaign")
     return fig, {"height": f"{TIMELINE_BASE_HEIGHT_PX}px"}, selected_sources
 
 
@@ -220,8 +248,8 @@ def _update_campaign_top_publishers_table(
     source: str | None,
     records: list[dict[str, Any]] | None,
 ):
-    table_rows = _top_publishers_table_rows(records or [], source)
-    return table_rows, _top_publishers_data_bar_styles(table_rows)
+    table_rows = top_publishers_table_rows(records or [], source)
+    return table_rows, top_publishers_data_bar_styles(table_rows)
 
 
 register_top_items_callback("amazon-2026-campaign", show_publication_col=True, show_author_col=True)

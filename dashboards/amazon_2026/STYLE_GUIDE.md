@@ -700,6 +700,32 @@ into the reference box (see Discover page controls table above). The
 
 Responsive breakpoints used: `720px`, `900px`, `1100px`.
 
+### Detail sections: split shell + content figure
+
+Every detail page (Narratives, Topic Areas, Publishers, Campaigns) splits its
+"Details" area into **two** sibling `vm.Figure`s instead of one:
+
+1. **Shell** — `#amazon-2026-<page>-details-section`: header + the item dropdown
+   (`...-detail-select`, `persistence="session"`) + a `...-detail-nonce` store.
+   Keeps the `.amazon-publishers-section` box styling.
+2. **Content** — `#amazon-2026-<page>-details-content`: its own `vm.Figure`
+   holding the selected-item detail. The populate callback writes **this figure's
+   `.children`** — the *same* prop `_on_page_load` writes — so there is a single
+   source of truth (no parent/child nested-store conflict that would let a stray
+   re-render collapse the content back to the placeholder).
+
+Rules when touching a detail section:
+- The content builder's output must be wrapped in `detail_content_scope(...)`
+  (`pages/_shared.py`) so the `.amazon-*-details`-scoped grid CSS still applies —
+  those classes are scoping hooks only and add no box styling.
+- The populate callback: `Output(...-details-content, "children", allow_duplicate=True)`,
+  `Input(...-detail-select, "value")`, `Input(...-detail-nonce, "data")`,
+  `prevent_initial_call=True`. A clientside callback bumps the nonce from the
+  **shell** section's `children` (which populate never writes → no loop) so the
+  selection re-populates after each `_on_page_load` rebuild.
+- `min-height: 600px` is reserved on the **content** figure id (not the shell) in
+  `native_analytics.css` — reserving it on the short shell leaves a 600px gap.
+
 ---
 
 ## 10. Narratives — Angles table (P2S4T1) column schema

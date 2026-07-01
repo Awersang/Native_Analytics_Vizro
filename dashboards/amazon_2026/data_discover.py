@@ -30,19 +30,21 @@ def load_discover_items() -> pd.DataFrame:
 
     trad_summary_expr = _coalesce_string_expr("t", trad_columns, TRAD_SUMMARY_CANDIDATES)
     trad_full_text_expr = _coalesce_string_expr(
-        "t", trad_columns, ["Main_Text", "Body", "Article_Text", "Content", "Full_Text", "Description", "_3P_Description", "Summary"]
+        "t", trad_columns, ["Main_Text", "Description", "_3P_Description"]
     )
     trad_topic_area_expr = _optional_string_expr("t", trad_columns, ["Topic_Area"])
-    trad_narrative_expr = _optional_string_expr("t", trad_columns, ["narrative_label", "dominant_narrative"])
-    trad_journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist", "Byline", "Author"])
+    trad_narrative_expr = _optional_string_expr("t", trad_columns, ["narrative_label"])
+    trad_journalist_expr = _optional_string_expr("t", trad_columns, ["Journalist"])
+    trad_record_id_expr = _optional_string_expr("t", trad_columns, ["Record_ID"])
 
     some_content_expr = _coalesce_string_expr("s", some_columns, SOME_CONTENT_CANDIDATES)
     some_topic_area_expr = _optional_string_expr("s", some_columns, ["Topic_Area"])
-    some_narrative_expr = _optional_string_expr("s", some_columns, ["narrative_label", "dominant_narrative"])
+    some_narrative_expr = _optional_string_expr("s", some_columns, ["narrative_label"])
     some_engagement_positive_expr = _optional_numeric_expr("s", some_columns, ["engagement_positive"])
     some_engagement_negative_expr = _optional_numeric_expr("s", some_columns, ["engagement_negative"])
     some_engagement_neutral_expr = _optional_numeric_expr("s", some_columns, ["engagement_neutral"])
-    some_followers_expr = _optional_numeric_expr("s", some_columns, ["Followers", "followers", "follower_count"])
+    some_followers_expr = _optional_numeric_expr("s", some_columns, ["author_followers_count"])
+    some_record_id_expr = _optional_string_expr("s", some_columns, ["Record_ID"])
 
     trad_uid_expr = _optional_string_expr("t", trad_columns, ["publisher_uid"])
     trad_display_expr = _optional_string_expr("t", trad_columns, ["publisher_display"])
@@ -73,6 +75,7 @@ def load_discover_items() -> pd.DataFrame:
         CAST(0 AS INT64) AS Followers,
         COALESCE({trad_journalist_expr}, '') AS Journalist,
         COALESCE({trad_full_text_expr}, '') AS Full_Text,
+        {trad_record_id_expr} AS Record_ID,
         t.umap_x AS umap_x,
         t.umap_y AS umap_y
       FROM {_table('amazon_2026_trad')} AS t
@@ -100,6 +103,7 @@ def load_discover_items() -> pd.DataFrame:
         CAST(COALESCE({some_followers_expr}, 0) AS INT64) AS Followers,
         '' AS Journalist,
         COALESCE({some_content_expr}, '') AS Full_Text,
+        {some_record_id_expr} AS Record_ID,
         s.umap_x AS umap_x,
         s.umap_y AS umap_y
       FROM {_table('amazon_2026_some')} AS s

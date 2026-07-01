@@ -13,6 +13,8 @@ __pycache__/
 dist/
 build/
 *.egg
+.pytest_cache/
+.mypy_cache/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -21,31 +23,9 @@ build/
 # Environment variables
 .env
 .env.*
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Vizro / Dash
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-
-# Virtual envs
-.venv/
-venv/
+!.env.example
 
 # Local config & secrets — NEVER commit
-.env
-*.env
-!.env.example
 service-account*.json
 firebase-*.json
 *-credentials.json
@@ -53,7 +33,16 @@ firebase-*.json
 # Vizro / app cache
 assets/cache/
 
-# OS / editor
+# Ad-hoc run/debug logs and local scratch output — never commit
+*.log
+temp/
+test-results/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
 Thumbs.db
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import vizro.models as vm
 
+from config import settings
 from dashboards._base import BuildContext
 from dashboards.amazon_2026.dev_ids import set_dev_mode
 from dashboards.amazon_2026.pages.archive import build_archive_page
@@ -33,7 +34,9 @@ def build_all_pages(
     _ctx: BuildContext,
     base_path: str,
 ) -> list[vm.Page]:
-    set_dev_mode(True)
+    # "P1S2G1"-style reference codes are a development aid (dev_ids.py), kept
+    # off by default; flip to settings.is_dev to bring them back during dev work.
+    set_dev_mode(False)
     return [
         build_overview_page(base_path),
         build_topic_areas_page(base_path),

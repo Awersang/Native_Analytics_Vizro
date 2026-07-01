@@ -6,19 +6,15 @@ from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, no_update
-from vizro.models.types import capture
+from dash import Input, Output, State, callback, clientside_callback, no_update
 
 from dashboards.amazon_2026.charts_publishers import (
-    _data_bar_styles,
     _details_content,
     _filter_records,
-    _header_divider_styles,
+    _records_from_frame,
     _kpi_cards,
     _narrative_available_sources,
     _narratives_table_rows,
-    _table_columns,
-    _table_records,
     _topic_area_available_sources,
     _topic_area_records_from_frame,
     _topic_area_treemap_figure,
@@ -26,18 +22,26 @@ from dashboards.amazon_2026.charts_publishers import (
     build_publishers_details_section,
     build_publishers_overview_section,
 )
-from dashboards.amazon_2026.charts_shared import (
-    _detail_metric_values,
+from dashboards.amazon_2026.timeline_charts import (
+    _normalized_narrative_sources,
+    normalize_sources,
+    timeline_available_sources,
+    timeline_figure,
+)
+from dashboards.amazon_2026.ui_components import (
     _narrative_data_bar_styles,
     _narrative_header_divider_styles,
     _narratives_table_columns,
-    _normalize_sources,
-    _normalized_narrative_sources,
-    _timeline_available_sources,
-    _timeline_figure,
-    _timeline_records_from_frame,
+    capture,
+    data_bar_styles,
+    data_load_failed,
+    detail_metric_values,
+    header_divider_styles,
     register_top_items_callback,
     safe_load,
+    table_columns,
+    table_records,
+    timeline_records_from_frame,
 )
 from dashboards.amazon_2026.data_common import (
     PARAM_SINK_KEY,
@@ -48,10 +52,11 @@ from dashboards.amazon_2026.data_common import (
     PUBLISHER_TRAD_TIMELINE_KEY,
     PUBLISHERS_KEY,
 )
-from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
     basic_metric_sink,
     build_overview_table_response,
+    build_standard_page,
+    detail_content_scope,
     metric_parameter,
     select_active_table_value,
 )
@@ -60,10 +65,11 @@ register_top_items_callback("amazon-2026-publisher")
 
 
 def build_publishers_page(base_path: str) -> vm.Page:
-    return vm.Page(
-        id="amazon-2026-publishers",
-        title=ref_label("Publishers", "P3"),
-        path=f"{base_path}/publishers",
+    return build_standard_page(
+        base_path=base_path,
+        slug="publishers",
+        display_name="Publishers",
+        ref_code="P3",
         description="Publisher-level footprint across traditional media and social media.",
         components=[
             vm.Figure(
@@ -74,12 +80,16 @@ def build_publishers_page(base_path: str) -> vm.Page:
                 id="amazon-2026-publishers-details-section",
                 figure=publishers_details_panel(data_frame=PUBLISHERS_KEY),
             ),
+            # Content in its own figure — see topic_areas.py / detail_content_scope for why.
+            vm.Figure(
+                id="amazon-2026-publisher-details-content",
+                figure=publishers_content_panel(data_frame=PUBLISHERS_KEY),
+            ),
             vm.Figure(
                 id="amazon-2026-publisher-basic-metric-sink",
                 figure=basic_metric_sink(data_frame=PARAM_SINK_KEY),
             ),
         ],
-        layout=vm.Flex(direction="column", gap="20px"),
         controls=[
             metric_parameter(
                 ["amazon-2026-publisher-basic-metric-sink.basic_metric"],
@@ -97,6 +107,12 @@ def publishers_overview_panel(data_frame: pd.DataFrame):
 @capture("figure")
 def publishers_details_panel(data_frame: pd.DataFrame):
     return build_publishers_details_section(data_frame)
+
+
+@capture("figure")
+def publishers_content_panel(data_frame: pd.DataFrame):
+    # Renders the placeholder (no author selected); the populate callback fills it.
+    return detail_content_scope(_details_content(_records_from_frame(data_frame), None))
 
 
 @callback(
@@ -120,10 +136,10 @@ def _update_publishers_table(
         records=records,
         source_filter=source_filter,
         filter_records=_filter_records,
-        table_records=_table_records,
-        table_columns=_table_columns,
-        header_styles=_header_divider_styles,
-        data_styles=_data_bar_styles,
+        table_records=table_records,
+        table_columns=table_columns,
+        header_styles=header_divider_styles,
+        data_styles=data_bar_styles,
         tml_filter=tml_filter,
         media_filter=media_filter,
         extra_output=lambda filtered, _source: _kpi_cards(filtered),
@@ -149,23 +165,35 @@ def _select_author_from_table(active_cell, viewport_rows, table_rows):
     )
 
 
+clientside_callback(
+    "function(_children){ return Date.now(); }",
+    Output("amazon-2026-publisher-detail-nonce", "data"),
+    Input("amazon-2026-publishers-details-section", "children"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
-    Output("amazon-2026-publisher-details-content", "children"),
+    Output("amazon-2026-publisher-details-content", "children", allow_duplicate=True),
     Input("amazon-2026-publisher-detail-select", "value"),
     Input("amazon-2026-publisher-basic-metric", "value"),
+    Input("amazon-2026-publisher-detail-nonce", "data"),
     State("amazon-2026-publishers-data", "data"),
+    prevent_initial_call=True,
 )
 def _update_author_details(
     selected_uid: str | None,
     basic_metric: str | None,
+    _nonce: Any,
     records: list[dict[str, Any]] | None,
 ):
-    trad_metric, some_metric = _detail_metric_values(basic_metric or "publications")
+    trad_metric, some_metric = detail_metric_values(basic_metric or "publications")
     trad_timeline = []
     some_timeline = []
     topic_areas = []
     some_topic_areas = []
     top_publications = []
+    timeline_load_failed = False
     if selected_uid:
         detail_keys = [
             PUBLISHER_TRAD_TIMELINE_KEY,
@@ -182,12 +210,13 @@ def _update_author_details(
                 return df[df["publisher_uid"] == selected_uid]
 
             loaded = list(executor.map(_load_uid_rows, detail_keys))
-        trad_timeline = _timeline_records_from_frame(loaded[0])
-        some_timeline = _timeline_records_from_frame(loaded[1])
+        timeline_load_failed = data_load_failed(loaded[0], loaded[1])
+        trad_timeline = timeline_records_from_frame(loaded[0])
+        some_timeline = timeline_records_from_frame(loaded[1])
         topic_areas = _topic_area_records_from_frame(loaded[2])
         some_topic_areas = _topic_area_records_from_frame(loaded[3], value_column="post_count")
         top_publications = _top_publications_from_frame(loaded[4])
-    return _details_content(
+    return detail_content_scope(_details_content(
         records or [],
         selected_uid,
         trad_metric,
@@ -197,7 +226,8 @@ def _update_author_details(
         topic_areas,
         some_topic_areas,
         top_publications,
-    )
+        timeline_load_failed,
+    ))
 
 
 @callback(
@@ -238,9 +268,9 @@ def _update_publisher_timeline_figure(
     timeline_data: dict[str, Any] | None,
 ):
     payload = timeline_data or {}
-    available_sources = _timeline_available_sources(payload)
-    selected_sources = _normalize_sources(source_filter, available_sources)
-    return _timeline_figure(payload, selected_sources), selected_sources
+    available_sources = timeline_available_sources(payload)
+    selected_sources = normalize_sources(source_filter, available_sources)
+    return timeline_figure(payload, selected_sources), selected_sources
 
 
 @callback(
@@ -255,5 +285,5 @@ def _update_publisher_topic_area_treemap(
 ):
     payload = topic_area_data or {}
     available_sources = _topic_area_available_sources(payload)
-    selected_sources = _normalize_sources(source_filter, available_sources)
+    selected_sources = normalize_sources(source_filter, available_sources)
     return _topic_area_treemap_figure(payload, selected_sources), selected_sources

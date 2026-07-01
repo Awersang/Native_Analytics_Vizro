@@ -5,10 +5,10 @@ import pytest
 
 
 def _load_share_helpers():
-    helper_names = {"_coerce_float", "_num", "_share_fraction"}
+    helper_names = {"_coerce_float", "num", "_share_fraction"}
     helper_defs = []
     for path in [
-        Path("dashboards/amazon_2026/charts_shared.py"),
+        Path("dashboards/amazon_2026/ui_components.py"),
         Path("dashboards/amazon_2026/charts_publishers.py"),
     ]:
         source = path.read_text(encoding="utf-8")
@@ -24,7 +24,7 @@ def _load_share_helpers():
 
 
 def _load_timeline_helpers():
-    source_path = Path("dashboards/amazon_2026/charts_shared.py")
+    source_path = Path("dashboards/amazon_2026/timeline_charts.py")
     source = source_path.read_text(encoding="utf-8")
     module = ast.parse(source)
     helper_names = {"_timeline_axis_title", "_timeline_chart_title"}
@@ -43,14 +43,12 @@ def _load_topic_area_helper():
         "_coerce_float",
         "_as_list",
         "_topic_area_counts",
-        "_selected_topic_area_sources",
-        "_topic_area_available_sources",
-        "_normalized_topic_area_sources",
         "_topic_area_rows",
     }
     helper_defs = []
     for path in [
-        Path("dashboards/amazon_2026/charts_shared.py"),
+        Path("dashboards/amazon_2026/ui_components.py"),
+        Path("dashboards/amazon_2026/timeline_charts.py"),
         Path("dashboards/amazon_2026/charts_publishers.py"),
     ]:
         source = path.read_text(encoding="utf-8")
@@ -95,17 +93,22 @@ def test_reach_timeline_uses_reach_and_engagement_labels() -> None:
     assert timeline_axis_title("SoMe", "reach", "engagement") == "SoMe Engagement"
 
 
-def test_topic_area_counts_only_include_selected_publisher() -> None:
+# NOTE: publisher_uid filtering happens once, upstream, in pages/publishers.py's
+# `_load_uid_rows` (a DataFrame filter before these helpers ever see the rows) —
+# _topic_area_counts/_topic_area_rows deliberately don't re-filter by publisher.
+# These tests pass already-scoped-to-one-publisher rows, matching that contract.
+
+
+def test_topic_area_counts_sums_publication_count_by_topic_area() -> None:
     topic_area_counts, _ = _load_topic_area_helper()
     rows = [
-        {"publisher_uid": "p1", "topic_area": "Prime", "publication_count": 3},
-        {"publisher_uid": "p2", "topic_area": "Prime", "publication_count": 50},
-        {"publisher_uid": "p1", "topic_area": "Marketplace", "publication_count": 2},
-        {"publisher_uid": "p1", "topic_area": "", "publication_count": 1},
-        {"publisher_uid": "p1", "topic_area": "Prime", "publication_count": 4},
+        {"topic_area": "Prime", "publication_count": 3},
+        {"topic_area": "Marketplace", "publication_count": 2},
+        {"topic_area": "", "publication_count": 1},
+        {"topic_area": "Prime", "publication_count": 4},
     ]
 
-    assert topic_area_counts(rows, "p1") == {
+    assert topic_area_counts(rows) == {
         "Prime": 7.0,
         "Marketplace": 2.0,
         "Unknown": 1.0,
@@ -115,31 +118,27 @@ def test_topic_area_counts_only_include_selected_publisher() -> None:
 def test_topic_area_counts_support_post_count_values() -> None:
     topic_area_counts, _ = _load_topic_area_helper()
     rows = [
-        {"publisher_uid": "p1", "topic_area": "Prime", "post_count": 5},
-        {"publisher_uid": "p1", "topic_area": "Deals", "post_count": 3},
-        {"publisher_uid": "p2", "topic_area": "Prime", "post_count": 40},
-        {"publisher_uid": "p1", "topic_area": "Prime", "post_count": 2},
+        {"topic_area": "Prime", "post_count": 5},
+        {"topic_area": "Deals", "post_count": 3},
+        {"topic_area": "Prime", "post_count": 2},
     ]
 
-    assert topic_area_counts(rows, "p1", value_key="post_count") == {
+    assert topic_area_counts(rows, value_key="post_count") == {
         "Prime": 7.0,
         "Deals": 3.0,
     }
 
 
-def test_topic_area_rows_combine_trad_and_some_for_selected_publisher() -> None:
+def test_topic_area_rows_combine_trad_and_some_sources() -> None:
     _, topic_area_rows = _load_topic_area_helper()
     payload = {
-        "publisher_uid": "p1",
         "trad_topic_areas": [
-            {"publisher_uid": "p1", "topic_area": "Prime", "publication_count": 4},
-            {"publisher_uid": "p1", "topic_area": "Marketplace", "publication_count": 2},
-            {"publisher_uid": "p2", "topic_area": "Prime", "publication_count": 50},
+            {"topic_area": "Prime", "publication_count": 4},
+            {"topic_area": "Marketplace", "publication_count": 2},
         ],
         "some_topic_areas": [
-            {"publisher_uid": "p1", "topic_area": "Prime", "post_count": 3},
-            {"publisher_uid": "p1", "topic_area": "Deals", "post_count": 5},
-            {"publisher_uid": "p2", "topic_area": "Deals", "post_count": 40},
+            {"topic_area": "Prime", "post_count": 3},
+            {"topic_area": "Deals", "post_count": 5},
         ],
     }
 

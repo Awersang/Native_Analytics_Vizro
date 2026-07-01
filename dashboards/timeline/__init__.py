@@ -1,16 +1,15 @@
 """
 Dashboard plugin: Reach & Engagement Timeline.
 
-Refactored from the original ``pages/timeline.py``. Part of the Amazon media
-monitoring product; shares its synthetic dataset with the breakdown dashboard
-via the top-level ``data`` and ``charts`` modules.
+Part of the same demo media-monitoring product as the ``breakdown``
+dashboard; each keeps its own self-contained ``data.py``/``charts.py``.
 """
 
 from __future__ import annotations
 
 import vizro.models as vm
+from vizro.managers import data_manager
 
-from charts import campaign_gantt, reach_engagement_timeline
 from dashboards._base import (
     BuildContext,
     DashboardManifest,
@@ -18,7 +17,8 @@ from dashboards._base import (
     export_button,
     freshness_note,
 )
-from data import df_campaigns, df_weekly
+from dashboards.timeline.charts import campaign_gantt, reach_engagement_timeline
+from dashboards.timeline.data import CAMPAIGNS_KEY, WEEKLY_KEY, load_campaigns, load_weekly
 
 MANIFEST = DashboardManifest(
     slug="timeline",
@@ -27,25 +27,43 @@ MANIFEST = DashboardManifest(
     icon="timeline",
     category="Media Intelligence",
     data_requirements=["synthetic:media_weekly"],
+    internal=True,
 )
+
+PAGE_ICONS = {
+    "timeline": "timeline",
+    "timeline-campaigns": "campaign",
+}
+
+
+def _register_data_sources() -> None:
+    # Registered at both import and build time, since Vizro clears the shared
+    # data manager during dev hot reload.
+    data_manager[WEEKLY_KEY] = load_weekly
+    data_manager[CAMPAIGNS_KEY] = load_campaigns
+
+
+_register_data_sources()
 
 
 def data_health() -> list[DataSourceHealth]:
-    latest = df_weekly["week_start"].max()
+    df = load_weekly()
+    latest = df["week_start"].max()
     return [
         DataSourceHealth(
             name="synthetic:media_weekly",
             status="ok",
             detail="Synthetic dataset (always available).",
-            rows=len(df_weekly),
+            rows=len(df),
             as_of=str(getattr(latest, "date", lambda: latest)()),
         )
     ]
 
 
 def build_pages(ctx: BuildContext) -> list[vm.Page]:
-    all_campaigns = df_campaigns["campaign_label"].tolist()
-    latest = df_weekly["week_start"].max()
+    _register_data_sources()
+    all_campaigns = load_campaigns()["campaign_label"].tolist()
+    latest = load_weekly()["week_start"].max()
     freshness = freshness_note(latest)
 
     reach_page = vm.Page(
@@ -60,7 +78,7 @@ def build_pages(ctx: BuildContext) -> list[vm.Page]:
             vm.Graph(
                 id="reach_eng_chart",
                 title="Weekly Reach (solid) & Engagement (dotted) by Sentiment",
-                figure=reach_engagement_timeline(data_frame=df_weekly),
+                figure=reach_engagement_timeline(data_frame=WEEKLY_KEY),
             ),
             export_button(),
         ],
@@ -99,7 +117,7 @@ def build_pages(ctx: BuildContext) -> list[vm.Page]:
             vm.Graph(
                 id="campaign_chart",
                 title="Campaign Timeline  ·  bar colour = total reach (blue-low → yellow-high)",
-                figure=campaign_gantt(data_frame=df_campaigns),
+                figure=campaign_gantt(data_frame=CAMPAIGNS_KEY),
             ),
             export_button(),
         ],

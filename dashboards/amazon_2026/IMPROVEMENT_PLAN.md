@@ -1,1519 +1,1754 @@
-# Amazon 2026 Dashboard — Deep Architecture Review & Improvement Plan
+# Native Analytics / Amazon 2026 Architecture Improvement Plan
 
-> Status: **COMPLETE.** All 13 sections below are filled in. Every concrete claim (file paths, line
-> numbers, counts) was verified by direct reading or `grep`/`wc` against this repository, not
-> inferred; see §13 for the prioritized action list this whole document builds toward.
+![alt text](image.png)
+
+> Living architecture document. Verified against the working tree on 2026-06-25 by direct reads,
+> `rg`, and a full `pytest` run. Anchors are **file paths, module/function names, component ids,
+> config keys, and test names** — not line numbers, which drift. A short "Audit notes" appendix
+> records the few line references used as evidence at time of writing; treat those as volatile.
 >
-> **Update (2026-06-24): a first implementation pass has landed** (uncommitted working-tree
-> changes, not yet merged). Verified against current code, not assumed from this document's
-> original claims — see §13 for which specific numbered items are now done/partial/still open.
-> Done: Tier 0 #1 (print debug removed), #4 (preload timing logs); Tier 3 #13 (preload
-> consolidation), #16 partial (campaign-column candidate list consolidated; sentiment-case
-> adoption mostly but not fully consolidated; publisher-identity COALESCE still duplicated); Tier 4
-> #20 started (a `tests/` directory now exists). **Still open, including both items this document
-> calls the single highest-payoff fixes in the whole review: Tier 1 #6 (cache TTL) and #7
-> (min-instances=1).** Those two are picked out as the next move — see the end of §13.
-
-Scope: `dashboards/amazon_2026/**` (the dashboard itself) plus the shared platform code it
-depends on (`app.py`, `config.py`, `dashboards/_base.py`, `data_sources/bq.py`, `tenancy/*`,
-`auth/*`, `extensions/*`) where that platform code directly shapes this dashboard's
-efficiency, speed, scalability or readability.
-
-## Table of contents
-
-1. [Executive summary](#1-executive-summary)
-2. [Architecture overview](#2-architecture-overview)
-3. [Data layer](#3-data-layer)
-4. [Chart / rendering layer](#4-chart--rendering-layer)
-5. [Pages & callback layer](#5-pages--callback-layer)
-6. [Extensions & multi-tenancy](#6-extensions--multi-tenancy)
-7. [Frontend assets (CSS/JS)](#7-frontend-assets-cssjs)
-8. [Performance & speed](#8-performance--speed)
-9. [Scalability](#9-scalability)
-10. [Readability & maintainability](#10-readability--maintainability)
-11. [Testing, observability, resilience](#11-testing-observability-resilience)
-12. [Security](#12-security)
-13. [Prioritized roadmap](#13-prioritized-roadmap)
-14. [Target architecture: from one dashboard to a multi-client platform](#14-target-architecture-from-one-dashboard-to-a-multi-client-platform)
-
----
-
-## 1. Executive summary
-
-**The craftsmanship in this codebase is real.** The Plotly re-theming engineering
-(STYLE_GUIDE.md §6's five documented "gotchas"), the dynamic timeline-height/flag-placement pixel
-math (§4.1), the schema-flexible SQL-fragment builders that absorb years of upstream BigQuery
-column renames (§3.2), the no-argument cache-friendly data-loading contract (§3.1), the
-introspection-driven saved-views extension (§6.4), and a 740-line style guide that documents *why*
-not just *what* — these are not beginner mistakes papered over with good intentions. This is a
-22,000-line, single-dashboard product built by people who care about getting hard details right.
-The findings below are about what stands between "very good" and "the best in the world," not
-about fixing something broken.
-
-**Three findings matter more than the rest combined, because they compound:**
-
-1. **Cold starts are the dashboard's biggest unaddressed latency/reliability risk** (§8.2). The
-   combination of `min-instances=0`, two gunicorn workers per container, and five startup
-   preload fan-outs firing ~40 concurrent BigQuery queries each — all racing for one vCPU and
-   1GB of RAM — means the most resource-contended moment in this app's entire lifecycle is also
-   the moment a real user is most likely waiting on it. The fix is one line (`--min-instances=1`).
-2. **The cache refresh interval is tuned for data that updates every 10 minutes — it updates at
-   most once a day** (§9.1). `CACHE_DEFAULT_TIMEOUT=600` means the dashboard's ~40-50 datasets get
-   re-fetched from BigQuery up to 144 times a day for data that, in nearly every one of those
-   cycles, hasn't changed since the last fetch. This is the single highest-value, lowest-effort
-   fix in this whole review — raising it to 1 hour (agreed with the team) cuts that to 24/day for
-   zero freshness cost, and it's a one-constant change, not a refactor. (An earlier pass at this
-   finding also flagged that `SimpleCache` is process-local, meaning up to ~8 independent copies
-   of this cache can exist across workers/instances — that's real, but minor and **not** an
-   availability/concurrency problem: multiple users are served correctly regardless. It mainly
-   means the redundant-cost math above gets multiplied by however many processes are alive, which
-   the TTL fix already shrinks by 10x on its own.)
-3. **The dashboard is single-tenant in practice, despite running on a multi-tenant platform**
-   (§6.2, §9.2, §12.2). `tenancy/access.py` has a real, working `resolve_client_dataset()`
-   mechanism; `amazon_2026`'s data layer never calls it, and hardcodes one project/dataset
-   instead. Invisible today with one client; a real client-data-isolation bug the day a second
-   client is onboarded onto this dashboard design. This is the one item on the whole list that
-   should be treated as a scheduled precondition, not a backlog entry.
-
-**The rest of the findings are about durability, not urgency**: zero automated tests across 51
-hand-built SQL strings and ~52 callbacks (§11.1) means every fix — including every item in this
-document — currently has to be hand-verified, every time; a meaningful amount of duplicated logic
-(publisher-identity resolution, sentiment-donut figures, table builders, the five preload
-functions, page-builder scaffolding — consolidated in §10.2) that costs nothing today but
-compounds maintenance cost as the dashboard keeps growing; and three separate, individually
-well-reasoned workarounds for Vizro/Dash/Plotly internals (§7.1) that together mean a meaningful
-slice of this dashboard's robustness depends on framework behavior that isn't part of any public
-contract, with no automated test to catch a silent break on the next version bump.
-
-**None of this requires a rewrite.** Every recommendation in this document is additive or
-subtractive (delete duplication, add a cache backend, add tests, wire an existing mechanism
-through) — nothing proposes replacing an architectural decision that's currently working. See
-§13 for the full prioritized punch list; the short version is: fix the Cloud Run config (§13 #6-7,
-an afternoon, highest payoff in this document), schedule the multi-tenancy wiring deliberately
-(§13 #12) before it's forced by a sales conversation, and start a `tests/` directory with the
-cheapest, highest-confidence items first (§13 #20) so every subsequent change to this codebase —
-by anyone, including future work driven by this very document — gets safer over time instead of
-relying on manual verification forever.
-
----
-
-## 2. Architecture overview
-
-### 2.1 What this actually is
-
-This is **not** "a dashboard." It is a multi-tenant analytics **platform** (Flask + Vizro/Dash)
-that currently hosts one very large, very mature dashboard (`amazon_2026`) alongside several
-smaller/example ones (`bq_sample`, `breakdown`, `timeline`). `amazon_2026` is ~22,000 lines of
-Python across 25 modules, plus ~3,000 lines of hand-written CSS/JS. That scale matters: this
-is no longer "a Vizro app with some custom charts," it's a bespoke BI product that happens to
-be hosted inside Vizro's page/callback model. Several of the structural issues below come
-directly from that tension — Vizro is a thin layer on top, and most of the real engineering
-(query building, theming, state, table styling, custom JS interactivity) has been built
-*around* it rather than *with* it.
-
-Key structural facts, confirmed by reading `app.py`, `config.py`, `dashboards/_base.py`,
-`dashboards/__init__.py`:
-
-- **One process-global Vizro instance.** `app.py`'s own docstring states the constraint:
-  "multiple Vizro apps cannot coexist in a single process — the Dash page registry is
-  process-global." So every dashboard (every tenant-facing product) is a plugin contributing
-  pages into *one* `vm.Dashboard`. This is a hard ceiling baked into Vizro/Dash itself, not a
-  choice this codebase made — but it means dashboard isolation (crashes, memory leaks, slow
-  callbacks) is **not process-level**, it's all sharing one Python process, one event loop's
-  worth of Flask worker threads, one `GLOBAL_CALLBACK_LIST`.
-- **A monkeypatch in `app.py` (lines 43-70) makes `dash._callback.insert_callback`
-  idempotent**, working around a real Vizro 0.1.56/Dash duplicate-callback-registration bug
-  (Vizro calls `page.build()` once at dashboard build time and Dash calls it again on first
-  lazy navigation). This is a *correct* and well-documented fix, but it's patching a private
-  Dash internal (`dash._callback.insert_callback`) — any Dash/Vizro version bump is a silent
-  breakage risk with no test coverage forcing the issue to surface before production.
-- **Plugin auto-discovery** (`dashboards/__init__.py`) scans `dashboards/<slug>/` packages for
-  a `MANIFEST` + `build_pages`. Clean, low-ceremony extension point — genuinely good design.
-- **Access control is a single Flask `before_request` gate** (`app.py::_install_access_gate`)
-  keyed off the request path (`/app/d/<slug>/...`). It calls `tenancy.access.can_access(user,
-  slug)` per request. Simple and centralized, which is good — but it means *dashboard-level*
-  access is enforced, while anything *inside* a dashboard (e.g., should every user of
-  `amazon_2026` see every campaign? every publisher?) has no per-row/per-entity authorization
-  hook at all. For a single-client dashboard today that's fine; the moment this dashboard is
-  resold to a second client sharing the same BQ dataset, there is no enforcement layer between
-  "has access to amazon_2026" and "can query any row in `amazon_2026_trad`".
-- **Caching is a single global `flask_caching.SimpleCache`**, 10-minute TTL, attached directly
-  to Vizro's `data_manager.cache`. `SimpleCache` is an in-memory dict **scoped to one worker
-  process** — see [§9 Scalability](#9-scalability) for why this is probably the single highest-
-  leverage infrastructure change available.
-- **Startup does 5 separate "preload" fan-outs** (`_start_overview_preload`,
-  `_start_topic_area_preload`, `_start_narratives_preload`, `_start_campaigns_preload`,
-  `_start_publishers_preload` in `dashboards/amazon_2026/__init__.py`), each spinning up its
-  own `ThreadPoolExecutor` in its own daemon `threading.Thread`, each with near-identical
-  boilerplate (12 lines × 5 = 60 lines that are 90% copy-paste). Functionally this is a smart,
-  effective idea (warm the cache before the first user interaction instead of paying for it on
-  click) — see [§4](#4-chart--rendering-layer)/[§8](#8-performance--speed) for the
-  duplication/race-condition follow-up.
-
-### 2.2 Module map (as built)
-
-```
-dashboards/amazon_2026/
-  __init__.py            manifest, data_manager registration (40+ keys), 5x startup preload fan-outs
-  data_common.py         BQ table refs, schema-introspection cache, shared SQL-fragment builders
-  data_overview.py / data_narratives.py / data_publishers.py / data_topic_areas.py /
-  data_campaigns.py / data_discover.py / data_angles.py / data_archive.py
-                          one module per page, each: BQ SQL strings + safe_query() + light pandas reshaping
-  charts_shared.py        2,119 lines — color palettes, na_panel(), KPI cards, table style constants,
-                           AND ~700 lines of nontrivial chart-geometry code (timeline figures, PCHIP
-                           smoothing, flag-annotation pixel math) that arguably isn't "shared" at all
-  charts_overview.py (renamed from charts.py) / charts_narratives.py / charts_publishers.py /
-  charts_campaigns.py / charts_topic_areas.py / charts_discover.py / charts_archive.py
-                          one module per page: figure builders + dash_table builders + (in several
-                          cases) the page's @callback definitions live here, not in pages/*.py
-  dev_ids.py               dev-mode "P1S2G1"-style reference-code overlay (clever, cheap, low-risk)
-  fixtures.py              2,194 lines of hand-written fake DataFrames, one per data_manager key
-  pages/
-    __init__.py            registers 7 pages in build order (Overview, Topic Areas, Narratives,
-                            Campaigns, Publishers, Discover, Archive)
-    overview.py / narratives.py / publishers.py / topic_areas.py / campaigns.py / discover.py / archive.py
-    _shared.py              shared page-layout helpers
-```
-
-Total: ~22k lines of Python + ~3k lines of CSS/JS for **one** dashboard. For comparison, the
-platform-level code that hosts *all* dashboards (`app.py`, `config.py`, `dashboards/_base.py`,
-`tenancy/*`, `auth/*`) is under 1,000 lines combined. The ratio (22:1) is the clearest single
-signal in this codebase: almost all of the engineering investment and almost all of the future
-risk is concentrated in `amazon_2026`, not in the platform shell.
-
-### 2.3 Naming debt worth flagging early
-
-`charts_shared.py` defines `THEME_TEXT = "var(--amazon-publishers-text)"` etc. — every shared
-theme token is named `--amazon-publishers-*` even though it's used dashboard-wide (Overview,
-Discover, Topic Areas, Campaigns — not just Publishers). Per `STYLE_GUIDE.md` §1 this is a
-deliberate, documented alias layer on top of the real `--na-*` tokens, so it's not a bug — but
-it means every new contributor's first instinct ("why is the Overview page importing
-`amazon-publishers` CSS vars?") is wrong-footed by the name. This is a cheap, mechanical rename
-(`--amazon-publishers-*` → `--na-*` directly, dropping the alias indirection) whenever there's
-a slow week — see [§10](#10-readability--maintainability).
-
----
-
-## 3. Data layer
-
-`data_common.py` + 8 per-page `data_*.py` modules (`data_overview.py`, `data_narratives.py`,
-`data_publishers.py`, `data_topic_areas.py`, `data_campaigns.py`, `data_discover.py`,
-`data_angles.py`, `data_archive.py`) — 51 `load_*` functions total, ~2,500 lines of raw SQL
-strings built in Python.
-
-### 3.1 The good part: the no-argument cache contract
-
-Every single `load_*` function takes **zero arguments** and returns the **entire** table
-(aggregated, never scoped to "the narrative/campaign/publisher the user clicked"). Filtering
-to a specific entity happens afterwards, in pandas, inside the chart/callback layer. This is
-the single best architectural decision in the data layer: because Vizro's `data_manager` keys
-its cache by the callable identity (not by call arguments), a parameterized
-`load_narrative(narrative_id)` would create a fresh cache entry — and a fresh BigQuery query —
-for every distinct narrative a user has ever clicked. The no-arg/load-everything/filter-in-pandas
-pattern means BigQuery is hit **once per dataset per cache TTL window**, full stop, regardless of
-how many users click through how many narratives. Combined with the 10-minute
-`flask_caching.SimpleCache` TTL and the startup preload fan-outs (§2.1), this is what makes
-drill-down navigation feel instant once warm. Keep this pattern — it is correct and it is the
-reason the dashboard feels fast at all today.
-
-### 3.2 Schema-drift defense has metastasized into the query layer
-
-`_table_column_map()` (`data_common.py:101-111`) introspects `INFORMATION_SCHEMA.COLUMNS` per
-table (lru_cached, pre-warmed via `prime_schema_cache()` to dodge a thundering-herd of concurrent
-schema queries — a genuinely careful touch). It feeds four "optional column" helpers
-(`_optional_string_expr`, `_optional_numeric_expr`, `_optional_json_string_expr`,
-`_coalesce_string_expr`) that try a *list of candidate column names* and emit SQL for whichever
-one actually exists.
-
-This pattern is called **61 times** across the data layer (e.g. `data_narratives.py`: 18,
-`data_topic_areas.py`: 17, `data_campaigns.py`: 11, `data_publishers.py`: 7). Concrete example,
-`data_publishers.py:29-41` — the "where is this publisher's profile URL" lookup tries **seven**
-candidate column names:
-
-```python
-publisher_platforms_expr = _optional_json_string_expr(
-    "p", publishers_columns,
-    ["platforms_url", "author_profile_urls", "author_profile_url",
-     "publisher_profile_urls", "publisher_profile_url", "profile_urls", "profile_url"],
-)
-```
-
-That is not defensive coding against a hypothetical — it is documentation, in code, that the
-upstream BigQuery schema has been renamed at least seven times across the life of this dataset
-(or across clients/pipeline versions) and nobody ever went back and migrated the historical
-data to a single name. **This is the single highest-leverage simplification available in the
-entire codebase**: collapsing those 61 call sites' worth of candidate-name guessing into one
-BigQuery `VIEW` per source table (a normalization layer that exposes one stable column name
-per concept, built once in SQL) would let every `load_*` function shrink by 30-60%, delete the
-schema-introspection machinery's runtime cost (a real `INFORMATION_SCHEMA` query, however
-cached) entirely, and — most importantly — turn "the schema changed again" from a silent
-multi-file hunt into a one-place fix. Doing this is platform/data-engineering work, not a quick
-Python refactor, which is presumably why it hasn't happened yet — but it should be the long-term
-target, not the current 61-call-site workaround.
-
-### 3.3 Publisher/campaign/narrative identity resolution is re-derived per query, not shared
-
-Resolving "which canonical publisher does this row belong to" is genuinely hard given the schema
-drift above, so the codebase falls back to a 3-tier `COALESCE`: explicit `publisher_uid` column →
-join against `PUBLISHER_SEED_CTE` (`data_common.py:92-98`) on lowercased display name → last
-resort `TO_HEX(MD5(LOWER(name)))`. That fallback chain is reasonable *once*. It is **re-typed
-inline at 8 separate call sites within `data_publishers.py` alone**, and the same
-COALESCE-to-seed-or-hash shape reappears (without the MD5 step, per the data-layer survey) in
-`data_narratives.py`, `data_campaigns.py`, and `data_topic_areas.py` anywhere a query needs to
-attribute rows to a publisher. Similarly, a "campaign column fallback" candidate-name list
-(`["campaign_announcement", "Campaign_Announcement", "campaign"]`-shaped) is copy-pasted across
-`data_narratives.py`, `data_campaigns.py`, and `data_topic_areas.py`, and inline
-`LOWER(TRIM(COALESCE(..., ''))) LIKE 'pos%'`-style sentiment classification appears in multiple
-places **despite `_sentiment_case()` already existing in `data_common.py` to do exactly this** —
-adoption of the existing helper is inconsistent, not missing.
-
-**Recommendation**: promote publisher-identity resolution to a single BigQuery view (or at minimum
-a single parameterized SQL-fragment function in `data_common.py` that every `data_*.py` module
-calls) rather than a copy-pasted CTE shape. Same treatment for the campaign-column candidate list
-(make it a `data_common.py` constant, not three separate literal lists) and for sentiment
-classification (just always call `_sentiment_case()` — there is no reason left to ever write the
-`LIKE 'pos%'` literal by hand again).
-
-### 3.4 Unbounded full-table pulls that will not survive 10x data growth
-
-The "load everything, filter in pandas" pattern (§3.1) is correct for *aggregated* result sets
-(a few hundred rows of publisher/narrative/campaign summaries). It is a real future scaling
-hazard for the two places that pull **raw, unaggregated rows**:
-
-- `data_archive.py::load_archive_scatter()` (20 lines) — a bare `UNION` of `umap_x, umap_y,
-  narrative_label, source` from the full `amazon_2026_trad`/`amazon_2026_some` tables, **no
-  `LIMIT`, no sampling**. Today this renders fine because the underlying tables are small enough
-  and the chart correctly uses `go.Scattergl` (WebGL) rather than SVG `go.Scatter` (confirmed in
-  `charts_archive.py:143,197,282`) — so rendering itself won't choke even at six figures of
-  points. But the *query cost* (a full scan of two tables on every 10-minute cache refresh) and
-  the *JSON payload size* shipped from BigQuery → pandas → the Dash callback → the browser scale
-  linearly with row count, with no decimation strategy in place for when a client's archive grows
-  past, say, a few hundred thousand rows per source.
-- `data_narratives.py::load_narrative_top_publications()` is the one "top items" query in the
-  whole data layer that does **not** apply the `ROW_NUMBER() ... WHERE rn <= 50` cap that its
-  siblings (`load_campaign_top_publications()`, `load_topic_area_top_publications()`,
-  `load_publisher_top_publications()`) all use — per STYLE_GUIDE.md §10 this was a deliberate
-  choice ("no longer applies a per-narrative top-50 cutoff... so selected angles can show all
-  matching publications") but it means this one query's result size is unbounded by a popular
-  narrative's total volume, unlike every analogous query elsewhere in the dashboard.
-
-**Recommendation**: when there's headroom, add an explicit row cap (with a documented, deliberate
-override path for the one case above) and consider whether the Archive/Discover UMAP scatter
-needs server-side decimation (e.g. cap at N points with deterministic sampling, or pre-aggregate
-into a coarser grid beyond a zoom threshold) before a client's data volume makes that decision for
-you under worse conditions (a slow page load in front of a client, not a quiet refactor).
-
-### 3.5 `data_angles.py` redundant scans
-
-`load_angles()` (the only function in the file) runs four separate `COUNT(*)`-shaped CTEs
-(`trad_angle_id_counts`, `trad_angle_label_counts`, `some_angle_id_counts`,
-`some_angle_label_counts`) where two (one per source, each counting by whichever of id/label is
-populated via a single `UNION`/`CASE`) would do — it currently scans `amazon_2026_trad` twice and
-`amazon_2026_some` twice for what's conceptually one pass per table.
-
----
-
-## 4. Chart / rendering layer
-
-`charts_shared.py` (2,119 lines) + 7 page-specific `charts_*.py` modules (`charts.py`,
-`charts_narratives.py`, `charts_publishers.py`, `charts_campaigns.py`, `charts_topic_areas.py`,
-`charts_discover.py`, `charts_archive.py`) — **5,894 lines** of figure/table builders.
-
-### 4.1 `charts_shared.py` is doing at least three jobs
-
-It is simultaneously: (a) a design-token/constants module (color palettes, `THEME_*` aliases,
-table style dicts), (b) a UI-primitive library (`na_panel()`, `_kpi_card()`,
-`build_overview_table_section()`), and (c) a non-trivial **chart geometry engine** — roughly 700
-lines (`_timeline_figure`, `_timeline_with_narratives_figure`, `media_split_timeline_figure`,
-PCHIP-based curve smoothing, pixel-precision flag-annotation collision/placement math in
-`_add_reach_flag_annotations`) that has nothing to do with "shared constants" and everything to
-do with one specific, sophisticated chart type. That geometry code is genuinely impressive
-(dynamic figure height derived from tick count and annotation bounding boxes so there's never
-dead space or clipped labels, shape-preserving PCHIP interpolation chosen specifically to avoid
-spline overshoot below zero) but it is hidden inside a file whose name promises "shared
-constants." A new contributor looking for "where do I change how the mirrored media-split chart
-computes its axis range" will not think to open `charts_shared.py` first.
-
-**Recommendation**: split `charts_shared.py` into `theme.py` (palettes/tokens — pure data),
-`ui_components.py` (`na_panel`, KPI cards, table style dicts — Dash component builders), and
-`timeline_charts.py` (the PCHIP/flag-annotation/dynamic-height engine — this is arguably
-sophisticated enough to deserve its own test suite, see §11). None of this needs to happen before
-shipping anything else; it's a pure readability win with zero behavior change, ideal for a slow
-week.
-
-### 4.2 Real cross-page duplication (not just "vs. shared")
-
-Distinct from under-using `charts_shared.py`, several non-trivial blocks are duplicated **between
-page-specific chart modules**, evidenced at the line level:
-
-| What | Where | Scale |
-|---|---|---|
-| Sentiment donut figure builder | `charts_narratives.py` (`_narrative_sentiment_donut`), `charts_publishers.py` (`_mini_donut_chart`), `charts_discover.py` (`_discover_engagement_sentiment_donut`) | ~65 lines × 3, near-identical except labels/colors |
-| `_data_bar_column_styles` (per-cell gradient bar styling) | `charts_narratives.py` and `charts_publishers.py` | line-for-line copy |
-| `_combined_narratives_from_record` (merge trad/some top-narrative JSON into one ranked list) | `charts_narratives.py` and `charts_publishers.py` | 60-120 lines, duplicated rather than imported |
-| Top publishers/journalists/publications table builders | Defined in `charts_narratives.py`, then **imported and re-wrapped** by `charts_campaigns.py` rather than generalized | ~100+ lines effectively shared via cross-module private-name import, not a public shared API |
-
-That last row is its own smell: `charts_campaigns.py` reaching into `charts_narratives.py`'s
-underscore-prefixed ("private") helpers means the "Narratives" page module is not actually
-self-contained — it's also a dependency of the Campaigns page. That's an invisible coupling: a
-contributor refactoring `charts_narratives.py` in isolation, confident they're only touching the
-Narratives page, can silently break Campaigns.
-
-**Recommendation**: extract a single `sentiment_donut_figure(records, ...)` and the
-`_data_bar_column_styles`/`_combined_narratives_from_record` helpers into `charts_shared.py`
-proper (with a public, non-underscore name), and make the top-publishers/journalists/publications
-table builder a genuinely shared, parameterized function rather than an inter-page private
-import. This is ~250-350 lines of net deletion with no feature change.
-
-### 4.3 God-functions worth splitting
-
-`charts_narratives.py::_narrative_detail_content` (~100 lines) and
-`charts_archive.py::_archive_figure` (~138 lines) each bundle data reshaping + multiple layout
-concerns + figure construction in one function (the latter handles KDE overlay, time-based
-coloring, narrative-based coloring, and reference-point overlay all in one body). Neither is
-*wrong*, but both are past the size where a bug fix to "just the KDE part" requires holding the
-whole function's state in your head. Low urgency, but a good target whenever either is touched
-for an unrelated reason.
-
-### 4.4 Callback placement is consistent, with one good example of real reuse
-
-~52 distinct registered callbacks dashboard-wide (45 defined directly in `pages/*.py`, verified by
-grep; the remainder are explained below — this required tracing one indirection, not a flat count,
-so the arithmetic is spelled out rather than asserted). Four callbacks live outside `pages/*.py`,
-and they're not all the same kind of exception:
-
-- Three are genuine one-offs, each colocated with the single figure it updates:
-  `charts.py::_update_p1s4g1_graph`, `charts_narratives.py::_update_narrative_media_split_figure`,
-  `charts_archive.py::_update_archive_scatter`. Minor, defensible departures from "callbacks live
-  in pages/" — co-location with the figure they affect is a reasonable trade against strict
-  layering.
-- The fourth is different in kind: `charts_shared.py::register_top_items_callback()` is a
-  **shared, parameterized callback *factory***, not a one-off — it's called four separate times,
-  from four different pages (`charts.py:516` for Overview, `pages/topic_areas.py:64`,
-  `pages/publishers.py:58`, `pages/campaigns.py:231`), each call registering an independent Dash
-  callback (unique `Output`/`Input` ids via its `id_prefix` argument) that drives that page's
-  "Top Items" Trad/SoMe source-toggle table. This is exactly the kind of cross-page reuse §4.2
-  argues is missing elsewhere (the sentiment donut, the data-bar styling) — flagging it here as a
-  positive existing pattern worth pointing to when doing that consolidation work, not as a
-  layering violation. (It's also why the naive count of "`@callback`/`clientside_callback`
-  occurrences in source" undercounts the true number of registered callbacks by three: the
-  decorator's source line appears once, inside the factory, but executes four times.)
-
-### 4.5 No hot-path disasters
-
-Spot-checked the obvious risk patterns (per-row Python loops over potentially-large frames inside
-a callback): `charts_discover.py::filter_discover_records` is a clean single-pass filter using set
-membership (O(1) per check); the one nested-loop case
-(`charts_narratives.py::_combined_narratives_from_record`) operates over a handful of
-narratives/angles per entity, not full-table data, so it's a non-issue at current scale. Nothing
-here needs to change for performance reasons today.
+> Scope: the `amazon_2026` dashboard plus the shared platform code it runs on (`app.py`,
+> `config.py`, `dashboards/_base.py`, `dashboards/__init__.py`, `data_sources/bq.py`, `tenancy/*`,
+> `auth/*`, `extensions/*`, `pages_landing/*`).
+>
+> **Update (2026-06-25): a batch of small, low-risk fixes has landed** (uncommitted working-tree
+> changes). Done: the navigation rebuild (§5.1, §5.22), all tracked dev-residue cleanup (§5.9),
+> `set_dev_mode` gating (§5.10), preload timing logs (§5.12), the BigQuery byte cap (§5.16), gating
+> demo dashboards out of prod (§5.18, gate half only), the `amazon_2026` render smoke test (§5.19),
+> HTTP response compression (§5.20), and making the operator role usable in the admin UI (§5.23).
+> 61 tests pass. **Deliberately left for later** (each needs either a team cost/policy decision, ops
+> access this pass didn't have, or touches enough surface area to warrant its own review):
+> `--min-instances=1` (§5.7), the `amazon` `Client` record + BigQuery IAM scoping (§5.3), row caps
+> on the two unbounded queries (§5.5), the error/empty-state boundary (§5.17), conforming the demo
+> dashboards' `charts.py`/`data.py` structure (§5.18's heavier half), `build_standard_page()` (§5.2),
+> separating UI build from cache warmup (§5.13), and the rest of Tier 2–4 below.
+>
+> **Update (2026-06-27): §5.13 + §5.14 landed together** (same code: `build_pages()` /
+> `_register_data_sources()` / `_start_preload()` in `dashboards/amazon_2026/__init__.py`).
+> Registration collapsed to one `_LOADERS: dict[str, Callable]` mapping, which now drives both
+> `data_manager` registration and cache warmup, so the two can no longer drift — closing a live gap
+> where `DISCOVER_ITEMS_KEY`/`ARCHIVE_SCATTER_KEY` were registered but never preloaded. `build_pages()`
+> is now pure (page construction only); the new `warm_caches()` does the network I/O, called once per
+> process from `app.py` after pages are built. The optional hook is discovered the same way as
+> `data_health` (`dashboards/__init__.py::RegisteredDashboard.warm_caches`). 64 tests pass.
+>
+> **Standing rule: update this plan after every implementation pass.** Mark the relevant §5.x/T-item
+> done with a one-line status header (matching the style above), fold the change into a dated `Update
+> (YYYY-MM-DD): ...` paragraph here, and refresh §2/§7's tables so the roadmap never drifts from the
+> code. Do this every time, not just for batches that "feel big."
+>
+> **Update (2026-06-27): part of §5.24/T3.4 landed — user suspend, role-edit, and prod "view as".**
+> `User.disabled` (`tenancy/models.py`) is enforced at the single auth chokepoint
+> (`auth/middleware.py::_load_user_from_request`): a disabled account's own session is denied outright
+> (redirect to login), independent of the dev/prod code path. The same function now also separates the
+> *real* authenticated principal (`real_user()`) from the *effective* one (`current_user()`), so "view
+> as" — previously hard-gated to dev (`AUTH_ENABLED=false`) — now works for real admins in production
+> too: `/dev`, `/dev/as/<uid>`, `/dev/exit` moved from a `settings.auth_enabled` 404-guard to
+> `real_admin_required` (checks the real identity, so the controls that start/stop impersonation stay
+> reachable *while* impersonating a non-admin — `admin_required` alone would have locked that out, since
+> the effective identity loses admin powers during impersonation, correctly, everywhere else). Resolves
+> Open Question #5 (§10): staff impersonation in prod is approved, admin-only, and audited
+> (`user.impersonate_start`, attributed to the real admin via `record_audit(..., actor=real_user())` so
+> switching targets mid-session doesn't misattribute). Impersonating another admin or a disabled account
+> is refused at both the route and the middleware. The Users page (`admin/routes.py`) gained a role
+> `<select>`, a Suspend/Reactivate button, and a "View as" link per row. **Still open in §5.24:**
+> delegated client-admin, broader audit coverage (logins/403s), client edit/delete, table
+> search/pagination. 68 tests pass.
+>
+> **Update (2026-06-27): §5.17 partially landed (the observability half); §5.5 rejected outright —
+> standing rule added.** `charts_shared.py::safe_load()` now logs (`logger.exception`) before
+> returning an empty frame, so a real BigQuery failure no longer renders identically to "no data" —
+> closing the gap where `safe_query()`'s deliberate prod-raise (§4) was being silently swallowed one
+> layer up. `app.py::create_app` gained a dependency-free `@server.errorhandler(500)` (no
+> template/auth lookup, so the error page itself can't fail mid-outage). **Still open in §5.17:**
+> distinguishing "load failed" from "genuinely empty" in the UI message itself — that needs a flag
+> threaded through every `_add_empty_figure_annotation` call site, correctly sized for its own pass.
+> Separately, §5.5 (capping `load_archive_scatter` / `load_narrative_top_publishers`) was raised and
+> **rejected**: the standing rule going forward is **never truncate queried data** — no `LIMIT`/row cap
+> is acceptable on a query whose result a user is meant to see or whose output could feed a total. This
+> does **not** apply to deliberate "Top N" leaderboard displays (`data_publishers.py`,
+> `data_topic_areas.py`, `data_campaigns.py`'s `rn <= 50`; `data_overview.py`'s `LIMIT 250`) — those are
+> intentionally a ranked top-N by design, not data hidden from a user expecting the full set, and stay
+> as-is. Audited as part of this pass: none of those existing "Top N" frames currently feed a
+> `.sum()`/total/percentage/KPI anywhere in `charts_*.py` — all totals trace to separate, uncapped
+> aggregate queries. Worth a guardrail test later if that separation ever feels at risk. 70 tests pass.
+>
+> **Update (2026-06-27): §5.2 + §5.4 landed together** (deliberately bundled — both touch the same
+> five page modules, so doing them in one pass avoids two separate edit passes over the same files).
+> §5.2: a `build_standard_page()` factory (`pages/_shared.py`) now builds every page's `vm.Page(...)`
+> skeleton (`id`/`title`/`path`/default `layout`) from `slug`/`display_name`/`ref_code`, applied to
+> all 7 `build_*_page()` functions; only `components`/`controls` (and Overview's `path` override,
+> Archive's `layout=None` override) still vary per page. §5.4: `charts_shared.py` (2.7k lines) is
+> deleted and split into `theme.py` (pure design tokens/palettes, no internal deps), `timeline_charts.py`
+> (the PCHIP/flag-annotation/dynamic-height geometry engine, plus the Trad/SoMe source-selection
+> helpers timeline figures are always called alongside — `normalize_sources` moved here, not
+> `ui_components.py`, specifically to keep the dependency direction acyclic), and `ui_components.py`
+> (Dash UI builders, the table toolkit, and small generic data helpers like `safe_load`/`json_safe`).
+> Dependency direction is one-way: `theme.py` → `timeline_charts.py` → `ui_components.py`. Every
+> importer (7 `charts_*.py` modules, the same 5 `pages/*.py` modules from §5.2, 3 test files,
+> `STYLE_GUIDE.md`, one `native_analytics.css` comment) was repointed to the correct new module — no
+> re-export shim. Verified: a name-by-name AST cross-check that all 134 top-level names in the old
+> file landed in exactly one new file, `pytest` green (70 tests, unchanged count — no tests added,
+> only import paths and two AST-loader `Path(...)` literals in `test_amazon_2026_publishers.py`
+> updated), and a repo-wide `charts_shared` grep clean except historical docstring/comment mentions.
+>
+> **Update (2026-06-27): T1.1/§5.1 corrected — the first nav pass had the wrong shape, found and
+> fixed same day.** That pass (one `NavLink` per dashboard + CSS) put pages inside a secondary expand
+> panel instead of the icon rail itself — not the desired UX, and not what was asked for. Corrected:
+> one `NavLink` per *page* again (direct icon-click navigation, no expand panel), with a new
+> `app.py::ScopedNavBar(vm.NavBar)` filtering the rendered icons to the active dashboard, computed
+> server-side, fresh on every page render, from `active_page_id` — confirmed against Vizro's source
+> that `Dashboard._make_page_layout` calls `navigation.build(active_page_id=page.id)` on every page
+> route, not once at startup, so there's no "shows everything, narrows down after a click" window for
+> the original bug (every dashboard's pages visible at once on first load) to live in. Falls back to
+> an *empty* rail, never "show everything", when the active dashboard can't be determined. Restored
+> the per-page `PAGE_ICONS`/`RegisteredDashboard.page_icons` plumbing deleted in the first pass.
+> New `tests/test_navigation.py` (5 cases) asserts the rail's exact contents per dashboard, the
+> empty-fallback safety property, and that no dashboard's pages ever appear under another's active
+> page. 75 tests pass. Full writeup in §5.1.
+>
+> **Update (2026-06-27): §5.24/T3.4 client lifecycle landed (edit + delete), bundled because it's
+> the same shape of work in the same place as the already-shipped user lifecycle.** The Clients page
+> (`admin/routes.py`) gained an edit form (name/`bq_dataset`/brand/accent, mirroring the user
+> role/suspend forms) and a Delete button, wired to new `clients_edit` / `clients_delete` routes.
+> `tenancy/users.py::UserStore` gained `delete_client` (mirroring `delete_user`) on both backends.
+> Deletion is guarded, not soft: refused (silent no-op) while any user's `client_id` still points at
+> that client, so an admin must reassign them first rather than the platform silently orphaning a
+> company link — no `archived` flag was added, since nothing here needs an undo/restore flow. Also
+> **resolves Open Question #4 (§10): no delegated client-admin** — confirmed companies don't manage
+> their own accounts, so the existing operator role (§5.23, already shipped) is the right level of
+> delegation; this is closed outright, not deferred. **Still open in §5.24:** broader audit coverage
+> (logins/403s, operator dashboard opens — lives in `app.py`'s access gate, not this file) and table
+> search/pagination. 76 tests pass.
+>
+> **Update (2026-06-27): §5.17/T1.6 closed — the UI now distinguishes a swallowed load failure from
+> a genuinely empty result, everywhere `_add_empty_figure_annotation` is shown.** `safe_load()` tags
+> the empty frame it returns after an exception with `.attrs["load_failed"]`; every figure builder
+> that can reach an ambiguous empty state now shows "Data temporarily unavailable" instead of its
+> normal "no data" message when that tag (or an explicit `load_failed` flag/dict-key, for the
+> `dcc.Store`-backed timeline/sentiment panels where `.attrs` doesn't survive the
+> `.to_dict("records")` round-trip) is set. `_archive_figure` (the UMAP scatter) needed no change —
+> every call site loads via Vizro's own `data_manager` binding, which already raises on failure
+> rather than swallowing it. Full file-by-file detail in §5.17. Also **investigated T3.2** (redundant
+> per-page BigQuery scans): found 6 genuine candidate pairs, but merging each needs a small
+> shared-cache wrapper (so two `data_manager` keys don't double-run one merged query) plus
+> BigQuery-verified output — not available in this environment — so implementation stays open;
+> findings recorded under T3.2. 79 tests pass.
+>
+> **Update (2026-06-27): §7.1 Batch 3 landed — admin panel audit coverage + table search/pagination,
+> and the §5.25/T3.5 CSS-extraction half that shares the same files.** Closes the rest of §5.24/T3.4:
+> `auth/middleware.py::admin_required`/`real_admin_required` now record an `access.denied_admin` audit
+> event (target = the denied path) before returning 403; `app.py`'s access gate records
+> `access.denied_dashboard` (target = slug) the same way (operator dashboard opens were already
+> covered by the existing `dashboard.cross_client_open` event from §5.23/T2.6 — nothing new needed
+> there). `pages_landing/routes.py::session_login` records `auth.login` (target = uid) on every
+> successful sign-in, attributed to the signing-in principal via an explicit `actor=` (a
+> `SimpleNamespace(uid, email)` from the verified token claims, since the session cookie isn't set on
+> the request that mints it, so `current_user()` can't resolve an actor yet). The Users page
+> (`admin/routes.py`) takes `?q=` filtering the roster by email/uid before grouping by company; the
+> Audit page takes `?q=` (actor/action/target/detail) and `?page=` (50/page, clamped past the end
+> rather than erroring). The Usage page was deliberately left alone — it's one row per dashboard, not
+> per event, so it's already small at any client count and pagination there would solve a
+> non-problem. Separately, §5.25/T3.5(a): the two inline `<style>` blocks in `pages_landing/shell.py`
+> and `pages_landing/routes.py` moved into one new `assets/native_analytics_shell.css`, linked via
+> `<link rel="stylesheet">` (only the per-request dynamic accent-color override stays inline, since
+> it's templated). To avoid adding this as a fourth always-on-every-dashboard-page CSS file —
+> exactly the problem §5.25's own second bullet names — `app.py`'s `Vizro(...)` now passes
+> `assets_ignore=r"native_analytics_shell\.css"`, which excludes it from Dash's automatic per-page
+> injection while it's still served as a static file at the same asset URL, so landing/admin pages get
+> a cacheable stylesheet without taxing dashboard pages that never use it. `admin/routes.py`'s own
+> inline `<style>` (three `.status-*` rules) was deleted outright, not moved — it was dead duplication
+> of rules the shell CSS already defines globally. Verified: `pytest` green (83 tests, 4 new in
+> `tests/test_routes.py`: two confirming the new 403 audit events, two confirming the search/pagination
+> behavior). The `auth.login` call has no dedicated test — mocking the Firebase Admin SDK end to end
+> for one log line wasn't judged worth the harness weight; existing `session_login` tests already
+> cover its status-code contract. §5.25's (b)/(c)/(d) (orphan-asset audit, experimental-chartmenu
+> gating, token/minification pass) and the rest of §7.1's batches remain open.
+>
+> **Update (2026-06-28): §7.1 Batch 1's first half landed — T2.7/§5.26 (Discover keyword search
+> quality); T4.7/§5.27 (semantic vector search) still open, ops-gated.** `charts_discover.py` gained
+> a normalization/ranking layer: `_normalize_text()` (NFKD diacritic stripping + casefold + punctuation
+> strip + whitespace collapse), `_stem_token()` (English plural-only suffix stripping — no verb
+> stemming, kept deliberately narrow to avoid false matches), and a per-record `_search_index`
+> (title/summary/metadata/full-text token sets) precomputed once in `discover_records()` so repeated
+> filter callbacks don't re-tokenize the same records. `_search_rank()` replaces the old
+> substring-only `_record_matches_search()` with 5 tiers (0 = exact phrase in title, 1 = all tokens in
+> title+summary, 2 = all tokens incl. metadata — `Journalist`/`Topic_Area`/`Narrative`/`Media_Type`/
+> `Source` were already present in the Discover record contract from `data_discover.py`, just unused by
+> search — 3 = all tokens incl. full-text when the toggle is on, 4 = restrained fuzzy via
+> `difflib.SequenceMatcher`, gated to tokens ≥4 chars and a 0.82 ratio so short common words can't
+> fuzzy-broaden). `filter_discover_records()` now sorts by rank when a query is present (stable, so
+> same-tier results keep their original date-desc order) instead of just pass/fail filtering; hard
+> filters (source/sentiment/publisher/topic/narrative/date/selection/similarity) are unchanged and still
+> apply on top. **Skipped from §5.26's direction list:** (5) UI snippet highlighting / "matched in X"
+> hint — would need a table-column change in `discover_split_table_data()`/`build_top_*_table()`, sized
+> for its own pass rather than bundled here; ranking already makes relevance visible via row order. (6)
+> BigQuery `SEARCH` backend — the plan's own text says not to do this until in-memory ranking is proven.
+> T4.7/§5.27 (embeddings/`VECTOR_SEARCH`) also landed the same day, once the user supplied the
+> `OPENAI_API_KEY` (now in `.env`/`config.py::openai_api_key`) and confirmed the live `embedding`
+> column via `bq query`: `STRING` holding a JSON array of 1536 floats (matches `text-embedding-3-small`'s
+> native dimension) in both `amazon_2026_trad` and `amazon_2026_some` — not BigQuery's native
+> `ARRAY<FLOAT64>`, confirming §5.27's own anticipated "if stored as JSON/string" branch.
+> `VECTOR_SEARCH` itself turned out to reject **both** a logical view and any function/expression
+> column in its base-table argument ("Columns with functions or nested field expressions are not
+> allowed"), discovered by trial against the live project — so the typed-vector exposure had to be a
+> materialized `TABLE` (`amazon_2026_discover_vectors`, a one-time `CREATE OR REPLACE TABLE ... AS
+> SELECT` casting the JSON-string column via `SPLIT`+`CAST`), not the view originally planned;
+> rerun that CTAS (documented next to `data_common.py::DISCOVER_VECTORS_TABLE`) whenever the
+> underlying Trad/SoMe data or embeddings are refreshed. The stable item id (§5.27 direction #2) is
+> `f"{Source}:{Record_ID}"` — `Record_ID` is unique within `amazon_2026_trad` (10359/10359) but has a
+> handful of true duplicate rows within `amazon_2026_some` (2122/2197 distinct); both candidate rows
+> are simply treated as the same semantic match, judged not worth more engineering for ~75 rows.
+> `data_discover.py` now selects `Record_ID` into both `trad_items`/`some_items`; `charts_discover.py`
+> computes `_stable_id` per record in `discover_records()`. `_embed_query()` calls OpenAI's
+> `/v1/embeddings` directly via `requests` (no new SDK — direct HTTP is simpler than the `openai`
+> package for one endpoint); `_vector_search()` runs a parameterized `VECTOR_SEARCH` query through a
+> new `data_sources/bq.py::run_query_params()` (an `ArrayQueryParameter` for the 1536-float query
+> vector, rather than string-interpolating it). `semantic_discover_candidates(query)` wraps both behind
+> a TTL'd, lock-guarded cache keyed by normalized query text (mirrors the existing Discover server
+> cache's double-checked pattern) so repeated non-search filter changes on an unchanged search box
+> don't re-call OpenAI/BigQuery, and degrades to `{}` (keyword search still works, per the guardrail)
+> on a missing key, an embedding-call failure, or a `VECTOR_SEARCH` failure — each independently
+> tested. `filter_discover_records()` gained a `semantic_scores` parameter: records with no lexical
+> hit fall through to a semantic check and rank at tier 5 (below every lexical tier 0-4, ordered by
+> similarity), still subject to every hard filter; passing `None`/`{}` reproduces the old lexical-only
+> behavior exactly (tested). `pages/discover.py`'s two filter callbacks fetch
+> `semantic_discover_candidates(search_text)` and pass it straight through. **No vector index** was
+> added — `VECTOR_SEARCH` runs a brute-force scan, fine at the live row count (12,556 — `amazon_2026`
+> is nowhere near index territory), matching §5.27's "consider only after stable" guidance.
+> **Skipped, per §5.27's own scope:** UI "semantic match" labeling (item #7) — the keyword-search pass
+> already deferred the equivalent "matched in X" UI work for the same table-column reason; revisit
+> both together. Verified beyond `pytest`: a live run against the real OpenAI key and the real
+> `amazon_2026_discover_vectors` table found Polish-language antitrust articles for an English query
+> sharing zero literal words with them — the exact vocabulary-mismatch case this section exists to
+> solve. Verified: `pytest` green (104 tests, 9 new for keyword search + 10 new in
+> `tests/test_amazon_2026_discover_semantic_search.py` for the embedding/vector-search fallback paths
+> and hybrid ranking/hard-filter interaction).
+>
+> **Update (2026-06-27): §7.1 Batch 5 landed — two of its three items as code, one as an ops note.**
+> T4.1/§5.8 (shared cache backend): `app.py::create_app()` now builds the Flask-Caching config from a
+> new `config.py::cache_redis_url` setting — `RedisCache` when it's set, the unchanged `SimpleCache`
+> default otherwise — so moving to a shared Memorystore cache once concurrency rises is one env var,
+> not a code change. `redis` was added to `requirements.txt` (lazily imported by `flask_caching` only
+> when the URL is actually set, so it's a no-op dependency for every deployment that leaves it empty).
+> T4.3/§5.11 (chat provider): `extensions/chat_with_data.py` gained `_provider_amazon_2026()`, sourcing
+> `NARRATIVES_KEY` (the groupable per-narrative frame) and `OVERVIEW_KPI_KEY` (a single totals row,
+> folded into the text label) via `data_manager` — aggregated keys only, never the raw
+> `amazon_2026_trad`/`amazon_2026_some` tables. T4.2/§5.8 (Firestore usage-event TTL) turned out **not
+> to need application code at all**: `usage_events` already has the `created_at` timestamp field a
+> Firestore TTL policy targets, so the entire fix is one `gcloud firestore fields ttl-policies create`
+> command against the live store — left **still open**, since this pass has no GCP console/CLI access
+> (the same constraint already noted for T1.3's `Client` record). A scheduled application-level rollup
+> was considered as an alternative and rejected: with no Cloud Scheduler wired to call it, that code
+> would have no caller yet — scaffolding, not a present fix. Verified: `pytest` green (84 tests, 1 new
+> — `test_chat_endpoint_covers_amazon_2026`).
+>
+> **Update (2026-06-28): §7.1 Batch 4 landed (T2.4/§5.18 conform half — closed); Batch 2's T3.2
+> rejected outright, also closed.** Batch 4: the top-level `charts.py`/`data.py` (synthetic Amazon
+> media dataset shared by `breakdown`/`timeline`) are deleted; each of those two dashboards now has
+> its own self-contained `data.py`/`charts.py` (`bq_sample` already had its own), registering a
+> zero-arg loader via `data_manager` and passing the string key to figure builders
+> (`figure=narrative_reach_bar(data_frame=DATA_KEY)`) — matching `amazon_2026`'s convention instead of
+> a literal module-level DataFrame built once at import. The synthetic-data generator is duplicated
+> once per package rather than shared cross-package — deliberate, since the plugin model is "drop a
+> package, restart" with no inter-package imports, and both are throwaway demo dashboards. Each
+> loader now re-seeds `np.random` on every call so cache-TTL refreshes reproduce the same series
+> instead of drifting. `extensions/chat_with_data.py`'s `_provider_timeline`/`_provider_breakdown`
+> (importing the old top-level `data` module directly) were repointed to the new per-package loaders
+> — caught by the existing chat-fallback test. T3.2 (consolidate the 6 redundant-shaped
+> trad/some BigQuery query pairs across campaigns/narratives/topic_areas) was re-investigated with
+> live BigQuery access (not available when first investigated) and **rejected**: each pair queries
+> two different tables, `data_manager` already caches each independently, so there's no live
+> double-scan bug — merging into one `UNION ALL` query would not reduce bytes scanned/billed, only
+> collapse 2 round-trips into 1 (low hundreds of ms at this data volume), not enough to justify
+> normalizing 6 mismatched column shapes plus a new shared TTL-cache wrapper plus live-BigQuery
+> verification. New standing rule: don't merge same-shape queries across different source tables for
+> round-trip count alone — only when it also cuts bytes scanned/billed. Verified: `pytest` green (104
+> tests, no new tests for Batch 4 — pure refactor covered by existing routes/build tests).
+>
+> **Update (2026-06-28): schema-drift candidate lists replaced with verified single column names; new
+> standing rule against name-guessing.** Queried the live `INFORMATION_SCHEMA` for
+> `amazon_2026_trad`/`amazon_2026_some`/`amazon_2026_publishers`/`amazon_2026_angles`/
+> `amazon_2026_narratives` directly against BigQuery and resolved every `*_CANDIDATES` list in
+> `data_common.py`, plus every inline candidate list in the `data_*.py` modules, down to the one name
+> actually present. `_table_column_map`/`_optional_*_expr`/`prime_schema_cache` are kept (the
+> TRIM/NULLIF/CAST safety wrapping is still useful), but they're no longer fed lists of guesses.
+> **Found and fixed 4 live bugs** where the old candidate never matched the real schema, so a field
+> silently rendered empty/zero: `TRAD_ANGLE_CANDIDATES`/`SOME_ANGLE_CANDIDATES` (real column is
+> `dominant_angle_label`, not `dominant_angle`/`angle`) — the "Angle" column on topic-area/campaign
+> top-publications tables was always blank; Discover's follower count (real column is
+> `author_followers_count`, not `Followers`/`followers`/`follower_count`) was always 0;
+> `load_publisher_topic_areas`/`load_publisher_some_topic_areas` (real column is `Topic_Area`, not
+> `Topic Area`/`topic_area`) always grouped as "Unknown". Several more dead fallback entries
+> (`Byline`/`Author` instead of `Journalist`, `record_id` instead of `Record_ID`, `paid`/`Paid`/
+> `paid_earned` instead of `Paid_Earned`, etc.) never fired because an earlier candidate already
+> matched — removed for clarity, no behavior change. **Kept as deliberate multi-column `COALESCE`,
+> not name-guessing:** `TRAD_SUMMARY_CANDIDATES`/`SOME_CONTENT_CANDIDATES` (`Description`,
+> `_3P_Description`, `Main_Text` are all real columns with genuinely different per-row content, not
+> three guesses at one column) — only their dead entries (`Summary`, `Article_Text`, etc.) were
+> trimmed. **New standing rule:** column-name resolution in this codebase uses one verified name per
+> field, sourced from a live `INFORMATION_SCHEMA` query, not a fallback chain across guessed
+> capitalizations/synonyms; re-verify and update these single names directly if the user changes the
+> upstream schema. Verified: `pytest` green (104 tests, no new tests — pure data-layer correction; no
+> existing test pinned the broken values, so none needed updating).
+>
+> **Update (2026-06-28): chart context menu confirmed as a permanent feature, not experimental
+> (§5.25(c)/T3.5).** STYLE_GUIDE.md §13's heading dropped "Experimental —"; the "experimental" wording
+> in `assets/native_analytics_chartmenu.js`/`.css`'s header comments was removed to match. No code
+> gating was added — it already defaults to on (`localStorage['na-chart-menu-enabled']` defaults to
+> `true`), and the user confirmed that's the intended permanent behavior. Closes the §5.10/T0.3 "decide
+> experimental vs. permanent" follow-up for this feature (the `dev_ids` reference-code overlay half of
+> §5.10 was already resolved dev-only on 2026-06-27).
+>
+> **Update (2026-06-28): Open Question #3 (cache refresh trigger) resolved — event-driven invalidation
+> shipped, not just TTL.** `app.py::create_app()` raised `CACHE_DEFAULT_TIMEOUT` from 3600 to 86400 and
+> added `POST /internal/cache/refresh`, gated by a constant-time comparison against
+> `settings.cache_refresh_secret` (404 until that secret is set, 403 on a mismatched
+> `X-Cache-Refresh-Secret` header) — the daily BigQuery load job calls it the moment fresh data lands,
+> clearing `data_manager`'s cache immediately instead of waiting out the TTL; the 24h timeout is now
+> only the fallback if that call is ever missed. Documented inline as a `ponytail:` comment that
+> `SimpleCache` is process-local, so on multi-instance Cloud Run this only clears whichever instance
+> handles the refresh call — fine at today's `--max-instances=1` effective ceiling, but
+> `cache_redis_url` (§5.8/T4.1, already wired) must be set before scaling instances if this is relied
+> on. No test added for the route itself (it's a thin auth-gated cache-clear call, mirroring the
+> existing health-check style endpoints); covered implicitly by every other route test continuing to
+> pass against the new 86400s default.
+>
+> **Update (2026-06-28): §5.21's server-side measurement half landed — per-figure build timing.**
+> `ui_components.py` gained a `capture(mode)` wrapper around `vizro.models.types.capture`: for
+> `mode="figure"` it times the actual function body with `time.perf_counter()` and logs `"%s built
+> in %.3fs"` (same convention as the existing preload/discover-cache timing logs, §5.12); every other
+> mode passes through to Vizro's own `capture` unchanged. All 9 files that did
+> `from vizro.models.types import capture` (`charts_overview.py`, `charts_narratives.py`, and 7
+> `pages/*.py` modules) now import it from `ui_components.py` instead — one import-line swap per
+> file, not one timing call per `@capture("figure")` site (~25 of them), since the wrapper sits
+> between Vizro's `capture` and the function it decorates. Timing wraps the inner function body, not
+> Vizro's `CapturedCallable` construction, so it measures actual figure-build time, not the lazy
+> wrapping. `tests/test_amazon_2026_capture_timing.py` (2 new tests) confirms the wrapper logs on
+> invocation and that non-`"figure"` modes are byte-for-byte Vizro's own decorator. **Browser-side
+> profiling (the other half of §5.21's measurement plan) is still open** — per the standing no-
+> Playwright-screenshots rule, that requires the user's own Chrome DevTools session, not an agent.
+> Verified: `pytest` green (106 tests).
 
 ---
 
-## 5. Pages & callback layer
+## 1. Executive Summary
 
-7 page modules + `pages/_shared.py`, ~1,800 lines, ~52 registered callbacks (see §4.4 for the
-exact count and why it isn't a flat grep).
+This is a multi-tenant Flask + Vizro/Dash **platform** hosting one large, mature bespoke dashboard
+(`amazon_2026`, ~22k lines of Python + ~3k lines of CSS/JS) alongside three small example
+dashboards (`bq_sample`, `breakdown`, `timeline`). The platform shell — discovery, access gate,
+auth, tenancy — is under ~1k lines and is genuinely well-built. The craft is real: schema-flexible
+SQL builders, a no-arg cache-friendly data contract, an introspection-driven saved-views
+extension, and a 1,500-line style guide that documents *why*, not just *what*.
 
-### 5.1 `_shared.py` is real, working reuse — but page scaffolding still isn't
+Most of the previous plan's punch list has landed (see §2), and this round's batch of small fixes
+(above) closed several more. **What's left, in priority order:**
 
-`pages/_shared.py` exports four genuinely-shared helpers used across most pages:
-`metric_filter`/`metric_parameter` (the Trad/SoMe + publications/reach radio control), 
-`build_detail_timeline_response()` (generic combined-timeline response builder, used by Topic
-Areas/Narratives/Campaigns), `build_overview_table_response()` (shared table-filtering/styling,
-used by Topic Areas/Campaigns/Publishers), and `select_active_table_value()` (active-cell → entity
-lookup, used by every page with a drill-down table). This is good — it's the part of the codebase
-that *did* get factored out.
+1. **Cold-start risk is still unmitigated at the config layer.** `--min-instances=0`
+   (`cloudbuild.yaml`) + `--workers 2` (`Dockerfile`) on `--cpu=1 --memory=1Gi` means each
+   scale-from-zero runs two processes each firing ~40 preload BigQuery queries against one vCPU.
+   The fix is one line: `--min-instances=1`. A real recurring-cost decision for the team. (§5.7)
 
-What's left un-factored is the page-builder shell itself: every page module
-(`overview.py:29-110`, `topic_areas.py:67-102`, `narratives.py:56-91`, `campaigns.py:53-84`,
-`publishers.py:67-94`) hand-writes the same ~30-80 line `vm.Page(id=..., title=ref_label(...),
-path=f"{base_path}/...", components=[...], layout=vm.Flex(...), controls=[metric_parameter(...)])`
-skeleton. This is low-risk duplication (it's boilerplate, not logic — a bug here is obvious
-immediately, not a silent miscalculation), so it's a "nice to have" factoring rather than urgent,
-but a `build_standard_page(slug, title, ref, sections, controls=...)` factory would cut ~150-200
-lines of repeated scaffolding and make "what makes the Discover page's `vm.Page` call different
-from everyone else's" immediately visible by contrast.
+2. **`amazon_2026` is single-tenant in code; the platform is multi-tenant by design.** The data
+   layer now *resolves* its dataset from a `Client` record (`data_common.py::_resolve_dataset`),
+   but the `amazon` `Client` record doesn't exist yet and BigQuery IAM isn't scoped per dataset.
+   Close this before a second client is onboarded to any dashboard. (§5.3)
 
-### 5.2 The Discover page has two genuinely monolithic callbacks
+3. **Remaining page-load latency work needs measurement, not more guessing.** Compression and the
+   nav-observer thrash are fixed (§5.20, §5.22); what's left — every figure rebuilds server-side on
+   each visit with nothing deferred (§5.21) — should be profiled before investing in memoization or
+   deferral, so the next round of work is aimed at the actual bottleneck.
 
-Counted directly from the `@callback(...)` decorators in `pages/discover.py:103-129` and
-`:225-248` (not taken on faith from an earlier pass over this file — the first pass's Input/State
-counts turned out to be slightly off, corrected here): `_update_discover_results` has **12
-Outputs and 12 Inputs, zero States**, and `_update_discover_clusters` has **3 Outputs, 15 Inputs,
-and 3 States**. These are the two largest fan-in callbacks in the dashboard by a wide margin —
-nothing else in the dashboard approaches a dozen-plus Inputs. Every filter, search box, toggle,
-lasso-selection, and reference-point change on the page re-triggers one of these two "do
-everything" handlers. This is not necessarily a bug — Dash's callback model doesn't offer a great
-alternative when one figure genuinely depends on a dozen-plus independent controls — but it is the
-dashboard's biggest single point of fragility:
+4. **No error/empty-state boundary.** A failed or empty query currently shows a broken chart to a
+   client rather than a designed state (§5.17). Touches every chart builder, so it's sized for its
+   own pass rather than this batch.
 
-- It's the hardest code in the dashboard to reason about by inspection (a dozen-plus-way
-  interaction effects), and per §11 it has zero test coverage.
-- Both callbacks call `_server_discover_data()` independently; that function is properly
-  memoized (see §8.3 — confirmed, not assumed), so this isn't a redundant-computation problem,
-  but it does mean two large callbacks are both implicitly depending on a shared mutable module
-  global with no documented contract between them.
-- The page survey flagged the cell-selection-reset `clientside_callback`s (lines ~480-502) as
-  firing on every data update, which is worth a closer look the next time anyone touches Discover
-  interactivity — re-verify rather than take as fact, since that read came from a single pass over
-  the file rather than runtime observation.
+5. ~~Two structural proposals worth scheduling deliberately~~ — **done (2026-06-27).** Separating UI
+   construction from cache warmup (§5.13) and collapsing four-place dataset/loader wiring to one
+   source of truth (§5.14) landed together, since they were the same code.
+6. ~~Page-builder scaffolding dedup and the `charts_shared.py` god-file split~~ — **done (2026-06-27).**
+   `build_standard_page()` (§5.2) and the `theme.py`/`timeline_charts.py`/`ui_components.py` split
+   (§5.4) landed together, since both touched the same five page modules.
 
-**Recommendation, in order of effort**: (1) add `prevent_initial_call` / input-debouncing review
-specifically for these two callbacks since they're the most expensive to re-fire; (2) consider
-splitting "compute the filtered id set" from "render the results table" from "render the cluster
-figure" into a chain (a `dcc.Store` of filtered ids feeding two downstream callbacks) so a change
-to, say, the similarity slider doesn't necessarily have to re-run table-formatting logic it
-doesn't need to touch; (3) this page is the best candidate in the whole dashboard for an actual
-Selenium/Playwright-style end-to-end smoke test (see §11), precisely because it's the place where
-manual reasoning is weakest.
-
-### 5.3 `set_dev_mode(True)` is unconditional, in production
-
-Confirmed directly (`pages/__init__.py:36`): `build_all_pages()` calls `set_dev_mode(True)`
-unconditionally — not `set_dev_mode(settings.is_dev)`, not gated on any flag. Per `dev_ids.py`'s
-own docstring this is supposed to control whether internal reference codes like "P1S2G1" are
-shown — i.e. it's documented as a *development* aid. Whether or not the ref codes are currently
-visible in the live dashboard's titles depends only on `_ENABLED`'s hardcoded value, which is
-**always `True`** regardless of `ENV=prod`. Either:
-  (a) this is intentional — the team wants those reference codes visible in production too, for
-      precise communication about specific chart elements — in which case the name `dev_ids` /
-      `set_dev_mode` is misleading and should be renamed to reflect that it's a permanent feature, or
-  (b) this is a leftover from active development that should be `set_dev_mode(settings.is_dev)`.
-This is a 1-line fix either way (rename the concept, or gate it) — flagging because it's the kind
-of thing that's invisible until a client asks "what does 'P3S2G4' mean on my dashboard."
-
-### 5.4 Debug `print()` statements left in `narratives.py`
-
-`narratives.py:131` and `:147` call `print(f"[NARR-DEBUG] ...")` directly — bypassing the
-project's own `logging_setup.py`, which exists specifically so "modules use
-`logging.getLogger(__name__)` instead of `print`" (its own docstring's words). On Cloud Run,
-stdout `print()` calls do still reach Cloud Logging, so this isn't invisible, but it bypasses log
-levels (can't be turned off without a code change), bypasses the structured
-`%(asctime)s %(levelname)-8s %(name)s` format every other log line has, and is exactly the kind
-of thing that's easy to forget about once it's shipped. Trivial fix.
-
-### 5.5 Page id/path convention is consistent, with one explained exception
-
-All seven pages follow `id="amazon-2026-<slug>"`, `path=f"{base_path}/<slug>"` — except Overview,
-whose path is bare `base_path` (no `/overview` suffix). This is correct and intentional: Vizro
-forces the dashboard's first page to live at `/`, and `app.py::_build_home_page()`'s docstring
-explains the same constraint is why a separate, tiny "Overview" page is reserved at the
-platform level (`path="/overview"`) purely to keep the *root* path free for the landing panel.
-amazon_2026's own Overview page is simply page two-of-eight in build order, not the dashboard's
-literal first page, so it isn't subject to that override. No action needed — noting it here only
-because it looked like an inconsistency until traced back to a real, documented platform
-constraint.
+Everything else is durability work — see the full roadmap (§7) for what's done versus open in each
+tier.
+**Nothing here needs a rewrite** — every recommendation is additive, subtractive, or a config
+change.
 
 ---
 
-## 6. Extensions & multi-tenancy
+## 2. What Changed Since The Old Plan
 
-### 6.1 `tenancy/*` is clean, and unusually well-designed for its size
-
-`tenancy/models.py` (plain dataclasses with `from_doc`/`to_doc` for Firestore (de)serialization),
-`tenancy/users.py` (a `Protocol`-typed dual backend — `InMemoryUserStore` for dev,
-`FirestoreUserStore` for prod, swapped via one `lru_cache`d factory), and `tenancy/access.py`
-(single-source-of-truth `can_access`/`accessible_slugs`, company-grant-plus-per-user-extra-grant
-model) are genuinely well-built: minimal, Protocol-based rather than inheritance-based, and easy
-to test in isolation (though nothing currently does — see §11). `tenancy/events.py`'s
-fail-soft audit/usage recorders (swallow-and-log, "must never break the request that triggered
-it") are exactly the right defensive posture for non-critical telemetry. This is some of the best
-code in the repository and a good model for how `amazon_2026`'s own modules could be structured.
-
-### 6.2 But `amazon_2026` doesn't actually use any of it for data scoping
-
-This is the most important finding in this section. `tenancy/access.py::resolve_client_dataset()`
-exists specifically to map a logged-in user to *their* BigQuery dataset
-(`f"{bq_dataset_prefix}{client_id}"`, or `Client.bq_dataset` override) — i.e. the platform has a
-real, designed mechanism for "show this client their own data, not someone else's." A repo-wide
-search for `resolve_client_dataset`, `bq_dataset`, and `client_id` inside
-`dashboards/amazon_2026/` returns **zero matches**. `data_common.py:9-10` instead hardcodes:
-
-```python
-PROJECT_ID = "native-analytics-486522"
-DATASET_ID = "amazon_2026"
-```
-
-Every one of the 51 `load_*` functions ultimately calls `_table()`, which always resolves against
-this one fixed project/dataset, for every user, regardless of `current_user().client_id`. Today,
-with one client on this dashboard, that's invisible — it behaves identically to the
-multi-tenant-aware design. The access *gate* (§2.1, `app.py::_install_access_gate`) genuinely does
-enforce "can this user open `amazon_2026` at all," so there's no live security hole **today**. But
-the moment a second client is meant to see *their own* Amazon coverage data through what looks
-like the same dashboard, the current code will serve them client #1's BigQuery rows verbatim,
-because nothing downstream of the access gate ever consults `client_id`. If reselling this
-dashboard to additional clients is on the roadmap at all, this should be treated as a
-**known architectural gap to close before that happens**, not a bug to fix reactively after a
-client notices.
-
-**Recommendation**: thread `resolve_client_dataset(current_user())` through to `data_common.py`'s
-`_table()` (e.g. via a request-scoped context var set in the access gate, since `BuildContext` in
-`dashboards/_base.py` is explicitly process-level / built once at startup and documented as such —
-"per-user data scoping... is resolved at request time inside dynamic-data loaders, which can read
-the logged-in user from the Flask request context" is literally already the documented intent in
-`dashboards/_base.py`'s own docstring. `amazon_2026` just hasn't implemented that part of the
-contract yet).
-
-### 6.3 The "chat with your data" extension silently doesn't support this dashboard
-
-`extensions/chat_with_data.py::_DATA_PROVIDERS` (lines 73-77) registers exactly three dashboard
-slugs: `"timeline"`, `"breakdown"`, `"bq_sample"` — the small example dashboards. `"amazon_2026"`
-is absent. `features_chat_enabled` defaults to `True` (`config.py:92`), so the floating chat
-widget is presumably visible on every dashboard including this one (need a visual check — the
-injection is asset-driven, see §7), but any question asked on `amazon_2026` falls through to:
-
-```python
-provider = _DATA_PROVIDERS.get(slug)
-if provider is None:
-    return jsonify(answer="Chat is not available for this dashboard yet.", source="local", dataset=slug)
-```
-
-For the dashboard the team has clearly invested the most effort into, this is a visible dead end
-for users who try the platform's marquee AI feature on it. Given the data layer already exposes
-everything chat would need (`data_manager` has ~40 registered keys), wiring a provider for
-`amazon_2026` is plausibly a half-day task: pick 1-3 representative aggregated datasets (e.g.
-`PUBLISHERS_KEY`, `NARRATIVES_KEY`, `OVERVIEW_KPI_KEY`) and register them the same way
-`_provider_timeline` does. Worth noting `_dataset_summary()`'s `df.describe(include="all")` +
-`df.head(15).to_string()` approach is fine for the small datasets it serves today, but should
-target the *aggregated* `amazon_2026` tables (hundreds of rows), never the raw per-row
-`amazon_2026_trad`/`amazon_2026_some` tables, to stay cheap.
-
-### 6.4 `extensions/saved_views.py` is a small architectural gem
-
-529 lines implementing a fully generic "save the current state of every filter control on this
-page, keyed by browser path, persisted to `localStorage`" feature by *introspecting the built
-Dash layout tree* (`_walk_components`, `_is_trackable`) rather than requiring every page to
-manually register what's saveable. It correctly distinguishes single-value controls from
-multi-prop ones (`DatePickerRange`), excludes Vizro/nav-internal ids by prefix, and uses pattern-
-matching callbacks (`{"type": ..., "name": ALL}`) for the open-ended "however many saved views
-exist" restore/rename/delete/export actions. This is exactly the right way to build something
-genuinely page-agnostic in Dash, and a good reference for how `amazon_2026`'s own page-scaffolding
-duplication (§5.1) could eventually be addressed with a similar introspection-driven approach
-rather than a fixed factory function, if the team wants to invest more here later.
-
-### 6.5 Auth (`auth/*`) is solid; one unbounded-growth footnote
-
-`auth/firebase.py`'s session-cookie verification cache (claims cached in-process, TTL-bounded,
-with a separate longer interval forcing a real revocation re-check) is a well-judged
-security/performance tradeoff — avoids hitting Firebase on every request without skipping
-revocation checks indefinitely. `auth/middleware.py`'s dev-mode cookie-based user impersonation
-("View as") is a nice, low-friction way to QA the non-admin experience without standing up real
-auth. The one footnote: `_claims_cache` (`auth/firebase.py:31`) is a plain module-level dict that
-only evicts an entry when that *same* cookie is looked up again past its TTL — a cookie that's
-verified once and never reused (an abandoned session, a browser tab closed mid-session) stays in
-memory for the life of the process. Given session cookies last 5 days and likely user counts are
-modest, this is a low-severity footnote, not a current problem — but it's the same "unbounded
-process-lifetime dict" shape as the `_server_discover_data()` cache (§8.3) and `_table_column_map`
-lru_cache, so it's worth keeping in mind as one more thing that only a process restart currently
-cleans up.
-
----
-
-## 7. Frontend assets (CSS/JS)
-
-~3,000 lines of hand-written CSS/JS across `assets/*.css`/`*.js`, on top of a 740-line
-STYLE_GUIDE.md documenting the system in extraordinary, hard-won detail (see §10.4 — this
-document is itself one of this codebase's best assets).
-
-### 7.1 The dashboard is fighting Plotly's and Vizro's rendering models, not just styling them
-
-Three independent, separately-discovered workarounds share one root cause — both Plotly and
-Vizro/Dash bake certain things into the DOM/inline-styles at render time in ways that don't
-respond to normal CSS or normal Dash re-renders:
-
-- **Plotly inline-SVG styling**: per STYLE_GUIDE.md §6, Plotly writes `font`/`gridcolor`/etc. as
-  literal inline SVG attributes at draw time and does not reliably re-resolve `var(--na-*)` CSS
-  custom properties when the theme toggles afterward. The fix is a **110-rule, `!important`-laden
-  block** in the dashboard's CSS (confirmed by grep: 25 in `native_analytics.css` alone, 110
-  total across the seven `amazon_2026_*.css` files) targeting Plotly's specific SVG class hooks
-  (`.xtick > text`, `.legend .legendtext`, `.hoverlayer .hovertext .bg`, etc.), each paired with
-  an explicit `stroke-opacity: 1 !important`/`fill-opacity: 1 !important` because Plotly splits
-  color and opacity into separate baked-in SVG properties. This is correct, thoroughly documented
-  engineering — but it is structurally a CSS specificity war against a charting library that
-  wasn't designed to be re-themed live, and it will need re-verification (the STYLE_GUIDE.md's own
-  words: "found via headless-browser inspection... the standard 'is the rule winning?' check isn't
-  enough") on every future Plotly version bump.
-- **Vizro nav-panel behavior**: `assets/native_analytics.js` patches
-  `window.dash_clientside.dashboard.collapse_nav_panel` at runtime (after polling for it to exist,
-  since asset load order vs. the Vizro bundle isn't guaranteed) to fix a real bug where Vizro's
-  built-in implementation collapses the left nav on every page navigation, not just on a genuine
-  click. It also reimplements dashboard-scoped nav-link visibility by querying the DOM directly
-  and monkey-patching `history.pushState`/`replaceState`.
-- **Vizro callback double-registration**: the `dash._callback.insert_callback` monkeypatch in
-  `app.py` (§2.1).
-
-None of these three are wrong fixes for the bugs they target, and all three are unusually well
-commented about *why* they exist — this isn't sloppy code, it's necessary code given the
-constraints. But taken together they're a coherent pattern: **a meaningful fraction of this
-dashboard's frontend robustness depends on Vizro/Dash/Plotly internal behavior that isn't part of
-those libraries' public contract**, which means every Vizro/Dash/Plotly version bump is a manual
-regression-testing event (DOM class names changing, inline-style baking behavior changing,
-`dash_clientside.dashboard.*` namespace changing) with no automated test today that would catch a
-silent break (see §11). `requirements.txt` already exact-pins every relevant package (`vizro==0.1.56`, `dash==4.1.0`,
-`plotly==6.7.0`, confirmed directly) rather than using range constraints — good, this is already
-the right defensive posture for a codebase this dependent on framework internals. The remaining
-gap is process, not config: treat any future version bump as requiring a manual pass through
-STYLE_GUIDE.md §6's specific gotchas plus a nav-collapse/page-navigation smoke test, not just
-"bump the pin and see if it boots."
-
-### 7.2 `amazon_2026_discover.js` and `native_analytics.js` are small, well-targeted, low-risk
-
-Both files are short (40 and 209 lines), narrowly scoped to one concrete UX problem each (search-
-clear-button sync via the native `input` event since Dash's debounced `value` prop lags; nav-panel
-collapse-state persistence), and both carry comments explaining the *why*, not just the *what* —
-consistent with this dashboard's overall documentation discipline (STYLE_GUIDE.md, code comments
-throughout). No changes recommended here; flagging mainly as a positive data point that contrasts
-with the duplication found elsewhere.
-
-### 7.3 Naming debt: `--amazon-publishers-*` as a dashboard-wide alias
-
-Per §2.3 — `charts_shared.py`'s `THEME_*` constants and a large fraction of the CSS resolve through
-`--amazon-publishers-*` custom properties even on pages that have nothing to do with publishers
-(Overview, Discover, Topic Areas, Campaigns). STYLE_GUIDE.md §1 confirms this is a deliberate alias
-layer on top of the real `--na-*` tokens (presumably for historical reasons — Publishers was
-likely the first page built and the naming never got revisited once other pages adopted the same
-tokens). It's harmless today (the indirection is one CSS custom-property lookup, free at runtime)
-but it is a standing tax on every new contributor's first five minutes in this codebase. Cheap,
-mechanical, zero-risk rename whenever there's a slow afternoon: point `charts_shared.py` and the
-CSS directly at `--na-*` and delete the alias block.
-
----
-
-## 8. Performance & speed
-
-### 8.1 The startup preload pattern: smart idea, sloppy implementation
-
-`_start_overview_preload`, `_start_topic_area_preload`, `_start_narratives_preload`,
-`_start_campaigns_preload`, `_start_publishers_preload` (`dashboards/amazon_2026/__init__.py`)
-are five separate functions, each ~12-15 lines, each spinning up its own
-`ThreadPoolExecutor(max_workers=len(preload_keys))` inside its own daemon `threading.Thread`, each
-doing the identical `{key: executor.submit(data_manager[key].load) for key in preload_keys}` /
-`future.result()` / `logger.warning` dance. The *idea* — warm every page's BigQuery-backed cache
-in parallel at process start so the first real user never pays a cold-query penalty — is exactly
-right and clearly already paying off for warm-instance latency. The *implementation* is ~70 lines
-that are 90% identical boilerplate five times over, which means a fix to the pattern (e.g. adding
-a timeout, adding a metric, changing the logging format) has to be applied identically five times
-and will eventually drift. **Recommendation**: one
-`_preload(name: str, keys: list[str]) -> None` helper parameterized by a label and a key list,
-called five times with five lists, replacing all five bespoke functions — pure deduplication, no
-behavior change. Five `threading.Thread(target=functools.partial(_preload, "overview",
-OVERVIEW_PRELOAD_KEYS)).start()` one-liners instead of five 15-line near-twins.
-
-### 8.2 That same preload pattern is actively harmful on a cold Cloud Run start
-
-This is the single most consequential finding in this review, because it connects four facts that
-are each individually fine and combine into a real production risk:
-
-1. `cloudbuild.yaml:45`: **`--min-instances=0`** — Cloud Run is allowed to scale this service to
-   zero containers when idle, which is sensible for cost on a low/bursty-traffic internal tool,
-   but means the *first* request after any idle period pays a full cold start.
-2. `Dockerfile:23`: **`gunicorn --workers 2 --threads 8`** — every container that does start runs
-   **two independent Python processes**, each importing the full app and running its own copy of
-   `_build_dashboard()` from scratch.
-3. `dashboards/amazon_2026/__init__.py::build_pages()` runs `_register_data_sources()` (40+ keys),
-   `prime_schema_cache()` (5 `INFORMATION_SCHEMA` queries), and then **all five** preload fan-outs,
-   which collectively fire on the order of **40+ BigQuery queries** via thread pools, *per worker
-   process*, immediately on import.
-4. `cloudbuild.yaml:43-44`: **`--cpu=1 --memory=1Gi`** — one vCPU and 1GB of RAM for the entire
-   container.
-
-Multiply it out: a cold container start means **2 worker processes × ~40 concurrent-ish BigQuery
-queries each** racing for one vCPU and 1GB of RAM, at the exact moment a real user's first request
-is also waiting on that same container to finish booting Flask/Vizro/Dash before it can even start
-routing. The preload threads are daemonized and fire-and-forget from the app's perspective, so
-they won't block the HTTP response *forever*, but they will contend hard for the one available
-CPU core right when cold-start latency matters most, and every full-table pandas DataFrame loaded
-during that fan-out (publishers, narratives, topic areas, campaigns, the unbounded archive scatter
-from §3.4) has to fit in that same 1GB alongside two separate Python/Flask/Vizro process images —
-real OOM-kill risk on a worst-case cold start with several large tables landing in memory at once,
-not merely a slow one. `gunicorn --timeout 120` means a request that's still waiting on a
-contended cold start past 120 seconds gets its worker killed mid-flight, which would surface to
-users as an intermittent 502 right after a scale-from-zero event — exactly the kind of bug that's
-hard to reproduce on demand and easy to misattribute to "BigQuery was just slow that one time."
-
-**Recommendation, concretely**:
-  - The cheapest, highest-leverage fix is a **one-line config change**: `--min-instances=1`. This
-    keeps one warm container always running, so cold starts only happen on deploys/instance
-    recycling, not on every idle gap — directly trading a small constant Cloud Run cost for
-    eliminating the worst-case latency/OOM scenario above. Worth the money for any dashboard
-    a client might actually be watching live.
-  - If staying at `min-instances=0` is a hard cost constraint, throttle the preload fan-out itself
-    on cold start: a single shared `ThreadPoolExecutor` with a bounded worker count (not five
-    independent pools each sized to their own key list) and/or stagger the five preload groups
-    instead of firing all simultaneously, so the one available vCPU isn't asked to context-switch
-    across ~40 simultaneous BigQuery client calls.
-  - Consider whether `--workers 2` is buying anything given Dash/Flask's I/O-bound profile and the
-    `--threads 8` already in play — two worker processes means double the preload cost, double the
-    cache fragmentation (§9.1), for resilience against one worker's Python-level crash. On a
-    single-vCPU container that tradeoff deserves a deliberate re-check, not just "that's what was
-    there originally."
-
-### 8.3 `_server_discover_data()` caching: correctly memoized, but with two real caveats
-
-Verified directly in `charts_discover.py:54-72` (not assumed from the STYLE_GUIDE's description):
-it's a plain module-level global (`_server_cache: tuple[...] | None = None`) populated on first
-call and returned as-is on every subsequent call — genuinely solving the problem it was built for
-(no more round-tripping the full Discover dataset through the browser on every filter change,
-per the STYLE_GUIDE's own framing). Two caveats worth flagging:
-
-  - **No TTL, ever** — every other dataset in this dashboard refreshes every 10 minutes via
-    `flask_caching`'s `CACHE_DEFAULT_TIMEOUT=600` (`app.py:229`). `_server_cache` does not
-    participate in that mechanism at all; once populated, a given worker process serves that exact
-    snapshot of Discover data **for the rest of that process's life**, even as the underlying
-    `data_manager[DISCOVER_ITEMS_KEY]` cache refreshes normally every 10 minutes underneath it.
-    Discover is therefore the one page in the dashboard where "data as of" silently diverges from
-    every other page the longer a worker process has been running. If this is intentional (e.g.
-    Discover's dataset is believed to change rarely enough that this doesn't matter in practice),
-    it should at least be a one-line comment saying so; if not, it needs the same TTL-based
-    invalidation every other dataset already has.
-  - **No lock around the check-then-set** — `if _server_cache is not None: return _server_cache`
-    followed later by `_server_cache = (...)` is a classic race under `gunicorn --threads 8`: two
-    near-simultaneous first requests to a freshly-started worker can both observe `None` and both
-    redundantly run `discover_records()`/`discover_cluster_records()`/`_build_color_map()` before
-    either assignment lands. Not a correctness bug (the result is idempotent, the second
-    assignment just overwrites with an equivalent value), but it's wasted CPU exactly during the
-    cold-start window already under the most contention (§8.2). A `threading.Lock` around the
-    populate-if-empty check is a five-line fix.
-
-### 8.4 Every page navigation pays a synchronous Firestore write, in production
-
-`app.py::_install_access_gate`'s `before_request` hook calls `tenancy.events.record_usage(user,
-slug)` synchronously, inline in the request path, on every real (non-AJAX, `Accept: text/html`)
-page load when auth is enabled. `record_usage` (`tenancy/events.py`) is appropriately fail-soft
-(catches and logs rather than raising), but "fail-soft" only protects correctness — it does
-nothing for latency. Every dashboard page navigation in production currently waits on a live
-Firestore document write before the page gate even finishes evaluating, adding Firestore's
-round-trip latency to *every single page load*, for analytics that nothing in the request path
-actually needs synchronously. **Recommendation**: move usage recording off the request's critical
-path — a background thread fire-and-forget (mirroring the daemon-thread pattern already used for
-preloading), or a lightweight in-process queue flushed periodically, would remove this latency
-without losing the audit trail.
-
----
-
-## 9. Scalability
-
-Three independent axes — data volume, concurrent users/instances, and tenant count — and this
-codebase is in a different place on each one.
-
-### 9.1 The cache TTL is tuned for data that updates every 10 minutes — it updates at most once a day
-
-**Important correction from an earlier draft of this section**: this finding is about wasted
-query cost and minor data-staleness skew, not about concurrent users being unable to use the
-dashboard — multiple simultaneous users are served correctly today, full stop, regardless of
-everything below. Worth saying plainly since the original framing of this finding could be (and
-was) misread as an availability/capacity problem, which it isn't.
-
-Confirmed with the team: the underlying BigQuery data behind `amazon_2026` updates **at most once
-a day**. Against that fact, `app.py:229`'s `flask_caching` configuration —
-`CACHE_DEFAULT_TIMEOUT=600` (10 minutes) — is tuned roughly two orders of magnitude too
-aggressively. Every `load_*` function's result is treated as stale after 10 minutes and
-re-queried from BigQuery on the next request, which means the ~40-50 registered datasets get
-**re-fetched from BigQuery up to 144 times a day** (every 10 minutes, around the clock) to
-re-fetch data that, in the overwhelming majority of those 144 cycles, hasn't changed since the
-*previous* cycle. That's not "8x redundant" (the framing in the original draft of this section,
-based on multi-instance fragmentation, see below) — it's closer to **140x redundant** against the
-data's real update cadence, and it's the single highest-value, lowest-effort fix in this entire
-review: it's a one-constant change, not a refactor.
-
-**Recommendation (agreed with the team): raise `CACHE_DEFAULT_TIMEOUT` to 3600 (1 hour).** This
-cuts the redundant-refresh frequency by 10x (from 144/day to 24/day) while staying comfortably
-fresher than the data ever actually changes — there's no scenario where an hour-old cache shows a
-user something wrong, since the source itself only moves once a day. If even tighter cost control
-is wanted later, this could become event-driven (invalidate the cache when the daily load job
-finishes, rather than guessing a timer) rather than a blind TTL at all — but a 1-hour constant is
-the right immediate fix and needs no further design work.
-
-**A related, smaller finding — independently raised, and correct**: even at whatever the TTL is
-tuned to, each refresh cycle re-runs the dashboard's ~50 independent `load_*` queries, and a large
-fraction of them re-scan the *same* one or two underlying tables (`amazon_2026_trad`,
-`amazon_2026_some`) with different `GROUP BY`/aggregation logic rather than sharing a single pass
-over the base data. For example, the Overview page alone runs `load_tml_split()`,
-`load_media_type_period()`, `load_sentiment_source_monthly()`, `load_source_sentiment_monthly()`,
-`load_overview_kpis()`, `load_some_platform()`, and `load_top_items()` — seven independent full
-scans of the same source tables, just sliced differently each time. BigQuery doesn't share scan
-work between separate queries, so this is real, additive cost on top of the TTL issue above (it
-determines *how much* work happens per refresh; the TTL determines *how often* that work
-repeats). Fixing the TTL is the bigger lever and should happen first; consolidating these queries
-(e.g. one broader extract per source table, with the rest of the slicing done in pandas, or
-BigQuery `GROUPING SETS` to compute several aggregations in one scan) is a real follow-up but a
-more invasive one — not blocking, worth scheduling once the TTL fix has landed.
-
-**The multi-instance angle from the original draft of this section is real but minor, not the
-main story.** `flask_caching.SimpleCache` (`app.py:229`) is an in-memory dict scoped to one Python
-process; with `gunicorn --workers 2` and up to `--max-instances=4`, there can be up to 8
-independent copies of this cache (plus a ninth-ish independent copy via `charts_discover.py`'s
-`_server_cache`, §8.3) live at once, each refreshing on its own clock. Given the daily-max update
-cadence, the practical consequence of this is small: at worst, two processes both show *today's*
-data, refreshed at slightly different minutes within the same hour — not the cross-tab
-inconsistency this section originally implied. The only real cost is redundant BigQuery query
-volume scaling with however many of the up-to-8 processes happen to be alive, which the TTL fix
-above already shrinks by 10x on its own. A shared cache backend (Redis/Memorystore, a
-`flask_caching` backend swap) would close this gap entirely and is still worth doing if/when this
-product runs at higher concurrent-instance counts, but it's a cleanup item now, not the urgent fix
-the TTL change is.
-
-### 9.2 Tenant count: the dashboard is single-tenant in practice today (cross-ref §6.2)
-
-Restating the §6.2 finding in scalability terms: the platform's access-control layer scales to N
-tenants today (that part is genuinely well-built — see §6.1). `amazon_2026`'s *data* layer does
-not — it is hardcoded to one project/dataset, so "scaling to a second client on this same
-dashboard" is currently a code change (wiring `resolve_client_dataset`), not a config change or an
-admin-panel action. If reselling this specific dashboard design to other clients is part of the
-product's growth plan, this is the blocker to schedule for, not a thing to discover under deadline
-pressure when client #2 signs.
-
-### 9.3 Data volume: the "load full table, filter in pandas" ceiling
-
-§3.1 explained why this pattern is *currently* a strength (cache-friendly, avoids a
-cache-key-explosion problem). It has a ceiling, and it's worth being explicit about where: every
-`load_*` function pulls its entire result set into a pandas DataFrame, in the memory of whichever
-worker process is running it, on every cache refresh. At today's data volumes (per-client
-quarterly/annual media-monitoring datasets — thousands to low hundreds-of-thousands of rows per
-table) this is fast and cheap. It stops being fast and cheap somewhere past that — the exact
-threshold depends on row width and how many of the ~40 cached DataFrames are resident
-simultaneously in a 1GB container (§8.2) — and the two genuinely unbounded queries flagged in
-§3.4 (`load_archive_scatter`, `load_narrative_top_publications`) will be the first to feel it,
-since their result size scales with raw event volume rather than with a fixed aggregation
-cardinality (a few hundred publishers/narratives/campaigns) the way almost everything else in the
-data layer does. **This is not an urgent problem** — it's a "know where the next bottleneck will
-be" note, not a "fix this now" one. The fix, when it's needed, is server-side pagination/sampling
-for those two queries specifically, not a wholesale architecture change.
-
-### 9.4 Firestore usage-event volume has no retention policy
-
-`tenancy/users.py::FirestoreUserStore.add_usage_event` writes one document per qualifying page
-load (§8.4), forever, with no TTL, archival, or rollup — contrast with `InMemoryUserStore` (the
-dev backend), which explicitly caps itself at the last 5,000 events specifically "to keep memory
-bounded in long-running dev sessions" (`tenancy/users.py:123-125`). The dev backend protects
-itself from unbounded growth; the production backend (Firestore) does not, because Firestore
-"growing" just means slowly accumulating storage cost and read volume rather than crashing a
-process — but the absence of any retention story (a TTL policy on the collection, a scheduled
-rollup into daily/weekly aggregates, anything) means usage-analytics storage cost grows linearly
-with total page views, forever, with no plan in place for when that becomes worth addressing.
-Firestore supports native TTL policies on a collection with minimal setup — worth adding before
-this becomes a "why is our Firestore bill climbing" investigation a year from now.
-
----
-
-## 10. Readability & maintainability
-
-### 10.1 Two genuine "god files"
-
-`charts_shared.py` (2,119 lines, three jobs — §4.1) and `fixtures.py` (2,194 lines, one job done
-extremely literally) are the two largest files in the dashboard and both are size-risk for
-different reasons. `charts_shared.py`'s risk is conceptual (it's hard to know where to look for a
-given concern). `fixtures.py`'s risk is purely mechanical: it is 2,194 lines of hand-built
-`pd.DataFrame(...)` literals, one realistic-looking fixture per `data_manager` key, used as the
-dev-mode/BigQuery-unavailable fallback for every `safe_query()` call. This is valuable — it's what
-lets local dev work with zero GCP credentials and is presumably also useful as informal
-documentation of each query's expected output shape — but it is also **the single most
-schema-coupled file in the codebase**: every time a `load_*` function's SELECT list changes (a
-column renamed, added, or removed), the matching fixture function should change too, and nothing
-enforces that they stay in sync. A `load_*` function and its fixture silently drifting apart isn't
-caught by anything today (there are no tests asserting fixture shape matches a real query's
-output shape — see §11), so the failure mode is "dev mode looks fine, BigQuery breaks in
-prod" or vice versa, discovered by a human rather than a check. Not urgent to restructure the file
-itself, but a lightweight schema-shape assertion (even just "fixture columns ⊆ expected columns,"
-checked once at import time in dev) would convert a silent-drift risk into a fail-fast one.
-
-### 10.2 Duplication inventory (consolidated from §3-§5)
-
-Pulling every duplication finding from this review into one place, since "the pattern repeats" is
-itself the finding that matters most for a codebase this size:
-
-| Pattern | Repeated in | Fix |
-|---|---|---|
-| Publisher identity resolution (`COALESCE(uid, seed-join, MD5-hash)`) | 8× in `data_publishers.py` alone, plus `data_narratives.py`/`data_campaigns.py`/`data_topic_areas.py` (§3.3) | One BigQuery view or one shared SQL-fragment function |
-| Campaign-column candidate-name list | `data_narratives.py`, `data_campaigns.py`, `data_topic_areas.py` (§3.3) | One `data_common.py` constant |
-| Inline sentiment `LIKE 'pos%'` logic | Multiple `data_*.py` files, despite `_sentiment_case()` existing (§3.3) | Always call the existing helper |
-| Sentiment donut figure builder | `charts_narratives.py`, `charts_publishers.py`, `charts_discover.py` (§4.2) | One shared `sentiment_donut_figure()` |
-| `_data_bar_column_styles` | `charts_narratives.py`, `charts_publishers.py` (§4.2) | Move to `charts_shared.py` |
-| `_combined_narratives_from_record` | `charts_narratives.py`, `charts_publishers.py` (§4.2) | Move to `charts_shared.py` |
-| Top publishers/journalists/publications tables | Defined in `charts_narratives.py`, privately imported by `charts_campaigns.py` (§4.2) | Make it a real, public, shared API |
-| 5× near-identical startup preload functions | `dashboards/amazon_2026/__init__.py` (§8.1) | One parameterized `_preload(name, keys)` |
-| Page-builder `vm.Page(...)` scaffolding | `overview.py`, `topic_areas.py`, `narratives.py`, `campaigns.py`, `publishers.py` (§5.1) | One `build_standard_page()` factory |
-| `--amazon-publishers-*` aliasing `--na-*` | `charts_shared.py` + most CSS files (§2.3, §7.3) | Mechanical rename, delete alias layer |
-
-None of these are individually urgent. Collectively, they're the clearest, lowest-risk path to
-making this codebase meaningfully smaller and easier to onboard into without changing a single
-pixel of output — likely a 1,000-1,500 line net reduction (roughly 5-7% of the dashboard's Python)
-if all were addressed.
-
-### 10.3 Dev-mode residue in production-path code
-
-Three small items, all already evidenced in §5.3-§5.4, grouped here because they share a root
-cause (code written for active development, never revisited once the feature shipped):
-`set_dev_mode(True)` called unconditionally rather than gated on `settings.is_dev`; `print()`
-debug statements in `narratives.py` bypassing the project's own `logging_setup.py` convention;
-and (worth adding here) the dashboard's own `STYLE_GUIDE.md` §12 documents a "Chart Context Menu"
-explicitly as **"Experimental"** with a global `localStorage`-persisted on/off toggle defaulting
-to visible — worth a deliberate decision (promote it out of "experimental" status, or gate it
-behind a settings flag the way `features_chat_enabled` gates the chat widget) rather than leaving
-a permanently-experimental feature live by default indefinitely.
-
-### 10.4 STYLE_GUIDE.md deserves explicit credit — and a sibling
-
-`STYLE_GUIDE.md` (740 lines) is, unusually, one of this codebase's best assets rather than an
-afterthought: it documents not just *what* the design tokens are but *why* specific non-obvious
-decisions were made (the five numbered "gotchas" in §6 reverse-engineering exactly how Plotly
-bakes SVG styles are the kind of hard-won knowledge that normally lives only in one engineer's
-head and gets re-discovered painfully by the next person). Very few dashboards this size have
-documentation this precise. The natural next step — and the direct motivation for *this* document
-existing alongside it — is an equivalent living document for the **backend** architecture: where
-each data flow goes, which caches exist and their invalidation rules, the deployment topology and
-its scaling knobs (§8-9), and the duplication inventory (§10.2) as a checklist to work through
-opportunistically. This document can seed that; it shouldn't be the last word on it, since (unlike
-STYLE_GUIDE.md, which is updated by the same people doing the styling work) an architecture doc
-needs the same "update it when you touch the thing it describes" discipline to stay trustworthy.
-
----
-
-## 11. Testing, observability, resilience
-
-### 11.1 There are zero automated tests in this codebase
-
-Confirmed by a repo-wide search for `test_*.py` outside `.venv`: none. Not "low coverage" — none.
-For a 22,000-line dashboard whose core logic is **51 hand-built SQL strings**, **~52 callbacks**,
-and a non-trivial amount of pure-Python geometry (the timeline chart height/flag-placement math in
-§4.1), this is the single largest structural risk in the codebase, ahead of any individual
-duplication or performance finding above — because it means every fix this document recommends
-currently has to be verified by hand, every time, including re-verifications after unrelated
-changes. Concretely, the kinds of bugs this codebase is most exposed to (a BigQuery schema rename
-silently changing which candidate column an `_optional_string_expr` call picks; an off-by-one in
-the `_metric_pivot`/`_weekly_grid_cte` SQL-fragment builders; a sign error in the mirrored
-media-split axis math; a callback's Input/Output order silently shifting after a refactor) are
-exactly the class of bug that's cheap to catch with a unit test and expensive to catch by staring
-at a chart and noticing a number looks wrong.
-
-**Recommendation, realistic and prioritized for a codebase starting from zero**:
-  1. **SQL-fragment unit tests, no BigQuery required**: `data_common.py`'s helpers
-     (`_optional_string_expr`, `_sentiment_case`, `_metric_pivot`, `_weekly_grid_cte`, etc.) are
-     pure string-building functions — trivially testable without touching BigQuery at all
-     (assert the right candidate column gets picked, assert the SQL shape for known inputs).
-     Highest ratio of confidence gained to effort spent; start here.
-  2. **Fixture-shape assertions** (§10.1) — assert each `load_*` function's expected output
-     columns match its paired fixture's columns, catching the "query and fixture silently drifted
-     apart" failure mode automatically instead of by accident.
-  3. **Pure-function chart-geometry tests**: `_nice_axis_step`, `_add_reach_flag_annotations`'s
-     pixel-math, `_smooth_nonnegative_curve`'s PCHIP wrapper — all pure functions with no Dash/BQ
-     dependency, all currently verified only by eyeballing a rendered chart.
-  4. **One end-to-end smoke test for the Discover page specifically** (§5.2) — given it has the
-     dashboard's most complex callback graph and the least margin for confident manual reasoning,
-     it's the best single candidate for a Selenium/Playwright-style "load the page, apply a
-     filter, assert the table updates" test, even if nothing else in the dashboard gets one.
-  5. **`tenancy/access.py`'s `can_access`/`accessible_slugs`** — small, pure, security-relevant
-     functions with zero current test coverage; a regression here is a real access-control bug,
-     not just a cosmetic one.
-
-None of this needs a full test-pyramid strategy or a CI overhaul to start paying off — even a
-single `tests/` directory with `pytest` and the five items above, run manually before a deploy,
-would be a categorical improvement over the current zero.
-
-### 11.2 Observability is present but inconsistent
-
-`logging_setup.py` establishes a sound, simple convention (structured `logging.getLogger(__name__)`
-calls, one-time `basicConfig`), and most of the codebase follows it — the preload functions log
-warnings on individual key failures, `tenancy/events.py` logs (rather than raises) on audit/usage
-failures, `auth/firebase.py` logs cache misses appropriately. The exceptions are notable precisely
-because they're exceptions: `narratives.py`'s `print()` debug statements (§5.4) bypass this
-entirely, and — worth checking the next time anyone is in this code — there's no log line
-anywhere in the preload fan-outs or `_server_discover_data()` distinguishing "cache cold, doing
-real work" from "cache warm, instant" at the info level, which would make the cold-start behavior
-described in §8.2 directly observable in Cloud Logging instead of inferred from latency alone.
-**Recommendation**: a single `logger.info("Discover cache populated in %.2fs", elapsed)`-style line
-in `_server_discover_data()`'s populate branch, and equivalent timing logs around each preload
-fan-out's `ThreadPoolExecutor` block, would make the exact failure mode described in §8.2 visible
-in production logs the next time it happens, rather than requiring this document's reasoning to
-be re-derived from scratch under deadline pressure.
-
-### 11.3 Resilience patterns are good where they exist, missing where they're assumed
-
-`safe_query()`'s dev-fallback-but-raise-in-prod split (§3, `data_sources/bq.py:42-57`) is exactly
-the right call — fabricating numbers in production would be worse than a visible error, and the
-docstring says so explicitly. `tenancy/events.py`'s fail-soft audit/usage recording is the same
-good instinct applied to non-critical telemetry. What's *not* covered: nothing in the 51 `load_*`
-functions has a per-query timeout independent of `safe_query`'s general exception handling, so a
-single hung BigQuery query (network partition, a runaway query against a much-larger-than-expected
-table) blocks whichever preload thread or request thread is waiting on it for however long
-BigQuery's own client-level timeout allows — worth confirming `google-cloud-bigquery`'s default
-timeout behavior is acceptable here rather than assuming it is, given §8.2's finding that the
-preload fan-out is already the most resource-contended moment in this app's lifecycle.
-
----
-
-## 12. Security
-
-This dashboard does not have the kind of glaring security holes this review was watching for, and
-that's worth stating plainly rather than only listing caveats. The specific things checked and
-confirmed clean, plus the handful of real (mostly low-severity) findings:
-
-### 12.1 SQL injection: not a live risk, by construction
-
-Every one of the 51 `load_*` functions in the data layer takes **zero arguments** (§3.1) — no user
-input (dropdown selections, search box text, slider values) ever reaches a BigQuery query string.
-All filtering on user-controlled values happens in pandas/Python after the fixed, parameterless
-query has already run. This is a strong, structural guarantee, not a "we were careful this time"
-one — there is no call site where a developer *could* introduce a SQL-injection bug into this
-dashboard's data layer without first changing the load function's signature to accept a parameter,
-which would be a visible, reviewable change. Confirmed by reading the data layer directly, not
-inferred.
-
-### 12.2 Access control is real but coarse — restating §6.2's implication as a security finding
-
-`tenancy/access.py`'s gate genuinely enforces "can this user open `amazon_2026` at all" (§6.1) —
-that part of the security model is sound. But because `amazon_2026`'s data layer is hardcoded to
-one project/dataset (§6.2) with no row-level or dataset-level scoping by `client_id`, the
-*effective* security boundary today is "all-or-nothing access to all of `amazon_2026`'s data" —
-which is fine and matches reality while there's one client, but is worth flagging explicitly as a
-**pre-condition that must be fixed before onboarding a second client to this dashboard**, not an
-incremental hardening to get to eventually. Reselling this dashboard design to client #2 without
-first wiring `resolve_client_dataset` through would mean client #2's users — once granted access
-to a slug called `amazon_2026` — see client #1's BigQuery rows. This is the same finding as §6.2,
-restated here because it's the framing that should drive prioritization: it's not a performance
-nice-to-have, it's a tenant-isolation precondition.
-
-### 12.3 Auth implementation details checked and sound
-
-`auth/firebase.py`'s session-cookie flow (HttpOnly cookie, server-side verification, TTL'd claims
-cache with forced periodic revocation re-checks) follows Firebase's own recommended pattern
-correctly. `config.py`'s `auto_provision_users` default (`False`) is the safer default — an
-authenticated-but-unprovisioned user is denied rather than silently granted zero-access-but-valid
-access by default, requiring an explicit admin action either way. The dev-mode "View as" cookie
-impersonation (`auth/middleware.py`) only activates when `auth_enabled=False`, so it's not a
-production bypass path.
-
-### 12.4 Minor, low-severity items
-
-  - `cloudbuild.yaml:41` embeds `FIREBASE_API_KEY=AIzaSy...` directly in the deploy command rather
-    than via `--set-secrets` (unlike `SESSION_SECRET`, which correctly uses Secret Manager).
-    Firebase **Web API keys are designed to be public** (they identify a Firebase project to
-    Google's client SDKs and are meant to ship inside client-side JS; the real access boundary is
-    Firebase's own security rules plus authorized-domain restrictions, not key secrecy) — so this
-    is very likely fine as-is and not a vulnerability, but it's worth a one-line confirmation in
-    a README or comment that this specific key is intentionally treated as non-secret, so a future
-    security pass doesn't have to re-derive that reasoning from scratch, and so nobody "fixes" it
-    into Secret Manager for the wrong reason while leaving an actual secret exposed elsewhere.
-  - The chat extension (`extensions/chat_with_data.py`) is correctly authorization-gated
-    (`current_user()` + `can_access()` checked before any data leaves the endpoint, §6.3) and
-    question length is capped (`_MAX_QUESTION_LEN = 500`) before it ever reaches a prompt — good,
-    deliberate prompt-injection-surface minimization for what is, structurally, a
-    user-input-to-LLM-prompt pathway.
-  - No CSRF token is used on the chat endpoint, by explicit, documented design ("read-only... and
-    is intentionally CSRF-exempt") — a defensible call given the endpoint only reads and returns
-    data the user is already authorized to see; flagging only so this stays a deliberate decision
-    that gets re-confirmed if the endpoint ever gains a mutating capability, not something assumed
-    safe forever by inertia.
-
----
-
-## 13. Prioritized roadmap
-
-Organized by tier, not by section number — within a tier, items are roughly independent and can
-be done in any order or in parallel by different people. Every item references the section with
-full evidence/reasoning. Nothing here has been implemented; this is the punch list to work
-through deliberately, in whatever order matches available time and risk appetite.
-
-### Tier 0 — trivial, near-zero-risk, do whenever there's a spare hour
-
-These are all small, mechanical, and each independently worth doing regardless of anything else
-on this list:
-
-1. ✅ **DONE.** Remove/replace the `print("[NARR-DEBUG] ...")` statements in `narratives.py` with
-   proper `logger.debug(...)` calls, or delete them outright (§5.4, §11.2).
-2. ⬜ **Still open.** Decide and act on `set_dev_mode(True)` (`pages/__init__.py:36`) — still called
-   unconditionally, not gated on `settings.is_dev` (§5.3, §10.3).
-3. ✅ **DONE (2026-06-24).** Added a `threading.Lock`-guarded double-check around
-   `_server_discover_data()`'s populate-if-empty check (`charts_discover.py`) — removes the
-   redundant-work race under concurrent first requests (§8.3).
-4. ✅ **DONE.** `logger.info` timing lines now log on preload completion (`__init__.py`) — cold-
-   start behavior is observable in logs (§11.2).
-5. ⬜ **Still open.** No comment added near `FIREBASE_API_KEY` in `cloudbuild.yaml` yet (§12.4).
-
-### Tier 1 — infrastructure/config changes: highest payoff per hour spent
-
-These aren't code refactors — they're config and small wiring changes that directly fix the
-biggest latency/consistency/cost risks found in this review:
-
-6. ⬜ **Still open — do this next.** Raise `CACHE_DEFAULT_TIMEOUT` from 600 (10 min) to 3600
-   (1 hour) in `app.py`. Confirmed still `600` in the current code. Single highest-value,
-   lowest-effort fix in this entire document — the underlying data updates at most once a day, so
-   the current 10-minute TTL re-fetches everything from BigQuery up to 144 times/day for no
-   freshness benefit (§9.1). One constant, no refactor, agreed with the team.
-7. ⬜ **Still open — do this next.** Set `--min-instances=1` on the Cloud Run service. Confirmed
-   still `0` in `cloudbuild.yaml`. Directly eliminates the worst-case cold-start scenario (§8.2:
-   2 workers × ~40 concurrent BigQuery queries racing for 1 vCPU/1GB on a cold container) for the
-   cost of one always-on instance.
-8. ⬜ **Still open.** Add a `threading.Lock`-guarded TTL (matching whatever #6 lands on) to
-   `_server_discover_data()`'s cache (§8.3, §9.1) so Discover stops silently diverging from every
-   other page's freshness guarantee the longer a worker has been alive — ideally by folding this
-   into `data_manager` instead of maintaining a second hand-rolled cache next to it.
-9. ⬜ **Still open.** `tenancy.events.record_usage()` is still called synchronously inline in
-   `app.py::_install_access_gate` (§8.4) — move to a fire-and-forget background thread.
-10. ⬜ **Still open.** No Firestore TTL policy (or scheduled rollup) on the usage-events
-    collection yet (§9.4).
-11. ⬜ **Still open, lowest priority of this tier.** `flask_caching` still uses `SimpleCache`, not
-    a shared backend (§9.1).
-
-### Tier 2 — close the multi-tenancy gap (schedule deliberately, don't discover under deadline)
-
-12. **Wire `tenancy.access.resolve_client_dataset(current_user())` into `data_common.py`'s
-    `_table()`/`PROJECT_ID`/`DATASET_ID`** (§6.2, §9.2, §12.2). This is the one item on this list
-    that is both a scalability gap and a tenant-isolation precondition, not merely a nice-to-have
-    — budget real design time for it (likely a request-scoped context var threaded from the access
-    gate, consistent with `dashboards/_base.py`'s own documented intent that per-user data scoping
-    happens "at request time inside dynamic-data loaders"), and treat it as a blocker for ever
-    onboarding a second client onto this dashboard, not a backlog item to get to eventually.
-
-### Tier 3 — deduplication pass (compounds over time, zero behavior change)
-
-Best done together as a single focused pass, since they're all "delete duplicated code, change
-nothing visible" — low risk, and the kind of work that's easiest to justify in one batch rather
-than piecemeal:
-
-13. ✅ **DONE.** Collapse the 5 near-identical startup preload functions into one parameterized
-    helper (§8.1) — confirmed consolidated in `__init__.py`.
-14. **Mostly done, one piece left.** `_data_bar_column_styles`/table-bar-styling was already
-    consolidated into `charts_shared.py::_narrative_data_bar_styles`, shared by both pages.
-    `_combined_narratives_from_record` now exists in one place only (`charts_publishers.py`), not
-    duplicated. The sentiment donut figure was still genuinely triplicated
-    (`charts_narratives.py::_narrative_sentiment_donut`, `charts_publishers.py::_mini_donut_chart`,
-    `charts_discover.py::_discover_engagement_sentiment_donut`) — ✅ now consolidated into
-    `charts_shared.py::donut_figure()`/`donut_panel()`/`empty_donut_panel()` (§4.2, §10.2).
-15. ⬜ **Still open.** The top publishers/journalists/publications table builder is still a
-    private cross-module import from `charts_narratives.py` into `charts_campaigns.py`, not a
-    shared public API (§4.2).
-16. **Partially done.** The campaign-column candidate list is now a single `data_common.py`
-    constant (`CAMPAIGN_COLUMN_CANDIDATES`), used consistently across `data_narratives.py`,
-    `data_campaigns.py`, `data_topic_areas.py` — confirmed ✅. Most `_sentiment_case()` adoption is
-    now consistent, but a handful of inline `LIKE 'pos%'` sentiment checks remain
-    (`data_narratives.py` lines ~85/99, `data_topic_areas.py` lines ~133/153/208/226) — not fully
-    converted yet. Publisher-identity COALESCE resolution is still duplicated, not consolidated.
-17. ⬜ **Still open.** No `build_standard_page()` factory yet — the five pages still hand-roll
-    near-identical `vm.Page(...)` scaffolding (§5.1).
-18. ⬜ **Still open.** `--amazon-publishers-*` CSS custom properties are still in use, not renamed
-    to `--na-*` (§2.3, §7.3).
-19. ⬜ **Still open.** The redundant per-page BigQuery scans noted in §9.1 are not yet
-    consolidated — do this after, and separately from, the TTL fix (Tier 1 #6).
-
-### Tier 4 — foundational investment (start small, this is the long game)
-
-20. **Started.** A `tests/` directory now exists (`test_access.py`, `test_security.py`,
-    `test_routes.py`, `test_dashboard_discovery.py`, `test_amazon_2026_publishers.py`,
-    `conftest.py`) — `tenancy/access.py` (§11.1 sub-item 5) and some pure chart helpers (§11.1
-    sub-item 3) are covered. Still missing from the original five-item list: SQL-fragment-builder
-    tests for `data_common.py` (sub-item 1, the highest ratio of confidence-to-effort), fixture-
-    shape assertions (sub-item 2), and the Discover end-to-end smoke test (sub-item 4).
-21. Split `charts_shared.py` into `theme.py` / `ui_components.py` / `timeline_charts.py` (§4.1) —
-    do this *after* Tier 3's dedup pass, so there's less to move.
-22. Design and prototype a BigQuery normalization view (or equivalent) that exposes one stable
-    column name per concept for `amazon_2026_trad`/`amazon_2026_some`/`amazon_2026_publishers`,
-    to eventually retire the 61-call-site schema-drift defense layer (§3.2). This is data-
-    engineering work, not a Python refactor, and the highest-ceiling simplification in the data
-    layer — but also the most expensive item on this list, so it belongs at the end, tackled when
-    there's room to do it properly rather than squeezed in.
-23. Add server-side row limits/sampling to `load_archive_scatter()` and
-    `load_narrative_top_publications()` (§3.4) — not urgent today, but cheap to add now while the
-    threshold is still comfortably far away, versus discovering the threshold the hard way later.
-24. Wire an `amazon_2026` provider into `extensions/chat_with_data.py` (§6.3) so the platform's
-    marquee AI feature stops being a dead end on the dashboard that matters most — or, if not a
-    priority, explicitly suppress the chat widget on dashboards without a registered provider so
-    it isn't a visible dead end in the meantime.
-
-### Recommended next two (2026-06-24): highest impact, lowest risk, still open
-
-Picked from everything still open above, not from scratch — these are the only two items this
-document itself calls "highest payoff" / "no downside," and both remain untouched in the current
+The previous document accumulated many dated correction blocks. Verified status against current
 code:
 
-1. **Tier 1 #6 — raise `CACHE_DEFAULT_TIMEOUT` to 3600 in `app.py`.** One constant. Zero behavior
-   risk (the data source updates at most daily, already agreed with the team). Cuts BigQuery
-   re-fetch volume ~6x.
-2. **Tier 1 #7 — set `--min-instances=1` in `cloudbuild.yaml`.** One deploy-config flag. Removes
-   the cold-start/OOM/502 risk described in §8.2. The only "cost" is a small always-on Cloud Run
-   instance charge — no code risk at all.
+| Old-plan claim                                                     | Status now                                                                                                                                                                               |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cache TTL `CACHE_DEFAULT_TIMEOUT=600`, "raise to 3600"             | **Done.** `app.py` sets `3600`.                                                                                                                                                          |
+| `record_usage()` synchronous in the request path                   | **Done.** `tenancy/events.py` submits to a `ThreadPoolExecutor` (`_usage_executor`); the gate no longer blocks on Firestore.                                                             |
+| `_server_discover_data()` has no TTL and no lock                   | **Done.** `charts_discover.py` now has `_SERVER_CACHE_TTL_SECONDS`, `_server_cache_at`, and a double-checked `_server_cache_lock`.                                                       |
+| Five near-identical preload functions                              | **Done.** One `_start_preload(name, keys)` in `dashboards/amazon_2026/__init__.py`, called 5×.                                                                                           |
+| `data_common.PROJECT_ID/DATASET_ID` hardcoded                      | **Done (code half).** `_resolve_dataset()` reads the `amazon` `Client.bq_dataset`, falling back to literals. **Open (ops half):** the `Client` record doesn't exist yet; IAM not scoped. |
+| Publisher-identity `COALESCE` duplicated                           | **Done.** One `_publisher_uid_expr()` in `data_common.py`.                                                                                                                               |
+| Inline `LIKE 'pos%'` sentiment checks                              | **Done.** All route through `_sentiment_case()`.                                                                                                                                         |
+| Campaign-column candidate list copy-pasted                         | **Done.** One `CAMPAIGN_COLUMN_CANDIDATES` constant.                                                                                                                                     |
+| Two sentiment-donut implementations                                | **Done.** Both use `sentiment_donut_slices()` in `charts_shared.py`.                                                                                                                     |
+| Table-toolkit duplicated across chart modules                      | **Done.** Moved to `charts_shared.py` (see `tests/test_amazon_2026_charts_shared_table_toolkit.py`).                                                                                     |
+| `--amazon-publishers-*` CSS alias                                  | **Done.** Renamed to `--na-*`; dead alias block removed.                                                                                                                                 |
+| `print("[NARR-DEBUG]")` in `narratives.py`                         | **Done.** No `print(` remains in the dashboard (grep-clean).                                                                                                                             |
+| **"There are zero automated tests"**                               | **Stale / wrong now.** `tests/` has 8 modules, **57 passing** (access, routes, security, discovery, data_common SQL helpers, publishers, discover cache, shared table toolkit).          |
+| `--min-instances=1` recommended                                    | **Still open.** `cloudbuild.yaml` is `--min-instances=0`.                                                                                                                                |
+| `set_dev_mode(settings.is_dev)`                                    | **Still open.** `pages/__init__.py` calls `set_dev_mode(True)` unconditionally.                                                                                                          |
+| `SimpleCache` → shared backend                                     | **Still open.** Still `SimpleCache`.                                                                                                                                                     |
+| Firestore usage-event TTL/rollup                                   | **Still open.**                                                                                                                                                                          |
+| `amazon_2026` chat provider                                        | **Still open.** `extensions/chat_with_data.py::_DATA_PROVIDERS` = `{timeline, breakdown, bq_sample}` only.                                                                               |
+| Page-builder `vm.Page(...)` scaffolding dedup                      | **Done.** `pages/_shared.py::build_standard_page()`.                                                                                                                                     |
+| `charts_shared.py` split                                           | **Done.** → `theme.py` / `timeline_charts.py` / `ui_components.py`.                                                                                                                      |
+| Unbounded `load_archive_scatter`/`load_narrative_top_publications` | **Still open.**                                                                                                                                                                          |
+| Schema-drift normalization view                                    | **Still open** (long-term, data-engineering).                                                                                                                                            |
+| **Navigation: all pages of all dashboards visible**                | **New emphasis, root cause now pinpointed.** Was only noted in passing as a JS workaround; see §5.1.                                                                                     |
 
-Both are pure config changes (no code paths touched), independent of each other, and reversible by
-flipping the value back. Tier 0 items #2/#3/#5 are equally low-risk but lower-impact (cosmetic/
-observability), so they're good filler work, not the next priority.
+Net: the data-layer dedup and the performance/correctness items are largely closed. The frontier
+moved to **navigation architecture**, **deployment config**, **the multi-tenant operational
+gap**, and **repo hygiene**.
 
 ---
 
-## 14. Target architecture: from one dashboard to a multi-client platform
+## 3. Current Architecture Map
 
-This section answers a forward-looking question rather than a code-review question: the stated
-goal is many **clients** (confirmed: up to ~30), each client with **multiple dashboards** and
-**multiple users**, users possibly restricted to a subset of their client's dashboards, **strict
-no-data-leakage** guarantees between clients, and a strong preference for **one running
-application instance** so that shared internal tooling (theming, chat, saved views, table/KPI
-components — everything built so far) is available to every client automatically rather than
-forked N times. This is intentionally a conceptual architecture discussion, not an implementation
-plan — depth stays at the "what shape should this take and why" level on purpose, per the brief.
-§14.0 and §14.8 record the team's answers across two rounds of clarifying questions — between
-them, every open question this section raised has now been resolved.
+**Platform shell** (`app.py`)
+- One process-global Vizro `Dashboard`. Vizro/Dash's page registry is process-global, so every
+  dashboard contributes pages into a single `vm.Dashboard` — a hard framework ceiling, documented
+  in `app.py`'s own docstring.
+- A monkeypatch making `dash._callback.insert_callback` idempotent works around a Vizro 0.1.56 /
+  Dash 4.x duplicate-callback-registration bug. Correct, well-commented, but patches a private Dash
+  internal — a version-bump regression risk with no test forcing it to surface.
+- Cache: a single `flask_caching.SimpleCache` (TTL 3600s) attached to Vizro's `data_manager.cache`.
+- Mounts Vizro under `settings.vizro_mount_prefix` (`/app/`), keeping `/` for the Client Hub.
 
-### 14.0 Requirements, as confirmed
+**Dashboard plugin discovery** (`dashboards/__init__.py`, `dashboards/_base.py`)
+- `discover_dashboards()` scans `dashboards/<slug>/` for packages exporting `MANIFEST` +
+  `build_pages` (optionally `data_health`, `PAGE_ICONS`); enforces `manifest.slug == folder name`.
+  `get_registry()` is `lru_cache`d so blueprints can read metadata without re-importing `app`.
+- `DashboardManifest` (slug, title, icon, category, `required_role`, `data_requirements`),
+  `BuildContext` (process-level, `is_dev`), and helper builders (`export_button`, `freshness_note`).
+- The contract docstring already states the bespoke-per-client rule and the
+  "resolve dataset from `Client.bq_dataset`" pattern.
 
-- **Up to ~30 clients.** Small/medium enterprise scale, not thousands of self-serve tenants —
-  this matters throughout: it keeps a shared-instance model's blast radius manageable and means
-  operational/onboarding tooling can stay fairly lightweight for a while.
-- **Clients are similar in the general kind of work they need, but every dashboard will be its
-  own build — different charts, different pages.** Corrected from an earlier draft of this
-  section, which misread "clients will be similar" as "one reusable dashboard template, pointed
-  at different data." That's not the model: `amazon_2026` is **not** a universal template.
-  General-purpose *pieces* (a complex chart type worth reusing, table/KPI components, theming) are
-  expected to be shared; the overall page/chart design of a given dashboard is not.
-- **Shared custom tooling — chat, saved views, and similar — is explicitly meant to be shared
-  across all clients' users.** Confirms the platform-level tooling investment (extensions/*,
-  charts_shared.py, the theming system) is the right thing to keep building centrally.
-- **No data sharing between clients, ever.** Confirmed as an absolute constraint, as assumed.
-- **A client may have access to multiple, possibly different *types* of dashboards.** Not just
-  multiple instances of one template — a client's dashboard list can mix dashboard products.
-- **New requirement surfaced in this round: an internal role — named "operator" — that services
-  multiple clients and needs to switch between their dashboards, with less authority than a full
-  admin.** Turns out to be already expressible with the existing access model, with one small
-  caveat — see §14.3.
+**Client Hub / admin / auth / tenancy**
+- `pages_landing/routes.py` — the Client Hub at `/`: lists exactly the dashboards
+  `accessible_slugs(user)` returns, plus request-access flow, `/account`, login/logout, and a
+  dev-only "view as" switcher. Branding (`accent_color`) is hex-validated before injection.
+- `admin/routes.py` — admin blueprint under `/admin` (clients, users, grants, health, audit).
+- `auth/` — `firebase.py` (session-cookie verification with a TTL'd claims cache + forced
+  revocation re-check), `middleware.py` (`current_user()`, dev impersonation), `dev_users.py`
+  (fixture users/clients for `AUTH_ENABLED=false`).
+- `tenancy/` — `models.py` (Firestore dataclasses), `users.py` (`Protocol`-typed dual store:
+  `InMemoryUserStore` dev / `FirestoreUserStore` prod), `access.py` (single source of truth:
+  `accessible_slugs`, `company_slugs`, `can_access`, `resolve_client_dataset`), `events.py`
+  (fail-soft audit + off-thread usage recording).
 
-### 14.1 The good news: most of the *client-side* access-control shape already exists
+**Amazon 2026 data layer** (`dashboards/amazon_2026/data_*.py`)
+- `data_common.py`: dataset resolution, `_table()`, schema-introspection cache
+  (`_table_column_map` + `prime_schema_cache`), and shared SQL-fragment builders
+  (`_optional_*_expr`, `_coalesce_string_expr`, `_sentiment_case`, `_metric_pivot`,
+  `_weekly_grid_cte`, `_publisher_uid_expr`) plus candidate-name constants for schema drift.
+- 8 per-page `data_*.py` modules: ~50 zero-argument `load_*` functions, each returning a full
+  aggregated table via `safe_query()`; filtering happens later in pandas.
 
-`tenancy/models.py` + `tenancy/access.py` + `tenancy/users.py` (praised in §6.1 as some of the
-best-built code in the repository) already model most of §14.0's shape for a client's *own*
-users:
+**Chart / rendering layer** (`charts_*.py`)
+- `charts_shared.py` (~2.7k lines) doing three jobs: design tokens/palettes, UI-component builders
+  (`na_panel`, KPI cards, table toolkit, `register_top_items_callback` factory), and a non-trivial
+  timeline geometry engine (PCHIP smoothing, flag-annotation pixel math, dynamic height).
+- 7 page-specific `charts_*.py`: figure + `dash_table` builders, a few colocated callbacks.
 
-- `Client.dashboard_slugs` — a client is assigned a *list* of dashboards, of any type, not one.
-  "Multiple, possibly different types of dashboards per client" is already representable today,
-  with zero new code.
-- `User.client_id` + `User.dashboard_slugs` — a user belongs to one client and inherits that
-  client's dashboard grants, *plus* optional per-user extra grants; `accessible_slugs()`
-  (`tenancy/access.py`) computes the actual visible set per user. "Multiple users per client,
-  each possibly seeing a different subset of that client's dashboards" is already representable
-  today, with zero new code.
-- The request gate (`app.py::_install_access_gate`) already enforces "can this user open this
-  dashboard slug at all" on every request, centrally, in one place — not per-dashboard, not
-  reimplemented by each plugin.
+**Pages / callback layer** (`pages/`)
+- 7 page builders + `pages/_shared.py` (genuinely shared: `metric_filter`/`metric_parameter`,
+  `build_detail_timeline_response`, `build_overview_table_response`, `select_active_table_value`).
+- `pages/__init__.py::build_all_pages()` registers pages in build order and calls
+  `set_dev_mode(True)` (reference-code overlay from `dev_ids.py`).
 
-What's **not** yet built is narrower than the previous draft of this section claimed. There is
-genuinely only one confirmed gap, and it's smaller than "design a new role":
+**Extensions** (`extensions/`) — `chat_with_data.py` (auth-gated, CSRF-exempt by design, Gemini or
+local pandas fallback) and `saved_views.py` (introspection-driven, `localStorage`-persisted).
+Detachable via `app.py::install_extensions` + `config.features_chat_enabled`.
 
-- Today's model has two role values (`is_admin` / regular `user`), but `accessible_slugs()`/
-  `can_access()` (`tenancy/access.py:30-57`) already union `company_slugs(user)` (the user's own
-  client's grants) with `user.dashboard_slugs` (per-user *extra* grants) — and **nothing in that
-  code ties the extra grants to the user's own `client_id`**. `User.client_id` also defaults to
-  `""` and nothing requires it to be set (`tenancy/models.py`). That means an "operator" user —
-  empty `client_id`, `dashboard_slugs` populated with a curated list spanning several clients'
-  dashboards — is **already fully expressible today, with zero new schema or access-logic
-  changes**. §14.3 covers what (small) thing is actually still missing.
+**Data sources** (`data_sources/`) — `bq.py` (`safe_query` = dev-fallback / prod-raise; `table_ref`;
+pooled BQ client) and `fixtures.py`. Example dashboards use top-level `charts.py` + `data.py`.
 
-### 14.2 Confirmed direction: bespoke dashboards, sharing a toolkit — not a shared template
+**Assets** (`assets/`) — `native_analytics.css/js`, five `amazon_2026_*.css`,
+`amazon_2026_discover.js`, plus extension assets. The JS owns sidebar collapse/mode state and the
+nav-scoping hack (§5.1).
 
-Corrected from the previous draft, which read "clients will be similar" as "build one dashboard
-template and instantiate it per client." That's not the model. `amazon_2026` is one bespoke build
-among many to come — its own page layout, its own charts, its own taxonomy — and most future
-dashboards will look meaningfully different from it and from each other. What *is* shared is
-lower-level: reusable chart types, table/KPI components, the theming system, navigation chrome,
-and platform tooling (chat, saved views) — exactly the things already living in `charts_shared.py`
-and `extensions/`.
+**Tests / fixtures** — `tests/` (57 passing): `test_access`, `test_routes`, `test_security`,
+`test_dashboard_discovery`, `test_amazon_2026_data_common`, `test_amazon_2026_publishers`,
+`test_amazon_2026_discover_cache`, `test_amazon_2026_charts_shared_table_toolkit`. `conftest.py`
+forces `AUTH_ENABLED=false`. Dashboard fixtures: `dashboards/amazon_2026/fixtures.py` (~2.2k lines).
 
-This is good news for the architecture, not a complication: it means **tenant isolation is
-structural, by construction**, not something that has to be engineered into a shared,
-parameterized data layer. Each dashboard plugin is its own `dashboards/<slug>/` package, hardcoded
-to whichever one client (or small group) it was built for, exactly like `amazon_2026` is today.
-"Onboard a new client" mostly means *build their dashboard* (new pages, new charts) — it does not
-mean *configure an existing one*, and so it doesn't carry the cross-client blast-radius risk a
-shared template would (a bug in one dashboard's bespoke code cannot touch another dashboard's
-data, because there's no shared code path between them that reads a "current client" and
-branches on it).
+---
 
-The practical consequence: the platform's job is to (a) make it fast and consistent to *build* a
-new bespoke dashboard — by investing in the shared toolkit, not a shared data layer — and (b)
-make sure access control (which users can open which dashboard slugs) stays airtight as the
-number of dashboards and clients grows. Both are mostly things this review already recommends
-for other reasons (Tier 3 #17's page-scaffolding factory, Tier 4 #21's `charts_shared.py` split,
-§11.1's access-control tests) — multi-tenancy mostly raises their priority rather than adding new
-work.
+## 4. Strengths To Preserve
 
-### 14.3 The "operator" role (multi-client): smaller gap than first thought
+- **Plugin discovery + manifest contract.** Adding a dashboard is "drop a package, restart." Don't
+  add central registration. (`dashboards/__init__.py`, `dashboards/_base.py`)
+- **One centralized access gate.** `app.py::_install_access_gate` → `tenancy.access.can_access`,
+  enforced server-side on every `/app/d/<slug>` request. Keep authorization here, not in plugins.
+- **The no-argument cache contract.** Every `load_*` is parameterless and returns the whole table;
+  Vizro caches by callable identity, so BigQuery is hit once per dataset per TTL regardless of how
+  many entities users click. This is *why* drill-downs feel instant. Preserve it.
+- **`tenancy/*` design.** `Protocol`-typed dual store, single-source-of-truth access resolution,
+  fail-soft event recording. The best-structured code in the repo; a model for new modules.
+- **`safe_query` dev-fallback / prod-raise split.** Fabricated numbers never reach production.
+- **`saved_views.py` introspection approach.** Page-agnostic by walking the built layout tree —
+  the right way to do something generic in Dash.
+- **STYLE_GUIDE.md discipline.** Documents the hard-won Plotly/Vizro re-theming gotchas. Keep
+  updating it on every styling change.
+- **Exact-pinned framework deps** (`vizro==0.1.56`, `dash==4.1.0`, `plotly==6.7.0`). Correct given
+  how much frontend robustness rides on framework internals.
+- **The new test base.** 57 passing tests, including pure SQL-fragment tests that need no BigQuery.
+  Grow this; don't let it rot.
 
-This is the confirmed name for the internal role that services multiple clients — referred to
-generically as "staff" earlier in this section's drafting; **"operator" is the term to use going
-forward**, including in any future schema/UI work.
+---
 
-The previous draft of this section designed a whole new "servicing grant" + session-level
-"active client" mechanism for operators who need to move between several clients' dashboards.
-Given §14.1's direct read of `tenancy/access.py`, most of that isn't needed: grant an operator
-`dashboard_slugs = [client_A's slug(s), client_B's slug(s), ...]`, leave `client_id` empty, and
-they already see exactly those dashboards in their nav and can click between them like any other
-multi-dashboard user — no new field, no "switcher" component, no per-request "active client"
-context to invent, because each dashboard they open is its own self-contained, single-client
-plugin (§14.2). Navigating between them is just navigating between pages, which already works.
+## 5. Weaknesses And Risks
 
-What's actually still missing, now that the model itself is confirmed sufficient:
+### 5.1 Navigation: built per-page, then patched in JS (architecture boundary) — **done (2026-06-25, corrected same day)**
 
-1. **A "follow this client's whole dashboard list" convenience, optionally.** A regular client
-   user automatically inherits every dashboard their company has via `company_slugs()` — if that
-   client is later granted a new dashboard, their own users see it for free. An operator's
-   `dashboard_slugs` list has no such auto-follow: today you'd add each slug by hand, and adding a
-   dashboard to "the clients an operator services" wouldn't propagate automatically. Worth a small
-   follow-up if operators churn dashboards-per-client often enough for this to matter (e.g. a
-   `serviced_client_ids` list that `accessible_slugs()` also expands via `company_slugs()` for
-   each serviced client) — but it's a convenience feature, not a correctness gap, and easy to add
-   later without disturbing anything built in the meantime.
-2. **Auditing.** An operator opening a dashboard that isn't "their own" client's is a meaningfully
-   different trust event than a client's own user viewing their own data — worth a
-   `tenancy/events.py::record_audit` call site on that path, for internal accountability. Per
-   §14.0/§14.8: clients have no access to the operator account or its activity, so this stays a
-   purely internal record — no transparency-to-client feature to design.
-3. **A small UX nicety, not an architectural one**: since an operator may hold grants across
-   several clients' dashboards, labeling each dashboard with its owning client's name in the nav
-   (rather than just the dashboard's own title) avoids ambiguity about whose data they're looking
-   at — worth doing whenever the nav is touched next, not a standalone project.
+**First pass (superseded).** Initially fixed by building one `vm.NavLink` per *dashboard* + a CSS
+rule hiding inactive dashboards' icons. Wrong shape: it put the current dashboard's pages inside a
+secondary expand panel ("nav-panel") rather than the icon rail itself, which is not the desired UX —
+the icon rail must *be* the page switcher, with dashboard switching happening only through the
+Client Hub.
 
-The non-negotiable rule from §14.0 still applies and is, if anything, easier to guarantee here
-than it looked in the previous draft: because every dashboard is its own bespoke, single-client
-plugin, there is no code path that could blend two clients' data even by accident — an operator's
-session is always looking at exactly one dashboard, which is always exactly one client's, by
-construction.
+**Corrected design.** `app.py::_build_navigation()` builds one `vm.NavLink` per **page** again
+(`pages=[page.id]`, flat across every dashboard) — same shape the dashboard was in before any nav
+work this round, restoring direct icon-click-to-page navigation with no expand panel (Vizro's
+`Accordion.build()` hides the page-list panel whenever a NavLink covers exactly one page). The part
+that's new: `app.py::ScopedNavBar(vm.NavBar)` overrides `build()` to filter `self.items` down to only
+the active dashboard's pages, using a `page_id -> slug` reverse index (`_SLUG_FOR_PAGE_ID`) built once
+in `_build_dashboard()` alongside the existing `_PAGES_BY_SLUG`.
 
-### 14.4 Is "one running app instance" the right call?
+**Why this fixes the original bug at the right layer, not just the symptom.** Vizro registers every
+page's Dash route with `layout=partial(self._make_page_layout, page)`
+(`vizro/models/_dashboard.py`), and `_make_page_layout` calls
+`self.navigation.build(active_page_id=page.id)` **fresh, server-side, on every single page
+render** — confirmed by reading Vizro's source, not assumed. So `ScopedNavBar.build()` already knows
+exactly which dashboard is being opened on the *first* response for any page, full load or
+client-routed; there is no "render everything, then narrow down after a click" intermediate state to
+have a bug in, because the filtering is the *only* thing that ever runs — unlike the original
+pre-existing implementation (one NavLink per page across all dashboards + a `MutationObserver`-based
+JS hack hiding foreign links *after* the DOM existed), which is exactly why that version showed every
+dashboard's pages on first load and only narrowed down once a click triggered the hack.
 
-Yes — and the corrected model in §14.2 makes this an *easier* call than the previous draft argued,
-not a harder one. The confirmed scale (§14.0: up to ~30 clients) also helps, keeping the
-operational blast-radius concerns below manageable.
+**Safety property, deliberate and tested:** if `active_page_id` doesn't map to any dashboard (e.g.
+the Client-Hub-redirect placeholder page), `ScopedNavBar` renders an **empty** rail, never a fallback
+to "show every page" — that fallback is exactly what the original bug looked like, so it must never
+be the default. `tests/test_navigation.py::test_rail_is_empty_for_a_page_outside_any_dashboard` and
+`::test_rail_is_empty_for_an_unknown_page_id` assert this directly.
 
-**Why it's the right call:**
-- It's the only option that actually delivers the stated goal of "shared tooling reaches every
-  client automatically." A chat-widget improvement, a new table component, a theming fix — built
-  once, live for everyone on the next deploy. Per-client deployments would mean either redeploying
-  N services for every shared-platform change (operationally fine, but easy to let drift if not
-  automated) or accepting that clients silently run different versions of shared tooling.
-  Stated requirement.
-- It's also, practically, the path of least resistance against the framework: Vizro/Dash's page
-  registry is process-global (§2.1) — only one Vizro `Dashboard` can exist per Python process. The
-  current architecture (one process hosting N dashboard plugins as pages) is already the
-  *natural* way to use this framework for "many dashboards, one app." Fighting that toward
-  per-client processes would mean running N full copies of the stack (N Cloud Run services, N
-  preload fan-outs, N sets of cached data) for isolation benefits that, done carefully, can be had
-  another way (next point).
-- BigQuery-level isolation is achievable as a structural backstop *without* separate app
-  deployments: if each client's data already lives in its own BigQuery dataset (the existing
-  `bq_dataset_prefix`/`Client.bq_dataset` convention assumes exactly this) and the credentials the
-  app uses to query BigQuery are scoped so they can only read the datasets they're supposed to
-  (per-client service accounts, or IAM conditions on dataset access), then a missed or buggy
-  client-scoping check in Python **fails closed** — BigQuery returns a permissions error — instead
-  of **failing open** and silently returning another client's rows. This is the single highest-
-  leverage move available: it converts "robust separation" from "we trust the Python code is
-  always correct" (the actual situation today — zero test coverage on the relevant code paths,
-  per §11.1) into "even a bug can't leak data, it can only break loudly." This is worth treating as
-  load-bearing infrastructure, not a nice-to-have, precisely *because* you want one shared
-  instance.
+**Client/dashboard separation.** The rail only ever lists pages of the *one* dashboard currently
+being viewed — never a mix, by construction (filtering is a set intersection against that one
+dashboard's page-id set, with no cross-dashboard fallback path).
+`tests/test_navigation.py::test_every_amazon_2026_page_link_is_only_ever_amazon_2026_pages` checks
+this per-page, not just once. (This is rail *content* scoping, not access control — the existing
+per-dashboard access gate in `_install_access_gate` is unchanged and still the only thing standing
+between a user and a dashboard's data; the rail never bypasses it.)
 
-**What it costs, honestly — smaller than the previous draft suggested:**
-- **No process/OS-level isolation between clients.** A crash, memory leak, or runaway query
-  triggered by one client's dashboard still runs in the same container, competing for the same
-  CPU/memory, as every other client's traffic (the "noisy neighbor" problem — directly related to
-  the cold-start/resource-contention findings in §8.2). This is still real and still needs
-  monitoring (per-dashboard resource/latency tracking), and an escape valve (below) if it ever
-  becomes acute for one client — that part of the previous draft's analysis stands unchanged.
-- **Robustness is still a software-correctness concern, just a narrower one than previously
-  described.** Each dashboard's bespoke code only ever touches the one client it was built for
-  (§14.2), so there's no shared, parameterized layer whose bugs could cross client boundaries —
-  the realistic failure mode is *copy-paste*: building dashboard #5 by starting from dashboard #2's
-  code and forgetting to update a hardcoded project/dataset constant for the new client. That's a
-  build-time review/checklist item (§14.6), not an ongoing architectural risk every request is
-  exposed to.
-- **If a specific client ever contractually requires literal physical isolation** — a shared
-  instance still can't offer that guarantee no matter how good the engineering is. Keep the escape
-  valve open (config-driven per-client settings in `app.py`, so the same image could be deployed
-  single-tenant for one client if ever required) without building for it by default.
+**Restored, not new:** the per-page `PAGE_ICONS` / `RegisteredDashboard.page_icons` plumbing (deleted
+in the first pass on the wrong assumption it'd never be needed again) is back, plus a small
+`PAGE_ICONS` for `timeline`'s 2 pages so they don't share one icon. `bq_sample`/`breakdown` (1 page
+each) need none — they fall back to `manifest.icon` cleanly.
 
-**Bottom line**: one shared instance is the right call, and the bespoke-per-dashboard model
-(§14.2) makes tenant isolation closer to "true by construction" than "something to engineer in" —
-the main remaining work is operational (noisy-neighbor monitoring, IAM-level defense in depth) and
-procedural (a checklist for building new dashboards correctly), not a redesign of any shared data
-mechanism, because there isn't one.
+**Honest coupling risk.** `ScopedNavBar.build()` duplicates (not calls) the body of Vizro 0.1.56's
+`NavBar.build()`, substituting a filtered item list for `self.items`. Two details it depends on
+aren't public API: a Dash "find component by id" lookup (`built_items[item.id]`) and an
+`"nav-panel" in built_items` membership check (which relies on `dash.development.base_component.
+Component.__iter__`, traced directly against Dash's source to confirm it's safe on an empty
+children list — no exception on the "nothing visible" case). Same category of risk this codebase
+already accepts for the `insert_callback` monkeypatch (§2.1) and the Plotly CSS gotchas (§5.6):
+**re-verify `ScopedNavBar.build()` against `vizro.models.NavBar.build` after any Vizro version
+bump.** `tests/test_navigation.py` would fail loudly if that internal shape changes, rather than
+silently rendering the wrong icons.
 
-### 14.5 The technical problem from the previous draft doesn't apply here
+**Why not replace the nav entirely with something custom, bypassing Vizro's model?** Considered and
+rejected. The collapse panel (`#collapse-left-side`, `#collapse-icon`), the clientside
+`dashboard.collapse_nav_panel` callback already patched in `native_analytics.js`, the header layout,
+and the `#nav-control-panel` sidebar-docking host every extension button relies on are all still
+Vizro's code regardless of what drives the icon rail's contents. A full custom nav would still sit
+inside that chrome, so it would trade one narrow, single-method override for reimplementing several
+of those pieces ourselves — more surface coupled to Vizro internals, not less, for no robustness
+gain.
 
-The previous draft of this section spent real effort on a hard problem: Vizro's `data_manager`
-caches by key identity, not by tenant, so a *shared, parameterized* dashboard template would need
-its cache keys generalized to "key + active client." **That problem is specific to a templated
-architecture, and §14.2 confirms that's not the model here.** Each dashboard's `data_manager`
-entries are already, correctly, scoped to the one client that dashboard was built for — exactly
-like `amazon_2026`'s are today — and that stays true as more bespoke dashboards get added. There
-is no generalized cache-key-per-tenant mechanism to build.
+**The "3 extra buttons" (menu/chat/saved-views toggle) requirement — already satisfied, unaffected by
+any of this.** They're injected as a fixed-position dock (`#na-left-action-dock`,
+`assets/ext_saved_views.css`) wrapped around the *entire* Dash layout (`extensions/saved_views.py::
+_append_shell`), structurally independent of `vm.NavBar`/`#nav-bar`'s DOM — already app-wide platform
+code, not dashboard-specific, already positioned bottom-left. No change was needed or made here.
 
-The one narrow residual case worth naming: if a single dashboard's *code* is ever deliberately
-reused for two instances of the same client (e.g. one client wants the identical dashboard design
-for two of their own brands), that one dashboard would need tenant-aware cache keys *locally* — a
-small, contained decision made when (if) it happens, not a platform-wide requirement to design for
-now.
+Verified: `pytest` green (75 tests, including the 5 new `tests/test_navigation.py` cases), a direct
+in-process inspection of `ScopedNavBar`'s output for every real dashboard (including the two
+single-page ones and the home placeholder), and `node --check` on the edited JS. The original
+finding (first identified before either nav pass) is preserved below for context.
 
-### 14.6 Step-by-step transformation plan
+**Evidence.** `app.py::_build_navigation()` loops over every dashboard *and every page* and appends
+one `vm.NavLink(label=page.title, pages=[page.id])` per page. So `vm.NavBar` renders one icon per
+page across all dashboards — a flat, mixed list. `assets/native_analytics.js::applyNavScope()` then
+hides links whose `href` doesn't match the current `/app/d/<slug>` prefix, re-running on a
+`MutationObserver` and on patched `history.pushState`/`replaceState`.
 
-Much shorter than the previous draft, because §14.2's correction removes the biggest piece of
-work (a generalized multi-tenant data layer) entirely.
+This is upside-down relative to how Vizro is built. In `vizro/models/_navigation/nav_link.py`,
+`NavLink.build()` computes `item_active = active_page_id in all_page_ids` and **only builds its page
+accordion (`nav-panel`) when the link is active**. That means: with **one `NavLink` per dashboard**
+(`pages=[every page id of that dashboard]`), Vizro renders only the *active dashboard's* pages in
+the sidebar, natively, with no JS. The current per-page layout defeats that mechanism, which is
+exactly why the `applyNavScope()` workaround had to exist.
 
-1. **Treat `amazon_2026`'s existing gap (roadmap #12) as "use `Client.bq_dataset` instead of a
-   hardcoded constant," not "build shared multi-tenant infrastructure."** Worth doing for
-   ordinary config-over-hardcoding reasons (one place to fix if this client's dataset ever moves)
-   and so the *next* bespoke dashboard has a real example to copy the right pattern from — not
-   because other clients will ever run this same code.
-2. **Write a short "new dashboard" checklist**, since the realistic risk is copy-paste (§14.4):
-   when starting dashboard #N from an existing one, confirm every data-layer constant
-   (project/dataset, any hardcoded IDs) is correctly set for the new client *before* granting
-   anyone access to its slug. Cheap to write, and the single highest-leverage guard against the
-   actual failure mode in this model.
-3. **Push the per-client dataset convention down into BigQuery IAM** — scope the credential the
-   app uses so it can only reach the datasets it's supposed to, so a missed step-2 mistake fails
-   closed (permission error) instead of open (wrong client's data returned). At ~30 clients this is
-   a finite, manageable amount of IAM configuration — worth doing properly while the list is short.
-4. **Add the access-control test this review already recommends (§11.1, roadmap #20)**, scoped
-   simply: "a user only ever sees dashboard slugs in their `accessible_slugs()` result, including
-   operators with cross-client `dashboard_slugs` grants." This is testing the existing, already-
-   sufficient logic in `tenancy/access.py` (§14.1) — not new code, just the regression guard it's
-   missing today.
-5. **Add the audit-log call site from §14.3** (operator opening a dashboard outside their own
-   client) and, whenever the nav is next touched, label dashboards by owning client for operators
-   who hold cross-client grants (§14.3's UX nicety). Per §14.8, this stays a purely internal log —
-   clients have no visibility into the operator account or its activity, so there's no
-   transparency-facing surface to build alongside it.
-6. **Invest in the shared toolkit as the actual lever for scaling to ~30 clients**: the
-   page-scaffolding factory (Tier 3 #17) and the `charts_shared.py` split into
-   `theme.py`/`ui_components.py`/`timeline_charts.py` (Tier 4 #21) are exactly "the starter kit the
-   next bespoke dashboard gets built from" — this is where onboarding speed actually comes from in
-   this model, not from a shared data layer.
-7. **Build the noisy-neighbor observability from §14.4** (per-dashboard CPU/memory/BigQuery-cost
-   tracking) before it's needed in anger, and keep the single-tenant escape valve viable
-   (config-driven per-client settings, not hardcoded) without acting on it by default.
-8. **Grow the admin workflow** (`tenancy/access.py`'s grant model, the admin routes in `admin/`)
-   to comfortably handle ~30 clients' worth of dashboard/user provisioning and admin-assigned
-   operator grants (confirmed admin-only, §14.8) — the data model already supports this (§14.1);
-   only the workflow needs to scale.
+**Why it matters.** The visible symptom ("I see all pages from all dashboards") is a UX/credibility
+problem for a corporate-grade product. The hidden cost is worse: a `MutationObserver` over
+`document.body` rewriting `style.display` on every mutation, plus monkey-patched History API, is
+fragile, fights the framework, and silently breaks on any Vizro DOM change. It's the single biggest
+"not ready for deployment" item.
 
-### 14.7 What changed from the previous draft of this section, for the record
+**Recommended direction.**
+1. Rewrite `_build_navigation()` to emit one `vm.NavLink` per registered dashboard:
+   `label=manifest.title`, `icon=manifest.icon`, `pages=[p.id for p in that dashboard's pages]`.
+   The Client Hub stays the dashboard switcher; the rail + accordion become the *page* navigation
+   for the active dashboard — exactly the model the user described.
+2. Delete the `applyNavScope()` / `currentDashboardPrefix()` / `navContainer()` block and the
+   `history.pushState`/`replaceState` patching in `native_analytics.js`. Keep the collapse/sidebar-
+   mode logic (that solves a separate, real Vizro bug — §5.6). Verify scoping works natively
+   *before* removing.
+3. **Show only the current dashboard in the rail (decided: switching happens only via the Client
+   Hub).** Because the rail is *not* a cross-dashboard switcher, hide every non-active dashboard's
+   rail icon with **one pure-CSS rule** — Vizro already sets Dash's `active` class on the current
+   dashboard's `NavLink` (`dbc.NavLink(active=item_active)`), so a rule like
+   `#nav-bar .nav-item:not(:has(.active)) { display: none }` leaves only the current dashboard's
+   icon + its pages, with **zero JS and zero per-user data**. This also dissolves the old "per-user
+   rail filtering" question entirely: a user only ever sees the dashboard they already entered
+   (through the gate), and returns to others via the existing "Back to Client Hub" header link.
+4. `PAGE_ICONS` (per-page Material icons) currently drives the per-page rail icons; under
+   one-NavLink-per-dashboard the rail shows the dashboard icon and the accordion shows page titles.
+   Decide whether per-page icons are still wanted (a custom accordion item renderer) or dropped.
 
-The previous draft assumed "clients will be similar" meant one reusable dashboard template
-instantiated per client, and designed a fair amount of new machinery around that assumption: a
-generalized multi-tenant data layer with tenant-aware cache keys, and a new "servicing grant" +
-session-level "active client" mechanism for the multi-client role. The correction — every
-dashboard is its own bespoke build, sharing only lower-level components — removes the need for
-almost all of that: the cache-key problem doesn't arise because there's no shared data layer to
-generalize, and the multi-client role (now named **operator**) turns out to already be expressible
-with the existing `dashboard_slugs` grant mechanism, verified directly against
-`tenancy/access.py`. What's left is smaller and mostly procedural (§14.6) rather than
-architectural — which is a better position to be in, not a worse one.
+**Bonus: this is also a performance fix.** The deleted `MutationObserver` (see §5.22) currently
+re-runs `applyNavScope()` + three DOM-querying helpers on *every* DOM mutation under `document.body`
+— and Plotly mutates the DOM heavily while charts render, so it fires constantly during page load,
+contending for the main thread exactly when the page is trying to paint.
 
-### 14.8 Resolved (previously open questions)
+**Risk/effort.** Core change: **S** (one function in `app.py`, one CSS rule, delete ~120 JS lines).
+Highest payoff-to-effort item in this document — and now simpler, since the rail decision removes
+the per-user-filtering work.
 
-1. **Every client has its own dataset; no data sharing, full stop.** Confirmed — there is no
-   shared-dataset-with-a-column-filter case to design for. This makes the IAM-level backstop in
-   §14.6 step 3 the right and sufficient structural guard: scope each client's BigQuery access by
-   dataset, not by row, and a missed application-level check fails closed automatically.
-2. **Operator cross-client `dashboard_slugs` grants are assigned by admins only.** Confirmed,
-   matching the existing dashboard-grant workflow — no self-service path to design.
-3. **Clients have no access to the operator account or its activity.** Confirmed — the audit log
-   from §14.3/§14.6 step 5 is purely internal. There is no client-facing transparency feature to
-   design alongside it; build the audit trail for internal accountability only.
+### 5.2 Page-builder scaffolding duplication (callback/page structure) — **done (2026-06-27)**
 
-No open questions remain from this round.
+`pages/_shared.py::build_standard_page()` now builds the `vm.Page(...)` skeleton (`id`/`title`/
+`path`/default `layout`) for all 7 pages from `slug`/`display_name`/`ref_code`; only `components`/
+`controls` (and Overview's `path=` / Archive's `layout=None` overrides) still vary per page. Landed
+together with §5.4 — see the dated Update note above. Original finding below for context.
+
+**Evidence.** Every page module (`pages/overview.py`, `topic_areas.py`, `narratives.py`,
+`campaigns.py`, `publishers.py`) hand-writes the same `vm.Page(id=..., title=ref_label(...),
+path=f"{base_path}/...", components=[...], layout=vm.Flex(...), controls=[metric_parameter(...)])`
+skeleton. Logic is already factored into `pages/_shared.py`; only the shell repeats.
+
+**Why it matters.** Low-risk (boilerplate, not logic), but ~150–200 repeated lines obscure what
+actually differs between pages (e.g. why Discover's page differs).
+
+**Direction.** A `build_standard_page(slug, title, ref, sections, controls=...)` factory in
+`pages/_shared.py`. **Effort: S.** Zero behavior change.
+
+### 5.3 Multi-tenant data isolation: code-ready, operationally unwired (data isolation/security)
+
+**Evidence.** `data_common.py::_resolve_dataset()` resolves `(project, dataset)` from the `amazon`
+`Client.bq_dataset` record, falling back to `_FALLBACK_PROJECT_ID`/`_FALLBACK_DATASET_ID`. But no
+`amazon` `Client` record exists in the live store yet (so the fallback literal is what actually
+runs), and the BigQuery credential the app uses is not scoped per dataset.
+
+**Why it matters.** Today, one client, no leak — the access gate enforces all-or-nothing access to
+`amazon_2026`. But the protection is "the Python is correct," not "the platform can't leak." The
+realistic future failure is **copy-paste**: a new dashboard built from `amazon_2026` that forgets to
+repoint a dataset constant. With per-dataset IAM, that fails *closed* (permission error) instead of
+*open* (wrong client's rows).
+
+**Direction.** (a) Create the `amazon` `Client` record (`/admin/clients`, `bq_dataset=amazon_2026`).
+(b) Scope the app's BQ credential per dataset via IAM (per-client service account or dataset-level
+grants). (c) Keep the access-control regression test (`tests/test_access.py`) green as slugs grow.
+**Effort: S (record) + M (IAM).** Schedule before client #2.
+
+### 5.4 `charts_shared.py` is a three-job god-file (chart/UI shared code) — **done (2026-06-27)**
+
+Split into exactly the three files this section proposed: `theme.py`, `timeline_charts.py`
+(geometry engine), `ui_components.py` (component builders + generic helpers). Landed together with
+§5.2 — see the dated Update note above. Original finding below for context.
+
+**Evidence.** ~2.7k lines mixing design tokens, Dash UI builders, and a timeline geometry engine
+(`_timeline_figure`, `_add_reach_flag_annotations`, PCHIP smoothing). The name promises "shared
+constants"; a contributor won't look here for axis-range math.
+
+**Why it matters.** Conceptual load, not a bug. As the shared toolkit becomes the lever for
+onboarding new dashboards (§6), this file's clarity directly affects onboarding speed.
+
+**Direction.** Split into `theme.py` (pure tokens), `ui_components.py` (component builders + the
+`register_top_items_callback` factory), `timeline_charts.py` (geometry engine — give it its own
+tests). Do it *after* §5.2 so there's less churn. **Effort: M**, zero behavior change.
+
+### 5.5 Unbounded full-table pulls (BigQuery/data layer) — **rejected (2026-06-27): kept unbounded, deliberately**
+
+Considered capping `load_archive_scatter` / `load_narrative_top_publishers`; decided against it. Standing
+rule instead: never truncate a query whose result a user is meant to see in full or that could feed a
+total — both stay unbounded, as they already were. Deliberate "Top N" leaderboards (§5.5's siblings in
+`data_publishers.py`/`data_topic_areas.py`/`data_campaigns.py`/`data_overview.py`) are a different,
+acceptable case — see the dated Update note above. Original finding below for context (now superseded).
+
+**Evidence.** `data_archive.py::load_archive_scatter()` is a bare `UNION` of raw umap points from
+`amazon_2026_trad`/`amazon_2026_some` with no `LIMIT`/sampling.
+`data_narratives.py::load_narrative_top_publications()` is the one "top items" query lacking the
+`ROW_NUMBER() ... WHERE rn <= 50` cap its siblings use (a deliberate STYLE_GUIDE.md decision, but
+unbounded by volume). Rendering is fine (`go.Scattergl`); query cost and payload scale linearly.
+
+**Why it matters.** Not a problem at today's volumes; the first thing to break at 10× data, in a
+1 GB container (§5.7). Cheaper to cap now than to discover the threshold live in front of a client.
+
+**Direction.** Add an explicit, documented row cap with a deliberate override for the narratives
+case; consider deterministic server-side decimation for the scatter beyond N points. **Effort: S.**
+
+### 5.6 Frontend depends on framework internals (frontend assets / performance)
+
+**Evidence.** Three documented workarounds ride on private behavior: the Plotly inline-SVG
+`!important` CSS war (STYLE_GUIDE.md §6; ~110 rules), the `native_analytics.js` patch of
+`dash_clientside.dashboard.collapse_nav_panel` (fixes a real "collapse on every navigation" bug),
+and the `insert_callback` monkeypatch in `app.py`.
+
+**Why it matters.** Each is correct and well-commented, but every Vizro/Dash/Plotly bump is a manual
+regression event with no test to catch a silent break. (The `applyNavScope()` part of this file goes
+away with §5.1; the collapse fix stays.)
+
+**Direction.** Don't rip these out — they're load-bearing. Add a process guard: treat any framework
+version bump as requiring a manual pass through STYLE_GUIDE.md §6 + a nav-collapse smoke test, and
+add a thin Playwright smoke test (§8) so the most likely break surfaces automatically.
+
+### 5.7 Cold-start resource contention (performance/caching/startup)
+
+**Evidence.** `cloudbuild.yaml`: `--min-instances=0`, `--max-instances=4`, `--cpu=1`,
+`--memory=1Gi`. `Dockerfile`: `gunicorn --workers 2 --threads 8 --timeout 120`.
+`build_pages()` runs `_register_data_sources()` (~46 keys), `prime_schema_cache()` (5
+`INFORMATION_SCHEMA` queries), then 5 preload fan-outs (~40 BigQuery queries) **per worker**.
+
+**Why it matters.** A scale-from-zero cold start = 2 processes × ~40 concurrent BQ queries racing
+for one vCPU and 1 GB, exactly when a user is waiting on first paint. Worst case: OOM-kill or a
+`--timeout 120` worker kill surfacing as an intermittent 502.
+
+**Direction.** `--min-instances=1` (one line, biggest lever — needs a cost greenlight). If staying
+at 0: one bounded shared `ThreadPoolExecutor` for preloads (not five), and reconsider `--workers 2`
+on a single vCPU. Add timing logs around preload + discover-cache population so the behavior is
+observable in Cloud Logging. **Effort: XS (config) / S (throttle).**
+
+### 5.8 Caching & retention gaps (scalability) — **cache half done (2026-06-27); TTL half still open (ops-only)**
+
+`app.py::create_app()` now picks `RedisCache` over `settings.cache_redis_url` (a new empty-by-default
+`config.py` setting) instead of always `SimpleCache`, so flipping to a shared Memorystore cache when
+concurrency rises is one env var, no code change. `redis` was added to `requirements.txt` (lazily
+imported by `flask_caching` only when the URL is set — a no-op in every deployment that leaves it
+empty). **Still open:** the Firestore TTL policy. Unlike the cache, this needs **zero application
+code** — `usage_events` already has a `created_at` timestamp field; the entire fix is one ops command,
+`gcloud firestore fields ttl-policies create created_at --collection-group=usage_events
+--database=<db>`, which this pass has no GCP console/CLI access to run (same constraint as §5.3's
+`Client` record / IAM scoping). A scheduled application-level rollup was considered and rejected as
+the implementation path: with no Cloud Scheduler (or other trigger) wired to call it, the code would
+have no caller — scaffolding for a cron job that doesn't exist yet, not a present fix. Original
+finding below for context.
+
+**Evidence.** `SimpleCache` is process-local; with up to 2 workers × 4 instances there can be ~8
+independent caches, each refreshing on its own clock. `FirestoreUserStore.add_usage_event` writes
+one doc per page load forever with no TTL/rollup (the in-memory dev store caps at 5,000; prod has no
+cap).
+
+**Why it matters.** Both are cost/cleanliness, not correctness. Redundant BQ volume scales with live
+process count; usage storage grows linearly forever.
+
+**Direction.** When concurrency rises, swap `flask_caching` to a shared Redis/Memorystore backend.
+Add a Firestore native TTL policy (or scheduled rollup) on the usage collection. **Effort: S each.**
+
+### 5.9 Repo hygiene: tracked dev residue (repo hygiene/temporary leftovers) — **done (2026-06-25)**
+
+All listed residue deleted (`pages_landing/routes (1).py`, `_smoke_callback.py`, `screenshot*.py`,
+the seven `run_*.log`, `claude-chats-debug.log`, `nav.json`, `memory/screenshot_verification.md` —
+the latter contradicted the standing no-Playwright-screenshots rule). `.gitignore` now ignores
+`*.log`, `temp/`, `test-results/`, and the duplicated blocks were merged. `notepad.md` was left
+alone (active working notes, not residue). Original finding below for context.
+
+**Evidence (all git-tracked).** `pages_landing/routes (1).py` (a stale, much smaller duplicate of
+`routes.py`); `_smoke_callback.py`; `screenshot.py`, `screenshot_debug.py`, `screenshot_umap.py`
+(Playwright scratch — note the standing rule against Playwright screenshots); `run_out.log`,
+`run_stderr.log`, `run_stdout.log`, `run_test.log`, `run_verify.log`, `run_verify2.log`,
+`run_verify3.log`; `claude-chats-debug.log`; `nav.json` (unreferenced — grep-clean);
+`memory/screenshot_verification.md`. `notepad.md` is tracked working notes (modified) — flag, don't
+force-delete. `.gitignore` does not ignore `*.log`, `temp/`, or `test-results/` (the latter two
+exist empty). `.gitignore` also lists `__pycache__`/`.venv` twice.
+
+**Note (not residue):** top-level `charts.py` and `data.py` are **live** — imported by
+`dashboards/breakdown` and `dashboards/timeline`. Don't delete. The name collision with the
+`amazon_2026/charts_*` modules is mild confusion only; optionally move them into the example
+packages later.
+
+**Direction.** Delete the residue, add `*.log` / `temp/` / `test-results/` to `.gitignore`, dedupe
+`.gitignore`. **Effort: XS.**
+
+### 5.10 Dev-mode residue in production paths (repo hygiene) — **`set_dev_mode` done (2026-06-25)**
+
+`pages/__init__.py::build_all_pages` now calls `set_dev_mode(settings.is_dev)` instead of
+unconditional `True` — ref codes are gone outside dev. The experimental chart-context-menu decision
+(promote or gate) is still open. Original finding below for context.
+
+**Evidence.** `pages/__init__.py::build_all_pages` calls `set_dev_mode(True)` unconditionally (not
+`settings.is_dev`), so `dev_ids.py`'s "P1S2G1" reference-code overlay is always on. STYLE_GUIDE.md
+§12 documents an "Experimental" chart context menu defaulting to visible.
+
+**Why it matters.** Invisible until a client asks "what does 'P3S2G4' mean on my dashboard."
+
+**Direction.** Decide: either gate on `settings.is_dev`, or rename the concept to reflect it's a
+permanent feature. Same call for the experimental menu. **Effort: XS.**
+
+### 5.11 Chat extension is a dead end on the flagship dashboard (extensions) — **done (2026-06-27)**
+
+`extensions/chat_with_data.py` gained `_provider_amazon_2026()`, registered in `_DATA_PROVIDERS` under
+`"amazon_2026"`. It loads `NARRATIVES_KEY` (one row per narrative — the richest frame for the
+groupby/sum/max heuristics `_local_answer` already does for the other dashboards) and `OVERVIEW_KPI_KEY`
+(a single totals row, folded into the text `label` rather than used as the groupable frame) via
+`vizro.managers.data_manager`, never the raw `amazon_2026_trad`/`amazon_2026_some` tables.
+`PUBLISHERS_KEY` was left out — two aggregated keys already cover both per-narrative and overall-total
+questions, and the plan's own "1–3" only asked for *an* aggregated provider, not all three. Verified:
+`pytest` green (84 tests, 1 new — `test_chat_endpoint_covers_amazon_2026` in `tests/test_routes.py`,
+mirroring the existing `timeline` chat-fallback test). Original finding below for context.
+
+**Evidence.** `extensions/chat_with_data.py::_DATA_PROVIDERS` = `{timeline, breakdown, bq_sample}`;
+`amazon_2026` is absent, so chat returns "not available for this dashboard yet" there, while
+`features_chat_enabled` defaults `True` (widget visible).
+
+**Direction.** Register an `amazon_2026` provider over 1–3 *aggregated* keys (`PUBLISHERS_KEY`,
+`NARRATIVES_KEY`, `OVERVIEW_KPI_KEY`) — never the raw `*_trad`/`*_some` tables. Or suppress the
+widget where no provider exists. **Effort: S.**
+
+### 5.12 Observability gaps (tests/observability) — **done (2026-06-25)**
+
+The discover-cache populate branch already had a timing log
+(`logger.info("Discover server-side cache populated in %.2fs", ...)` in `charts_discover.py`) — found
+to be already done while implementing this. `_start_preload()` (`dashboards/amazon_2026/__init__.py`)
+now logs `"%s preload complete in %.2fs (%d keys)."` per group, the genuine gap. Original finding
+below for context.
+
+**Evidence.** `logging_setup.py` sets a sound convention and most code follows it, but there's no
+info-level line distinguishing "cache cold, doing real work" from "cache warm" in the preload
+fan-outs or discover-cache population — so §5.7's behavior is inferred from latency, not visible.
+
+**Direction.** One `logger.info("...populated in %.2fs", elapsed)` per preload group and in the
+discover-cache populate branch. **Effort: XS.**
+
+### 5.13 Building the UI triggers BigQuery I/O at import time (architecture boundary) — **done (2026-06-27)**
+
+`build_pages()` now only registers data sources (in-memory, not I/O) and constructs pages.
+`prime_schema_cache()` and preloading moved to a new `warm_caches()` (one bounded
+`ThreadPoolExecutor`, `_PRELOAD_MAX_WORKERS = 8`, not five unbounded per-group pools), exported
+optionally from the dashboard package and discovered in `dashboards/__init__.py::discover_dashboards()`
+the same way as `data_health`. `app.py::_build_dashboard()` calls `entry.warm_caches()` for every
+registry entry that defines one, once per process, after all pages are built. No gunicorn `post_fork`
+hook was needed — the `Dockerfile`'s `gunicorn` command has no `--preload`, so each worker already
+imports/builds the app fresh after fork. Verified: `pytest` green (64 tests), including
+`tests/test_amazon_2026_warm_caches.py` and `test_dashboard_discovery.py::test_amazon_2026_exposes_warm_caches_hook`.
+Original finding below for context.
+
+**Evidence.** `dashboards/amazon_2026/__init__.py::build_pages()` is not a pure page constructor: it
+calls `_register_data_sources()`, `prime_schema_cache()` (5 `INFORMATION_SCHEMA` queries), and fires
+five `_start_preload(...)` daemon threads (~40 BigQuery queries) — all as a side effect of being
+imported. Proof: `tests/test_routes.py` does `import app as appmod` at module scope, which runs
+`create_app()` → `_build_dashboard()` → `build_pages()` and spawns the preload threads just to get a
+test client. With `gunicorn --workers 2` and **no `--preload`**, this whole fan-out runs *per
+worker*.
+
+**Why it matters.** Conflating "construct the page objects" (pure, fast, deterministic) with "warm
+caches over the network" (slow, I/O-bound, non-deterministic) is the root structural cause behind
+the cold-start contention in §5.7 and makes the module unsafe to import in any context that doesn't
+want live BigQuery traffic (tests, scripts, a future CLI). It also means warmup cost scales with
+worker count for no benefit.
+
+**Why it's the clean fix, not just a perf tweak.** Separating the two restores a basic invariant —
+*import is pure; I/O is explicit* — that pays off everywhere: faster/cheaper tests, a safe import
+surface, and a single obvious place to control warmup.
+
+**Direction.** Make `build_pages()` construct pages only. Move data-source registration to a
+separate explicit step and warmup to a single `warm_caches()` entry point the platform calls **once
+per process** — ideally a gunicorn `post_fork` hook (threads don't survive `fork`, so a pre-fork
+`--preload` warmup would strand the daemon threads in the master). One bounded `ThreadPoolExecutor`
+for all groups, not five. **Effort: M.** Highest structural-cleanliness payoff in the data layer.
+
+### 5.14 Dataset/loader wiring is spread across four places that must stay in sync (data layer) — **done (2026-06-27)**
+
+Collapsed to the simpler of the two options this section offered: a single `_LOADERS: dict[str,
+Callable]` in `dashboards/amazon_2026/__init__.py` mapping every `*_KEY` to its loader.
+`_register_data_sources()` is now a 2-line loop over it, and `warm_caches()`'s preload list is
+`list(_LOADERS.keys())` — the same dict drives both, so registering a key without warming it (or vice
+versa) is no longer possible. This closed a live instance of exactly the drift this section
+predicted: `DISCOVER_ITEMS_KEY` and `ARCHIVE_SCATTER_KEY` were registered but absent from every
+hand-typed preload list, so Discover and Archive always cold-loaded on first click. Per-page-group
+preload naming (the old `"Overview"`, `"Topic area"`, ... log labels) was dropped in favor of one
+combined warmup pass — a deliberate, minor observability trade for structurally removing the drift
+bug; the "derive preload groups from page membership" alternative was considered but rejected because
+several keys (e.g. `NARRATIVE_TOP_PUBLISHERS_KEY`) are only consumed inside drill-down callbacks, not
+a page's static `vm.Figure(data_frame=...)` tree, so a page-membership walk would *under*-preload.
+No `@dataset(KEY)` decorator was added — out of scope for this batch, and the flat dict already
+removes the four-place drift risk. Verified:
+`tests/test_amazon_2026_warm_caches.py::test_previously_unwarmed_keys_are_now_covered` and
+`test_preload_all_covers_every_registered_key`. Original finding below for context.
+
+**Evidence.** Adding or changing one dataset touches: (1) a `*_KEY` constant in `data_common.py`
+(~50 of them), (2) a `load_*` function in a `data_*.py` module, (3) a `data_manager[KEY] = load_*`
+line in `_register_data_sources()`, and (4) — if the page should be warm on first paint — a hand-
+maintained key list inside one of the `_start_preload(...)` calls. Nothing enforces that the preload
+lists actually match what each page consumes; a new chart's key is silently un-warmed if you forget
+step 4.
+
+**Why it matters.** Four-place drift is exactly the kind of boilerplate that's individually trivial
+and collectively a maintenance tax, and the preload/page mismatch is a silent performance
+regression, not a loud failure.
+
+**Direction.** A modest single-source-of-truth: a `@dataset(KEY)` decorator (or one
+`{KEY: loader}` dict) that registers a loader where it's defined, so registration can't drift from
+definition; and derive preload groups from page membership rather than hand-listing keys. Keep it to
+~15 lines — this is the rare case where a small abstraction removes real risk; do **not** grow it
+into a plugin framework. **Effort: S–M.**
+
+### 5.15 The reporting period is baked into the dashboard's identity (multi-client scalability)
+
+**Evidence.** The slug `amazon_2026`, the dataset `amazon_2026`, ~46 `data_manager` keys prefixed
+`amazon_2026_*`, and the page ids `amazon-2026-*` all encode the **year** into the dashboard's
+identity, not just its data. The `MANIFEST.title` is "Amazon 2026"; `dev_ids`/CSS/tests all key off
+these names.
+
+**Why it matters.** This is a long-lived client. When 2027 data lands, both options are bad: copy
+the whole package to `amazon_2027` (multiplying the copy-paste-leak risk that §5.3/§6 identify as
+*the* failure mode of the bespoke model, across ~50 constants), or rename ~46 keys + page ids + CSS
++ tests in place. The reporting period is *data*, and shouldn't live in symbol names.
+
+**Direction.** Treat **client** as the durable identity (`amazon`) and **period** as a config/data
+value. For `amazon_2026`, a full rename is a Tier 3+ effort and not urgent — but the *lesson is
+free now*: name the **next** dashboard `<client>` and carry the period as a manifest field / dataset
+suffix resolved from the `Client` record, so this trap isn't recreated. **Effort: S (next
+dashboard) / L (retrofit amazon).**
+
+### 5.16 No BigQuery cost cap in production (data isolation / cost safety) — **done (2026-06-25)**
+
+`cloudbuild.yaml`'s `--set-env-vars` now sets `BQ_MAX_BYTES_BILLED=20000000000` (20 GB) — generous
+enough not to bite normal use, tune down from real query stats once observed. Original finding below
+for context.
+
+**Evidence.** `config.py` defaults `bq_max_bytes_billed = 0` ("0 = unlimited (default for dev). Set
+e.g. 10_000_000_000 (10 GB) for production."). `cloudbuild.yaml`'s `--set-env-vars` does **not**
+set `BQ_MAX_BYTES_BILLED` — so production runs with **no per-query byte ceiling**. `run_query()`
+only attaches `maximum_bytes_billed` when the setting is `> 0`.
+
+**Why it matters.** A single runaway query — the unbounded scatter/top-publications scans in §5.5, a
+future schema change that explodes a join, or a buggy new dashboard — bills without bound against a
+client-data project. It's a one-variable safety net that's currently off in the one environment
+where it matters.
+
+**Direction.** Set `BQ_MAX_BYTES_BILLED` in `cloudbuild.yaml` (start generous, e.g. 10–25 GB, tune
+from real query stats). **Effort: XS.** Verified gap.
+
+### 5.17 No production error or empty-state boundary (callback/UI robustness) — **done (2026-06-27)**
+
+`charts_shared.py::safe_load()` now logs (`logger.exception`) on a swallowed failure instead of
+silently returning an empty frame indistinguishable from "no data." `app.py` gained a minimal
+`@server.errorhandler(500)` for the platform shell. The remaining UI half also landed: `safe_load()`
+tags the empty frame it returns on failure with `.attrs["load_failed"] = True`
+(`ui_components.py`); `load_and_filter()` was changed to return `df.iloc[0:0]` instead of a fresh
+`pd.DataFrame()` so that tag survives the filter step (`pd.DataFrame()` has no `.attrs` to inherit).
+A new `ui_components.py::data_load_failed(*frames)` helper reads the tag back. Every
+`_add_empty_figure_annotation` call site now shows `"Data temporarily unavailable"` instead of its
+normal "no data" message when the tag is set: `detail_weekly_figure()` /
+`detail_combined_weekly_figure()` (`ui_components.py`) and `_narrative_weekly_figure()`
+(`charts_narratives.py`) check it via `.attrs` directly (it survives `.copy()` /
+boolean-indexing / `.dropna()` / `.sort_values()` — pandas `__finalize__` propagation — confirmed
+call-chain by call-chain before relying on it); `timeline_figure()` /
+`media_split_timeline_figure()` (`timeline_charts.py`) take it as an explicit `load_failed` bool /
+dict key instead, since their callers round-trip data through a `dcc.Store` as
+`.to_dict("records")`, which drops `.attrs`. Every initial Store-dict builder
+(`charts_campaigns.py`, `charts_narratives.py`, `charts_publishers.py`/`pages/publishers.py`) now
+computes the flag once right after the `safe_load()`/`load_and_filter()` call (before any
+`.to_dict()` strips it) and threads it into the dict, so later Store-driven callback re-renders
+(toggling source/metric) keep showing the right message without re-querying. `pages/_shared.py::
+build_detail_timeline_response()` forwards it via its existing `shared_kwargs` dict — one line.
+`_archive_figure()` (the UMAP scatter) was deliberately **left unchanged**: every call site loads via
+Vizro's own `data_manager[KEY].load()` binding or `_server_discover_data()`, never `safe_load()`, so
+a failure there already raises instead of being swallowed — there's no ambiguous case to disambiguate.
+Verified: `pytest` green (79 tests, 4 new in `tests/test_amazon_2026_charts_shared_safe_load.py`
+asserting the tag, its `load_and_filter` propagation, and the message switch in both
+`detail_weekly_figure()` and `timeline_figure()`). Original finding below for context.
+
+**Evidence.** `safe_query()` correctly re-raises in prod (no fabricated data). That exception
+propagates up into the Vizro/Dash callback that triggered the load, so a BigQuery failure surfaces
+as a broken/blank chart rather than a designed state. Separately, fixtures always contain rows, so
+the **empty-data** path (a newly onboarded client with no data yet, or a filter that matches
+nothing) is effectively untested and likely renders as a broken figure, not "no data yet."
+
+**Why it matters.** For a corporate-grade product shown to clients, "the chart is blank/errored" is
+a credibility hit. Both failure and emptiness are normal operating states that deserve a designed
+appearance.
+
+**Direction.** A thin boundary at the chart/page level — a small helper that wraps a figure builder
+and returns a friendly "data temporarily unavailable" card on load failure and a "no data for this
+selection" state on an empty frame. Reuse the existing `na_panel`/KPI-card primitives; this is a
+~30-line guard, not an error-handling framework. Add a Flask 500 handler for the platform shell too.
+**Effort: S.**
+
+### 5.18 Example/demo dashboards ship to production (repo hygiene / boundaries) — **done (2026-06-28)**
+
+`DashboardManifest.internal: bool = False` now exists; `discover_dashboards()` skips internal
+dashboards when `not settings.is_dev` (`bq_sample`/`breakdown`/`timeline` all set `internal=True`).
+Verified by `test_internal_dashboards_excluded_outside_dev`. The conform half landed too: the
+top-level `charts.py`/`data.py` are deleted; `breakdown` and `timeline` each got their own
+self-contained `data.py`/`charts.py`, registered via `data_manager` with zero-arg loaders, matching
+`amazon_2026`'s convention — see the dated Update note above and §7.1 Batch 4. Original finding below
+for context.
+
+**Evidence.** `bq_sample`, `breakdown`, `timeline` are small example dashboards using top-level
+`charts.py` + `data.py`. They're discovered and built like any plugin, so in production they
+contribute nav-rail icons, chat providers, and (for `bq_sample`) a real BigQuery sample dataset
+(`amazon_2025.disinformation_timeline`). They are also the *only* dashboards `test_routes` actually
+renders — useful for tests, questionable for a client-facing deployment.
+
+**Why it matters.** Demo dashboards over non-client data are clutter and a small surface-area/cost
+liability in prod, and they muddy the "what is this product" story for a logged-in client.
+
+**Direction (decided: keep them, but conform them).** They stay as internal demo/dev fixtures, so:
+(a) add an `internal: bool = False` field to `DashboardManifest` and have discovery skip internal
+dashboards when `not settings.is_dev` — keeping them for local dev/tests without shipping to clients;
+and (b) **bring their structure up to the current architecture** — they currently import top-level
+`charts.py` / `data.py` (a pre-plugin layout), unlike `amazon_2026` which is fully self-contained
+with its own `data_*`/`charts_*` modules, `data_manager` registration, `safe_query` fallback, and
+fixtures. Move `charts.py`/`data.py` into the respective `dashboards/<slug>/` packages and align them
+to the plugin conventions so they're faithful examples of "how a dashboard is built here," not relics
+of an older pattern. **Effort: S (gate) + M (conform).**
+
+### 5.19 The flagship dashboard has no build/render smoke test (tests/observability) — **done (2026-06-25)**
+
+`test_routes.py::test_dashboard_routes_render` now includes `amazon_2026`; a new
+`test_amazon_2026_every_page_renders` hits all 7 page paths; a new `test_slug_for_path` table-tests
+the access gate's URL→slug mapping. Original finding below for context.
+
+**Evidence.** `tests/test_routes.py::test_dashboard_routes_render` hits `/app/d/timeline`,
+`/app/d/breakdown`, `/app/d/bq_sample` — never `/app/d/amazon_2026`. So the largest, most complex
+dashboard (7 pages, ~50 loaders, ~52 callbacks) has **no test that its pages even build and render**.
+`_slug_for_path()` (the security-relevant URL→slug mapping the access gate depends on) also has no
+unit test.
+
+**Why it matters.** A broken page builder or a callback wiring error in `amazon_2026` would pass CI
+and only surface on the live page. This is the cheapest high-value test to add given the app already
+boots in the test client.
+
+**Direction.** Add `/app/d/amazon_2026` and each page path to the render smoke test (dev mode uses
+fixtures, so no creds needed), and a small `_slug_for_path()` table-test. **Effort: XS.**
+
+### 5.20 No HTTP response compression — large figure/table JSON ships uncompressed (performance/page-load) — **done (2026-06-25)**
+
+`Flask-Compress` added to `requirements.txt` and wired with `Compress(server)` in `app.py`'s
+`create_app()`. Default config compresses the standard text/JSON mimetypes Dash responses use.
+Original finding below for context.
+
+**Evidence.** Neither `requirements.txt` nor `app.py` configures compression (no `flask-compress`, no
+gzip layer — grep-confirmed). Vizro/Dash serialize every chart and `dash_table`/`ag_grid` to JSON
+and POST it on each navigation; those payloads (especially Discover, the archive scatter, and the
+big "Top Items" tables) are large and highly compressible (typically 5–10×). Cloud Run does **not**
+gzip dynamic application responses for you.
+
+**Why it matters.** This is pure transfer latency on the exact request the user is waiting on. It's
+the highest-confidence, lowest-risk page-load win available, and it needs no profiling to justify.
+
+**Direction.** Add `Flask-Compress` and init it on the Vizro server (`Compress(server)`), or enable
+gzip at the gunicorn/ingress layer. **Effort: XS.** Do this first for page-load latency.
+
+### 5.21 Every navigation rebuilds all figures server-side, and the whole page builds eagerly (performance/page-load) — **measurement (1) server-side half done (2026-06-28)**
+
+**Evidence.** A page is a list of `vm.Figure(figure=panel(data_frame=KEY))` (e.g.
+`pages/overview.py` has 7; Discover/Publishers/Narratives have many more plus large tables). In
+Vizro these are captured callables that run as Dash callbacks **on every page load and every control
+change**. The `data_manager` caches the *DataFrame*, but the figure construction (Plotly assembly +
+JSON serialization) and table building are **not** cached — they re-run each visit. Nothing defers
+off-screen components, so the full page's figures all build at once.
+
+**Why it matters.** This is the server-side half of "pages load slowly." Warm data only removes the
+BigQuery hit; the per-visit cost is rebuilding N Plotly figures and serializing them. On the heavier
+pages that's the dominant latency, and a control change (e.g. `metric_filter` targets 5 figures on
+Overview) re-runs every targeted figure.
+
+**Direction.** In order of payoff: (1) **measure** where time goes — both halves below — so deeper
+work is aimed, not guessed; (2) **memoize figure construction** for the common case — the
+default/first-paint state — with a small cache keyed by `(data version, control values)`, so
+re-navigating a page doesn't rebuild identical figures; (3) **defer heavy/below-the-fold components**
+(the archive scatter, the big tables) behind a tab or an on-view trigger so first paint ships fewer,
+smaller figures; (4) trim payload (cap the unbounded scatter §5.5, keep table pagination, reduce
+over-precise numeric arrays). **Effort: S (measure + memoize default state) → M (deferral).**
+
+**Measurement plan — still open, the prerequisite for (2)–(4) above.** Server-side and browser-side
+timing answer different questions and neither substitutes for the other: server timing shows whether
+BigQuery fetch, figure construction, or JSON serialization dominates the *backend* response time;
+browser timing shows what happens *after* the server responds — network transfer, Dash/React/Plotly
+parsing and painting — which can rival or exceed the backend cost on the heavier pages (Discover,
+Publishers) and wouldn't show up in server logs at all. Both are needed before deciding whether
+memoization (a backend fix) or payload/deferral work (which helps both halves) is the higher-leverage
+next step.
+
+- **Server-side (code, no browser needed) — done (2026-06-28).** `ui_components.py::capture()` wraps
+  every `@capture("figure")` builder with `time.perf_counter()` timing, logging `"%s built in %.3fs"`
+  per figure — same pattern as the existing preload timing logs (§5.12, `_start_preload`) and the
+  discover-cache populate log (`charts_discover.py`). These are plain `logger.info(...)` calls, so no
+  extra viewer is needed: `logging_setup.py::configure_logging()` already routes every logger to
+  stdout at `INFO` level app-wide. Locally they print straight to the terminal the app was started
+  from as pages are clicked through; in Cloud Run they land in Cloud Logging (stdout is forwarded
+  automatically) — filter on `"built in"` to isolate just these lines. See the dated Update note above for the
+  wrapper-at-the-import-site approach (one `capture` swap per file instead of one timing call per
+  builder).
+- **Browser-side (the user's own browser, per the standing no-Playwright-screenshots rule — not
+  agent-driven).** Open each of the 7 `amazon_2026` pages (Discover and Publishers first — the
+  heaviest) in Chrome DevTools with the Network and Performance tabs recording: note (a) total
+  response size and time-to-first-byte for the page's Dash callback responses (Network tab — this is
+  the backend cost, cross-check against the server timing logs above), and (b) time spent in
+  scripting/rendering after the response lands (Performance tab's flame chart — this is the part
+  server logs can never see). Repeat once on a cold cache and once warm, since §5.7/§5.8 already
+  established those have very different backend costs.
+- Once both are recorded for at least Discover and Publishers, revisit (2)–(4) above with real numbers
+  instead of the current guess.
+
+### 5.22 The nav JS observer thrashes the main thread during render (performance/frontend) — **done (2026-06-25)**
+
+Subsumed by the §5.1 nav fix: `applyNavScope()` and its three helper functions are deleted from
+`native_analytics.js`, removing the biggest offender. The `MutationObserver` itself stays (it still
+does real work — sidebar-mode reset and collapse-state sync on navigation) but no longer also
+re-scans nav links on every DOM mutation. Original finding below for context.
+
+**Evidence.** `assets/native_analytics.js` runs `observer.observe(document.body, {childList:true,
+subtree:true, attributes:true, attributeFilter:["href","class"]})`, whose callback calls
+`applyNavScope()` (a `querySelectorAll` over nav links) plus `ensureSidebarPanelPlacement()`,
+`syncNavCollapseState()`, and `syncMenuButtonState()`. Plotly mutates DOM nodes and `class`
+attributes heavily while charts render/animate, so this fires repeatedly during exactly the moment
+the page is painting.
+
+**Why it matters.** Compounds §5.21's slowness with main-thread contention and jank during load.
+
+**Direction.** Removing `applyNavScope` (the §5.1 nav fix makes scoping pure-CSS) deletes the biggest
+offender. For the remaining sidebar-state sync, narrow the observer to the nav container only, or
+replace it with targeted event listeners (collapse-icon clicks, Dash navigation events) instead of a
+`document.body`-wide subtree observer. **Effort: S** (mostly falls out of §5.1).
+
+### 5.23 The "operator" role is not reachable through the admin UI (multi-client / access) — **done (2026-06-25)**
+
+The Users page (`admin/routes.py::users`) now renders a per-user dashboard multiselect
+(`_grants_form`) posting to the existing `/admin/users/<uid>/grants` route, with explanatory copy
+on creating an operator (empty company + direct grants). `app.py`'s access gate now calls
+`record_audit("dashboard.cross_client_open", target=slug)` for any non-admin user opening a
+dashboard outside their own company's `dashboard_slugs`, at the same per-real-page-load cadence as
+usage tracking. Verified by `test_operator_grants_ui_and_cross_client_audit`. No new role value or
+schema change, matching §6's "already expressible" finding. Original finding below for context.
+
+**Evidence.** The platform's plan for an internal cross-client "operator" is a user with empty
+`client_id` + a curated cross-client `dashboard_slugs` list (§6). The route to set those grants
+exists — `admin/routes.py::users_grants` (`POST /admin/users/<uid>/grants`) — but the Users page
+(`admin/routes.py::users`) renders **no form that posts to it**: it only offers a company `<select>`
+(`_client_select`) and a read-only "inherited dashboards" cell (`_inherited`). So per-user/cross-
+client grants are settable only by a direct POST (as the tests do), never by an admin in the panel.
+There is also no "operator" role value (`_VALID_ROLES = {"user", "admin"}`) and no audit distinction
+when an operator opens a client's dashboard.
+
+**Why it matters.** The operator role is the headline of the multi-client story (§6) but is
+operationally a dead letter — an admin can't actually create one. This is a concrete gap between the
+documented model and the usable product.
+
+**Direction.** (a) Add a per-user dashboard multiselect to the Users page wiring the existing
+`users_grants` route; (b) optionally make "operator" an explicit role label for clarity, even if
+access still resolves through `dashboard_slugs`; (c) add the `record_audit` call when a user opens a
+dashboard outside their own `client_id` (the operator-accountability log from §6). **Effort: S.**
+
+### 5.24 Admin panel is a solid MVP but missing the tooling a 30-client platform needs (operator/admin workflows) — **done (2026-06-27)**
+
+Production "view as", user lifecycle (suspend + role-edit), client lifecycle (edit + delete), broader
+audit coverage, and users/audit table search+pagination all landed — see the dated Update notes
+above for the full implementation. Delegated client-admin is resolved as **not needed** (operator
+role covers it). Original finding below for context.
+
+**Evidence (all from `admin/routes.py`).** The panel does users/clients/grants/requests/audit/usage/
+health well, but for running ~30 clients it lacks:
+- ~~**Production "view as".** Impersonation exists only in dev (`/dev/as`, 404s when `auth_enabled`).
+  An admin/operator supporting a client in prod cannot see the client's exact view to diagnose an
+  issue.~~ **Done.**
+- ~~**User lifecycle.** A user can be created and deleted, but not **suspended/deactivated** (delete is
+  destructive and breaks audit linkage), and an existing user's **role can't be changed** (no
+  promote/demote form; role is fixed at create).~~ **Done.**
+- ~~**Client lifecycle.** Clients can be created and have dashboards assigned, but name/brand/accent/
+  `bq_dataset` can't be **edited** and a client can't be **deleted**.~~ **Done (2026-06-27).** Delete
+  is guarded (refused while a user's `client_id` still points at it), not soft — no `archived` flag.
+- ~~**Delegated "client admin".** Every user/grant change funnels through a single global admin; a
+  client-scoped admin who manages only their own company's users would remove that bottleneck at 30
+  clients.~~ **Resolved (2026-06-27): not needed.** Companies don't manage their own accounts; the
+  operator role (§5.23) already gives the right level of cross-client delegation.
+- ~~**Audit coverage.** Only admin *actions* are recorded — not logins, not 403 denials, not operator
+  dashboard opens — so the security-relevant events are partly invisible.~~ **Done (2026-06-27).**
+  `auth/middleware.py::admin_required`/`real_admin_required` now record `access.denied_admin` (target
+  = the denied path) before returning 403; `app.py`'s access gate records `access.denied_dashboard`
+  (target = slug) on the same path `dashboard.cross_client_open` already used for operator opens
+  (§5.23/T2.6 — that case was already covered, not new). `pages_landing/routes.py::session_login`
+  records `auth.login` (target = uid) on every successful Firebase sign-in, attributed to the
+  logging-in principal itself (a `SimpleNamespace(uid, email)` passed as `actor`, since the session
+  cookie isn't set on the request that creates it, so `current_user()` can't resolve it yet).
+- ~~**Scale ergonomics.** Flat, unpaginated, unsearchable tables for users/audit/usage; no reverse
+  "who can access dashboard X" view; access requests have no notification (admins must poll the
+  queue).~~ **Search + pagination done (2026-06-27).** The Users page takes `?q=` (matches
+  email/uid) filtering the roster before grouping by company. The Audit page takes `?q=` (matches
+  actor/action/target/detail) and `?page=` (50/page, clamped to the last page rather than erroring
+  past the end). The Usage page was deliberately left alone — it's an aggregate-by-dashboard table
+  (one row per dashboard, not per event), already small at any client count, so pagination there
+  would be solving a problem that doesn't exist. The reverse "who can access dashboard X" view and
+  access-request notifications are still open — neither is a search/pagination problem, sized for a
+  separate pass.
+
+**Why it matters.** These are the difference between "demoable admin panel" and "operable platform."
+None is urgent at one client; several become daily friction at ten-plus.
+
+**Effort: M overall, independently shippable.** Verified: `pytest` green (83 tests — 4 new:
+`test_denied_dashboard_access_records_audit_event`, `test_denied_admin_access_records_audit_event`,
+`test_users_page_search_filters_roster`, `test_audit_log_search_and_pagination` in
+`tests/test_routes.py`). The `auth.login` audit call has no dedicated test — exercising it needs
+mocking the Firebase Admin SDK end to end for one log line, which isn't worth the harness weight; the
+existing `session_login` 401/204 tests already cover its status-code contract.
+
+### 5.25 Frontend style structure: CSS in Python, fragmentation, and always-loaded assets (style/frontend) — **(a)/(b) done; (c) resolved (2026-06-28); (d) audited (2026-06-28): no extraction, no minification — both rejected with reasons**
+
+**(d) audited (2026-06-28).** Checked the six `amazon_2026_*.css` files (2,854 lines total) for two
+things: shared design tokens worth lifting into `native_analytics.css`, and whether minification is
+worth doing. **Tokens: nothing to lift.** Every hex color across the six files is page-specific (e.g.
+Discover's 5 chart-source swatch colors, Overview's 2 surface colors) — none repeat across files, so
+there's no duplicated color to centralize. The literal values that *do* repeat in counts (`border-
+radius: 8px` ×22, `font-size: 12px` ×17, `gap: 16px` ×10, etc.) are coincidentally-equal numbers on
+unrelated components (cards, badges, panels, grids on different pages) — not the same design concept
+repeated. Forcing them onto one shared `--na-radius`/`--na-font-size-sm` variable would couple
+visually-unrelated components to a single knob, so a future tweak to one card's corner radius would
+silently ripple to 21 others — the false-sharing trap, not a cleanup. The one case that *is* genuinely
+shared design (the `amazon-publishers-kpi-*` panel/donut toolkit) is already done right: it's defined
+once in `publishers.css` and reused by class name from `overview.css`/`narratives.css` (with targeted
+override blocks), not copy-pasted — confirmed by grep, no action needed. **Minification: rejected.**
+There's no frontend build step in this app (Dash serves `assets/` files directly, no bundler/webpack
+config anywhere in the repo) — hand-minifying would mean maintaining a minified file alongside the
+readable source with no tooling to keep them in sync, a maintenance tax for marginal bytes. Most of
+minification's actual benefit (transfer size) is already captured by `Compress(server)` (§5.20):
+`flask-compress` wraps **every** Flask response with no mimetype allowlist, so static `.css`/`.js`
+under `assets/` ship gzip-compressed exactly like the dynamic JSON payloads — confirmed by reading
+`app.py`'s `Compress(server)` call, which takes no mimetype filter. Closes §5.25 outright.
+
+**(c) resolved (2026-06-28).** The chart context menu (`native_analytics_chartmenu.js`/`.css`) is
+accepted as a permanent feature, not an experimental one needing a gate. STYLE_GUIDE.md §13's heading
+dropped "Experimental —"; the "experimental" wording in both asset files' header comments was removed
+to match. No code gating was added — the user confirmed it stays on for everyone, which is the
+existing default (`localStorage['na-chart-menu-enabled']` defaults to `true`).
+
+**(a) done.** The two inline `<style>` blocks (`pages_landing/shell.py`'s ~390-line base shell CSS and
+`pages_landing/routes.py`'s ~130-line Client Hub block) moved into one new
+`assets/native_analytics_shell.css`; `shell.py` now links it (`<link rel="stylesheet">`), with only
+the per-request dynamic accent-color override left inline (it's templated from `{{ accent }}`, so it
+can't be a static file). `admin/routes.py`'s `health()` inline `<style>` (`.status-ok`/`.status-
+degraded`/`.status-error`) was deleted outright rather than moved — those three rules were already
+defined globally in the shell CSS, so the inline copy was dead duplication, not unique content needing
+a new home. **Resolving the "always-loaded assets" tension this section itself names:** rather than
+just adding a fourth always-on-every-dashboard-page CSS file, `app.py`'s `Vizro(...)` now passes
+`assets_ignore=r"native_analytics_shell\.css"`, which excludes it from Dash's automatic per-page
+`<link>` injection (Dash still serves it as a static file at the same `/assets/...` URL — `assets_
+ignore` only skips the *automatic* index-page injection) — so landing/admin pages get a cacheable
+stylesheet without adding weight to every Vizro dashboard page, the opposite of what bullet 2 below
+warns about. Verified: `pytest` green (83 tests, no behavior change — same selectors, same rules, just
+relocated); a manual read of the rendered `<head>` confirms the `<link>` resolves under the Vizro
+mount's asset route. Browser-level visual confirmation is the user's to do, per the standing
+no-Playwright-screenshots rule. Original finding below for context.
+
+**Evidence.**
+- ~~**CSS embedded in Python.** `pages_landing/routes.py` (a ~130-line `<style>` block), `admin/routes.py`
+  (swatch/status styles), and `pages_landing/shell.py` interpolate CSS into HTML f-strings. That CSS
+  can't be browser-cached (re-sent in every HTML response) and lives away from the rest of the
+  styling system.~~ **Done (2026-06-27).**
+- **Vizro auto-loads the entire `assets/` folder on every page.** A user on the tiny `timeline` demo
+  still downloads all six `amazon_2026_*.css` files plus everything else (~80 KB+ of CSS/JS),
+  because Vizro has no per-dashboard asset scoping.
+- ~~**Orphaned + experimental assets.** `ext_crossfilter.js`/`.css` are referenced **only** in
+  STYLE_GUIDE.md — no `extensions/crossfilter.py` exists and no Python wires them; they look dead but
+  still load. `native_analytics_chartmenu.js` (~20 KB) + `.css` implement the "Experimental" chart
+  context menu (STYLE_GUIDE §12) and self-install on every page — a large always-on payload for a
+  feature still marked experimental (ties to §5.10).~~ **(b) done (2026-06-25): `ext_crossfilter.*`
+  deleted. (c) resolved (2026-06-28): the chart menu is a permanent feature, not experimental — see
+  above.**
+
+**Why it matters.** Style maintainability (CSS scattered between assets and Python strings) and a
+real slice of per-page download weight, on every page, for code that's dead or experimental.
+
+**Direction.** (a) Move the inline `<style>` blocks into asset CSS files (cacheable, single styling
+home); (b) confirm and delete the orphaned `ext_crossfilter.*`; (c) resolve the experimental
+chartmenu — gate it behind a settings flag or graduate it — rather than shipping 23 KB to every page
+indefinitely; (d) audit the per-page `amazon_2026_*.css` for shared tokens worth lifting into
+`native_analytics.css`, and consider minification. **Effort: S–M.**
+
+### 5.26 Discover keyword search is too literal (Discover UX / search quality) — **done (2026-06-28), except UI explanations and the BigQuery `SEARCH` evaluation**
+
+Normalization, expanded fields, ranked results, and restrained fuzzy typo tolerance landed in
+`charts_discover.py` — see the dated Update note above for the exact tiers and what was skipped (UI
+match-explanation snippets, sized for its own pass; `SEARCH` backend, deliberately deferred per this
+section's own direction #6). Original finding below for context.
+
+**Evidence.** Discover currently filters cached records in Python via
+`charts_discover.py::_record_matches_search()`: the query is lowercased, split on whitespace, and
+every term must appear as a raw substring in `Publisher`, `Title`, `Summary`, plus `Full_Text` only
+when the "Search full text" toggle is enabled. The UI placeholder promises "author, publisher, title,
+or text", but the searched field set is narrower than that, and there is no normalization for
+punctuation, diacritics, inflected forms, plurals, or common typos.
+
+**Why it matters.** Users expect keyword search to behave like search, not like `term in string`.
+Queries with singular/plural variants, grammatical variants, names with punctuation/diacritics, or
+minor misspellings can miss obviously relevant rows. This makes Discover feel unreliable even when the
+data is present.
+
+**Scope.** This item is only about improving typed keyword search in the Discover search bar. It is
+separate from the "Reference Publication" similarity workflow, which should be handled later. It is
+also separate from full semantic/vector search over embeddings. Embeddings should stay on the BigQuery
+side if/when semantic search is added; they should not be loaded into the Dash records cache.
+
+**Direction.**
+1. Build a small search-normalization layer for Discover records and queries: casefold text instead
+   of simple lowercase, normalize Unicode/diacritics, strip punctuation, normalize whitespace, tokenize
+   consistently, and add lightweight stemming or lemmatization only where it improves English/Polish
+   inflection matching without adding a heavy runtime dependency.
+2. Expand the lexical search field set to match user expectations. Keep the current fields
+   (`Publisher`, `Title`, `Summary`, optional `Full_Text`) and add `Journalist`, `Media_Type`,
+   `Topic_Area`, `Narrative`, `Source`, and SoMe author/platform fields where available through the
+   normalized Discover record contract. Keep field weights explicit so title/summary hits rank above
+   broad full-text or metadata-only hits.
+3. Replace pure pass/fail matching with ranked keyword results when a query exists: exact phrase/title
+   hits first, all-token title/summary hits next, metadata hits next, full-text-only hits lower, and
+   fuzzy typo hits lowest. Preserve the existing source/sentiment/publisher/topic/narrative/date
+   filters as hard filters.
+4. Add restrained fuzzy matching for typos only: use it after exact/normalized token matching, apply
+   higher thresholds for short words, do not let fuzzy matching broaden common short terms, and keep it
+   cheap enough for the cached in-memory Discover records.
+5. Add result explanations in the UI: highlight or snippet the matched title/summary/full-text text
+   where practical, and expose a small "matched in title/summary/full text/topic" hint so users
+   understand why a row appeared.
+6. Evaluate BigQuery `SEARCH` as the scalable keyword-search backend once the local ranking model is
+   proven. BigQuery search indexes and `SEARCH` are a good fit for tokenized full-text lookup at
+   larger volume, but wiring this into callbacks changes the execution model from "filter cached
+   records" to "query candidate ids/scores, then render rows." Do not do that as the first pass unless
+   current in-memory search becomes too slow or too limited.
+
+**Guardrails.** Do not load full embeddings into the Dash app for this keyword-search pass. Do not mix
+this with Reference Publication similarity. Do not make fuzzy matching the primary retrieval method:
+it is typo tolerance, not synonym search. Keep the first implementation fixture-testable without
+BigQuery credentials.
+
+**Verification.** Unit-test token normalization for punctuation, case, diacritics, plurals/inflections,
+and short-word fuzzy edge cases. Unit-test ranking order with small fixture records: title hit >
+summary hit > metadata hit > full-text hit > fuzzy hit. Add fixture coverage proving `Journalist`,
+`Topic_Area`, `Narrative`, `Media_Type`, and SoMe author/platform fields are searchable where present.
+Add a Discover callback smoke test that enters a query and verifies the returned table rows change
+without breaking the existing filters.
+
+### 5.27 Discover should add semantic search over BigQuery-side embeddings later (Discover / retrieval quality) — **done (2026-06-28)**
+
+Landed once the user supplied an `OPENAI_API_KEY` and confirmed the live `embedding` column's storage
+shape — see the dated Update note above for the materialized-table approach `VECTOR_SEARCH` actually
+required (it rejects views and expression columns, neither anticipated below), the stable-id scheme,
+and what was verified live. Original finding below for context.
+
+**Evidence.** The Trad and SoMe source pipeline already generates an `embedding` column from `Main
+Text` using OpenAI `text-embedding-3-small`. Discover currently does not use that column:
+`data_discover.py` loads display/search fields plus `umap_x` / `umap_y`, while typed search remains
+lexical and in-memory. The embeddings are useful for semantic retrieval, but loading them into the
+Dash records cache would be too heavy.
+
+**Why it matters.** The keyword-search work in section 5.26 will improve exact search, grammatical
+variants, searched fields, ranking, and typo tolerance. It still will not fully solve vocabulary
+mismatch: queries such as "market dominance", "monopoly concerns", "antitrust", and "competition
+investigation" can describe the same information need while sharing few or no keywords. Semantic
+search is the right tool for that layer.
+
+**Scope.** This is semantic search for the typed Discover search bar. It is separate from the
+"Reference Publication" similarity workflow and should not be bundled with that UX. It should also not
+block the first keyword-search pass.
+
+**Direction.**
+1. Keep stored item embeddings in BigQuery. Do not load full vectors into the Dash app cache.
+2. Add a stable item id to the Discover record contract, because current `_id = frame.index` is not
+   stable enough for BigQuery candidate lookup and callback round-trips.
+3. Confirm the live embedding storage shape. `ARRAY<FLOAT64>` is preferred for BigQuery vector search;
+   if stored as JSON/string, add a normalization view or materialized table that exposes a typed vector
+   column.
+4. Add a small backend helper that embeds the user's typed query with the same model used for the
+   corpus: `text-embedding-3-small`. Use the short raw query text, not the 8191-token chunking path
+   used for long article bodies, and skip semantic search for empty/very short queries.
+5. Run BigQuery `VECTOR_SEARCH` over Trad and SoMe embeddings and return candidate stable ids plus
+   distance/similarity scores.
+6. Combine semantic candidates with the lexical keyword rank from section 5.26: exact title/summary
+   matches stay highest, semantic-only matches can appear below strong lexical matches, and
+   source/sentiment/publisher/topic/narrative/date filters remain hard filters.
+7. Add a subtle result explanation such as "semantic match" so users understand why rows can appear
+   even when the exact query words are absent.
+8. Consider a BigQuery vector index only after the query shape and vector column contract are stable.
+
+**Guardrails.** Do not load embeddings into Dash records or browser stores. Do not replace keyword
+search with vector search; use hybrid retrieval. Do not bundle this with Reference Publication
+similarity. Do not ship semantic results without clear ranking behavior and at least minimal
+explanation. Keep dev/local fallback graceful: if OpenAI or BigQuery vector search is unavailable,
+keyword search still works.
+
+**Verification.** Add a schema test or documented live check that `embedding` is present and vector-
+search-compatible. Unit-test hybrid ranking with mocked lexical scores and vector scores. Test that
+hard filters still constrain semantic candidates. Test disabled/fallback behavior when query embedding
+generation or BigQuery vector search fails.
+
+---
+
+## 6. Target Architecture
+
+The goal (confirmed in prior rounds): up to ~30 clients, each with multiple dashboards and users,
+**strict no-cross-client data leakage**, shared internal tooling (chat, saved views, theming,
+table/KPI components), and **one running app instance**. Each dashboard is its **own bespoke
+single-client plugin** — `amazon_2026` is not a reusable template. This makes tenant isolation
+largely *structural*: there's no shared, parameterized data layer whose bug could blend two
+clients' data.
+
+**Shared platform code (build centrally, reaches every client on deploy):**
+- The shell: discovery, access gate, auth, tenancy, Client Hub, admin.
+- The shared toolkit: `theme.py` / `ui_components.py` / `timeline_charts.py` (post-§5.4 split),
+  `pages/_shared.py` helpers, the `register_top_items_callback` factory, extensions.
+- Navigation (§5.1): one `NavLink` per dashboard, scoped natively by Vizro.
+
+**Per-dashboard plugin code (bespoke, one client each):**
+- `dashboards/<slug>/`: its own `data_*.py` (dataset resolved from that client's `Client` record,
+  never a hardcoded literal), `charts_*.py`, `pages/`, `fixtures.py`, `MANIFEST`.
+
+**How new dashboards should be scaffolded.** Copy the *structure*, not constants. The realistic risk
+is copy-paste leaving a stale dataset/ID. Mitigations, in order of strength: (1) resolve dataset
+from `Client.bq_dataset` (config, not literal); (2) per-dataset BigQuery IAM so a missed step fails
+closed; (3) a written "new dashboard" checklist (§9); (4) the access-control regression test.
+
+**How client/dataset config resolves.** `Client.bq_dataset` (or `f"{bq_dataset_prefix}{client_id}"`)
+→ the dashboard's `_resolve_dataset()` at startup. Single-client dashboards resolve once at build
+time; there is **no** per-request tenant cache-key problem to solve (that only arises if one
+dashboard's *code* is deliberately reused for two of a client's own brands — a contained, local
+decision if it ever happens).
+
+**Access grants & operator workflow.** Already expressible today (`tenancy/access.py`): a client
+gets `Client.dashboard_slugs`; a user inherits those plus per-user `dashboard_slugs` extras. An
+"operator" (services several clients, less than admin) is a user with empty `client_id` and a
+curated cross-client `dashboard_slugs` list — no new schema. Add: a `record_audit` call when an
+operator opens a non-owned dashboard, and (nice-to-have) labeling rail dashboards by owning client.
+
+**Guardrails against copy-paste leaks.** Per-dataset IAM (fail-closed), the new-dashboard checklist,
+and access tests asserting `accessible_slugs()` never returns an un-granted slug.
+
+**What's deliberately *not* built:** a generalized multi-tenant data layer, tenant-aware cache keys,
+a session "active client" switcher, or per-client app deployments. The bespoke-plugin model makes
+these unnecessary; keep a config-driven single-tenant escape valve in `app.py` only if a client ever
+contractually requires physical isolation.
+
+---
+
+## 7. Roadmap
+
+Tiers are independent; within a tier, items can be done in any order. Verification noted per item.
+
+### Tier 0 — Hygiene (an afternoon, near-zero risk)
+- **T0.1 — Done (2026-06-25).** Tracked dev residue deleted (§5.9). Verified: `pytest` green; app
+  boots.
+- **T0.2 — Done (2026-06-25).** `.gitignore` ignores `*.log`, `temp/`, `test-results/`; duplicated
+  block merged.
+- **T0.3 — Done (2026-06-25).** `set_dev_mode(settings.is_dev)` (§5.10). The chart-menu decision is
+  resolved (2026-06-28): permanent feature, see §5.25(c).
+- **T0.4 — Done (2026-06-25).** Orphaned `ext_crossfilter.js`/`.css` deleted (confirmed zero Python
+  references first).
+
+### Tier 1 — Safety & correctness
+- **T1.1 — Done (2026-06-25), corrected same day.** First pass (one `NavLink` per dashboard + CSS)
+  put pages in a secondary expand panel instead of the icon rail — wrong UX, superseded. Corrected
+  design: one `NavLink` per *page* again (direct icon-click navigation, no expand panel) + a new
+  `ScopedNavBar(vm.NavBar)` that filters the rendered icons to the active dashboard server-side, per
+  page render via `active_page_id` — computed fresh on every navigation (confirmed against Vizro's
+  source: `Dashboard._make_page_layout` calls this on every page route, not once at startup), so
+  there is no "shows everything, narrows down after a click" window for the original bug to live in.
+  Falls back to an *empty* rail (never "show everything") when the active dashboard can't be
+  determined. See §5.1 for the full writeup. Verified: `pytest` green (75 tests, incl. 5 new
+  `tests/test_navigation.py` cases), direct in-process inspection of every real dashboard's scoped
+  output, `node --check`. Browser-level visual confirmation is the user's to do, per the standing
+  no-Playwright-screenshots rule.
+- **T1.2** `--min-instances=1` (§5.7) — **still open**, pending cost greenlight (a deploy/billing
+  decision, not a code change).
+- **T1.3** Create the `amazon` `Client` record + scope BigQuery IAM per dataset (§5.3) — **still
+  open** (an admin/infra action against the live store, not available from this pass).
+- **T1.4 — Rejected (2026-06-27).** Capping `load_archive_scatter` / `load_narrative_top_publishers`
+  (§5.5) was considered and rejected — standing rule now: never truncate a query whose result a user is
+  meant to see in full or that could feed a total. Both stay unbounded.
+- **T1.5 — Done (2026-06-25).** `BQ_MAX_BYTES_BILLED=20000000000` set in `cloudbuild.yaml` (§5.16).
+- **T1.6 — Done (2026-06-27).** `safe_load()` logs on failure instead of silently rendering empty;
+  `@server.errorhandler(500)` added to `app.py`; and the UI now distinguishes "failed" from "empty"
+  at every `_add_empty_figure_annotation` call site via a `load_failed` tag/flag threaded through
+  `.attrs` (direct-DataFrame builders) or explicit dict keys/params (Store-backed builders) (§5.17).
+  Verified: `pytest` green (79 tests).
+- **T1.7 — Done (2026-06-25).** `amazon_2026` build/render smoke test (all 7 pages) +
+  `_slug_for_path()` unit test added (§5.19). Verified: `pytest` green.
+- **T1.8 — Done (2026-06-25).** `Flask-Compress` added and wired via `Compress(server)` (§5.20).
+
+### Tier 2 — Architecture boundaries
+- ~~T2.1 Per-user rail filtering~~ — **resolved as not needed.** Dashboard switching happens only via
+  the Client Hub (confirmed); the rail only ever shows the one dashboard the user is already inside
+  (`ScopedNavBar`, §5.1), so no per-user grant data needs to reach the client at all.
+- **T2.2 — Done (2026-06-27).** `build_standard_page()` factory (§5.2), landed together with T3.1.
+  Verified: `pytest` green (70 tests).
+- **T2.3 — Done (2026-06-27).** UI construction separated from cache warmup (§5.13): `build_pages()`
+  is pure; `warm_caches()` (one bounded `ThreadPoolExecutor`) is called once per process from
+  `app.py`. Verified: `pytest` green (64 tests).
+- **T2.4 — Done (2026-06-28).** `internal` added to `DashboardManifest`; `bq_sample`/`breakdown`/
+  `timeline` excluded from discovery outside dev (§5.18, 2026-06-25). Conform half landed 2026-06-28:
+  top-level `charts.py`/`data.py` moved into `dashboards/breakdown/` and `dashboards/timeline/`,
+  aligned to plugin conventions (§7.1 Batch 4).
+- **T2.5** Page-load perf pass beyond the nav-observer cleanup (§5.21) — **still open** (needs
+  measurement before memoization/deferral work; deferred). A concrete measurement plan covering both
+  server-side timing logs (code, can be added anytime) and browser-side DevTools profiling (the
+  user's own browser, per the standing no-Playwright rule) is now spelled out in §5.21.
+- **T2.6 — Done (2026-06-25).** Operator role made usable: a per-user dashboard-grant form on the
+  Users page (wired to the existing `users_grants` route) plus a `dashboard.cross_client_open` audit
+  event in the access gate (§5.23). Verified: `test_operator_grants_ui_and_cross_client_audit`.
+- **T2.7 — Done (2026-06-28), except UI match explanations.** Normalization, expanded searched fields,
+  ranked keyword results, and restrained typo tolerance landed (§5.26). Match explanations (UI
+  snippet/highlight hints) were skipped — sized for its own pass since it touches table-column
+  structure, not just ranking logic. Verified: `pytest` green (94 tests, 9 new).
+
+### Tier 3 — Deduplication & simplification
+- **T3.1 — Done (2026-06-27).** Split `charts_shared.py` → `theme.py` / `timeline_charts.py` /
+  `ui_components.py` (§5.4), landed together with T2.2. Verified: `pytest` green (70 tests); every
+  importer repointed (grep-clean except historical docstring/comment mentions).
+- **T3.2 — Investigated (2026-06-27), rejected outright (2026-06-28).** Found 6 genuine candidate
+  pairs, all in the "weekly grid" + "sentiment timeline" loader families, each pair scanning
+  `amazon_2026_trad`/`amazon_2026_some` separately with an otherwise-identical CTE/grid shape:
+  `load_campaign_weekly_reach`/`load_campaign_some_weekly_engagement` and
+  `load_campaign_trad_sentiment_timeline`/`load_campaign_some_sentiment_timeline`
+  (`data_campaigns.py`); the same two pairs' topic-area equivalents (`data_topic_areas.py`); and the
+  same two pairs' narrative equivalents (`data_narratives.py`). The "Top N" loader family
+  (`load_*_top_publishers`/`top_journalists`/`top_publications`) and the overview/breakdown loaders
+  are **not** redundant — they already UNION both sources in one query, or are genuinely independent
+  aggregations. **Why rejected:** re-examined with live BigQuery access (not available at
+  investigation time). Each pair queries two *different* tables (`amazon_2026_trad` vs
+  `amazon_2026_some`); `data_manager` already caches each loader independently (3600s TTL), so there
+  is no live "double-scan" bug — both queries are necessary work, not redundant repetition. Merging
+  them into one `UNION ALL` query would not reduce BigQuery bytes scanned or billed (both tables are
+  still fully scanned either way); the only win is collapsing 2 round-trips into 1, worth low
+  hundreds of ms at this data volume (~12.5k rows). That's not enough to justify the actual cost:
+  normalizing each pair's mismatched column names (`weekly_reach`/`weekly_publications` vs
+  `weekly_engagement`/`weekly_posts`) into a shared shape, a new generic TTL-cache wrapper (reused
+  6×, mirroring `_server_discover_data()`) so the two legacy per-key loaders don't each re-trigger
+  the merged query, and live-BigQuery row-for-row verification across all 6 pairs before trusting the
+  new SQL. Standing rule going forward: **don't merge same-shape queries across different source
+  tables for round-trip count alone — only when it also cuts bytes scanned/billed.**
+- **T3.3 — Done (2026-06-27).** Single-source-of-truth loader registration (§5.14): one `_LOADERS`
+  dict drives both `data_manager` registration and warmup, closing the live drift where
+  `DISCOVER_ITEMS_KEY`/`ARCHIVE_SCATTER_KEY` were registered but never preloaded. Verified: `pytest`
+  green (64 tests).
+- **T3.4 — Done (2026-06-27).** Admin/operator tooling (§5.24), independently shippable: prod "view
+  as", user suspend + role-edit, client edit + delete, broader audit coverage
+  (`access.denied_admin`/`access.denied_dashboard`/`auth.login`), and users/audit table
+  search+pagination all landed (see dated Update notes). Delegated client-admin resolved as not
+  needed. Verified: `pytest` green (83 tests, 4 new route tests).
+- **T3.5 — closed (2026-06-28): (a)/(b) done, (c) resolved, (d) audited.** Inline `<style>` blocks out
+  of `pages_landing/*` moved into `assets/native_analytics_shell.css`, excluded from Dash's
+  per-dashboard asset auto-injection via `assets_ignore` (§5.25). `admin/routes.py`'s inline style was
+  dead duplication, deleted rather than moved. The chart context menu is now a permanent feature, not
+  experimental (§5.25(c)) — no gating added. (d): audited the six per-page CSS files for shared tokens
+  and minification — both rejected, no false-shared color/spacing tokens found, and `Compress(server)`
+  (§5.20) already gzips static CSS/JS with no build step to maintain (§5.25). *Verify:* `pytest` green
+  (83 tests); HTML responses shrink; styling unchanged (visual check by the user, per the standing
+  no-Playwright-screenshots rule).
+
+### Tier 4 — Future scalability
+- **T4.1 — Done (2026-06-27).** Cache backend is now config-driven (§5.8): `RedisCache` when
+  `cache_redis_url` is set, `SimpleCache` otherwise (unchanged default). Verified: `pytest` green.
+- **T4.2 — Still open (ops-only).** Firestore usage-event TTL (§5.8) needs one `gcloud firestore
+  fields ttl-policies create` command against the live store, no application code — not run this pass
+  (no GCP console/CLI access, same constraint as T1.3).
+- **T4.3 — Done (2026-06-27).** `amazon_2026` chat provider over `NARRATIVES_KEY` +
+  `OVERVIEW_KPI_KEY` (§5.11). Verified: `pytest` green (84 tests, 1 new).
+- **T4.4** BigQuery normalization views to retire the schema-drift candidate-name layer (§5; data
+  engineering, highest ceiling, highest cost — last).
+- **T4.5** Per-dashboard resource/latency observability (noisy-neighbor) ahead of need.
+- **T4.6** Retrofit `amazon_2026` naming to separate client from period (§5.15) — large, do only if
+  a 2027 build forces it; apply the lesson to new dashboards immediately instead (free).
+- **T4.7 — Done (2026-06-28).** Discover semantic/vector search over BigQuery-side OpenAI embeddings
+  (§5.27): a materialized `amazon_2026_discover_vectors` table (`VECTOR_SEARCH` rejects views/expression
+  columns), `Source:Record_ID` stable ids, an OpenAI query-embedding helper, and hybrid lexical +
+  semantic ranking in `filter_discover_records()`. Verified live (real OpenAI key + real BigQuery
+  `VECTOR_SEARCH`) and via `pytest` (104 tests, 10 new).
+
+### 7.1 Suggested implementation batching (2026-06-27)
+
+Tiers above are priority order, not execution grouping — §7's own header says items within a tier
+can land in any order. The batching below regroups the still-open items by **file/module overlap**,
+so each pass opens a given file once instead of once per item. Order between batches doesn't matter;
+order within a batch does (noted where it does).
+
+- **Batch 1 — Discover retrieval — done (2026-06-28).** `charts_discover.py` (+ `data_discover.py` for
+  the `Record_ID` column, `data_common.py` for `DISCOVER_VECTORS_TABLE`, `data_sources/bq.py` for
+  parameterized queries, `config.py` for `openai_api_key`). T2.7/§5.26 (keyword search quality) then
+  T4.7/§5.27 (semantic vector search, once the user supplied the API key and confirmed the live
+  `embedding` shape) both landed — see the dated Update notes above.
+- **Batch 2 — Per-page chart/data sweep — done (2026-06-28).** T1.6/§5.17 (the failed-vs-empty flag
+  through every `_add_empty_figure_annotation` call site) landed — see §5.17/T1.6. T3.2 (consolidate
+  redundant per-page BigQuery scans) was re-examined with live BigQuery access and **rejected
+  outright** — see §7 Tier 3/T3.2 for the full reasoning. Closed, not deferred.
+- **Batch 3 — Admin panel — done (2026-06-27).** `admin/routes.py` (+ `pages_landing/routes.py`/
+  `shell.py` for the CSS half, + `auth/middleware.py`/`app.py` for the 403 audit hooks). T3.4
+  remainder/§5.24 (audit coverage: `access.denied_admin`/`access.denied_dashboard`/`auth.login`,
+  users/audit table search+pagination — operator-opens was already covered by the existing
+  `dashboard.cross_client_open` event, T2.6) + T3.5/§5.25 (moved the `pages_landing/*` inline
+  `<style>` blocks into `assets/native_analytics_shell.css`, `assets_ignore`-excluded from Dash's
+  per-dashboard auto-injection so it doesn't add weight to Vizro pages; deleted `admin/routes.py`'s
+  inline style as dead duplication rather than moving it). Verified: `pytest` green (83 tests, 4
+  new).
+- **Batch 4 — Example-dashboard conformance — done (2026-06-28).** T2.4 conform half/§5.18: the
+  top-level `charts.py`/`data.py` (synthetic Amazon media dataset, shared by `breakdown` and
+  `timeline`) are deleted; each dashboard now has its own self-contained `data.py`/`charts.py`
+  (`bq_sample` already had its own). Both register their loaders via `data_manager` with zero-arg
+  functions — `breakdown.DATA_KEY`, `timeline.WEEKLY_KEY`/`CAMPAIGNS_KEY` — and pages pass the string
+  key to figure builders (`figure=narrative_reach_bar(data_frame=DATA_KEY)`), matching the
+  `amazon_2026` convention instead of passing a literal module-level DataFrame built once at import.
+  The synthetic-data generator (`build_weekly_long`/`build_campaigns`, ~90 lines) is duplicated once
+  into each package rather than shared, deliberately — the plugin model is "drop a package, restart"
+  with no inter-package imports, and both are throwaway demo dashboards, not a real multi-tenant
+  dataset. Each loader re-seeds `np.random` on every call so cache refreshes reproduce the same
+  series instead of drifting after each TTL expiry — fixes a latent (cosmetic-only, never previously
+  observed) determinism gap the old module-level "build once at import" version didn't have to worry
+  about. `extensions/chat_with_data.py`'s `_provider_timeline`/`_provider_breakdown` (which imported
+  the old top-level `data` module directly) were repointed to the new per-package loaders — caught by
+  the existing chat-fallback test, not anticipated going in. Verified: `pytest` green (104 tests, no
+  new tests — pure refactor, existing coverage already exercises both dashboards' routes/build).
+- **Batch 5 — Small independent platform changes — done (2026-06-27), T4.2 ops-gated.** `app.py`/
+  `config.py` (cache config) + `extensions/chat_with_data.py`. T4.1 (shared cache backend, §5.8) +
+  T4.3 (chat provider, §5.11) landed as code; T4.2 (Firestore TTL/rollup, §5.8) turned out to be a
+  one-line ops command with no application code to write — see §5.8 for the exact command. `redis`
+  added to `requirements.txt` (a no-op dependency until `cache_redis_url` is set). Verified: `pytest`
+  green (84 tests, 1 new).
+
+**Not batchable as code work — blocked on a decision/measurement, not on grouping:** T1.2
+(`--min-instances=1`, needs cost greenlight), T1.3 (create the `amazon` `Client` record + IAM, an
+ops/console action), T2.5 (needs production profiling before any code), T4.2 (Firestore TTL policy,
+an ops/console action — see §5.8), T4.4 (data engineering, separate track), T4.5 (no urgency), T4.6
+(defer until a 2027 build forces it).
+
+---
+
+## 8. Verification Strategy
+
+The suite is no longer empty — extend it from a real base. Priorities:
+- **SQL-fragment unit tests (no BigQuery).** Already started in
+  `test_amazon_2026_data_common.py`; keep covering `_optional_*_expr`, `_sentiment_case`,
+  `_metric_pivot`, `_weekly_grid_cte`, `_publisher_uid_expr` as they change.
+- **Route/access tests.** `test_access.py` / `test_routes.py` cover the gate; add a case asserting
+  `accessible_slugs()` never leaks an un-granted slug, including an operator with cross-client
+  grants.
+- **Fixture-shape assertions (still missing).** For each `load_*`, assert its fixture's columns ⊆
+  expected columns, caught once at import in dev — converts silent query/fixture drift into a
+  fail-fast.
+- **Chart-geometry unit tests.** Pure functions (`_nice_axis_step`, `_add_reach_flag_annotations`,
+  `_smooth_nonnegative_curve`) currently verified only by eye.
+- **Build/render smoke tests (in-process test client, no creds).** Extend
+  `test_routes::test_dashboard_routes_render` to include `/app/d/amazon_2026` and every page path
+  (§5.19) — the flagship currently has none. Add a `_slug_for_path()` table-test for the access
+  gate's URL→slug mapping.
+- **Error/empty-state tests.** Force `safe_query` to raise and feed an empty fixture; assert pages
+  render the designed "unavailable"/"no data" states rather than broken figures (§5.17).
+- **Config-safety assertion.** A test (or a deploy lint) that prod config sets `BQ_MAX_BYTES_BILLED`
+  (§5.16) and `--min-instances>=1` once greenlit (§5.7).
+- **Navigation + Discover smoke test (Playwright).** Load a dashboard, assert the sidebar lists only
+  that dashboard's pages (T1.1) and that a Discover filter updates the table (the most complex
+  callback graph). Author/run these as developer checks; the user verifies UI visually in their own
+  browser per the standing rule (no agent-driven screenshots).
+- **Discover search-quality tests.** For section 5.26, unit-test normalization, field weighting,
+  ranking, and typo tolerance on fixtures; add callback coverage proving typed search updates results
+  without breaking hard filters. For section 5.27, test hybrid ranking with mocked lexical/vector
+  scores, assert hard filters constrain semantic candidates, and verify semantic search disables
+  cleanly when OpenAI or BigQuery vector search is unavailable.
+- **Hygiene grep checks (cheap CI guard).** Fail on new `print(` in `dashboards/`, on `run_*.log` /
+  `*screenshot*` / `* (1).*` files reappearing, and (post-T1.1) on `applyNavScope` returning.
+
+---
+
+## 9. New Dashboard Checklist
+
+Before granting anyone access to a new dashboard's slug:
+1. **Name by client, not period.** Slug = `<client>`, not `<client>_<year>` (§5.15). Carry the
+   reporting period as a manifest field / dataset suffix, so next year isn't a rename.
+   `MANIFEST.slug == folder name` (discovery enforces).
+2. **Dataset resolves from config, not a literal.** Mirror `data_common.py::_resolve_dataset()`;
+   point it at the *new* client's `Client.bq_dataset`. Grep the new `data_*.py` for any copied
+   project/dataset/ID constants from the source dashboard.
+3. **Create the `Client` record** (`/admin/clients`) with the correct `bq_dataset`, and confirm
+   BigQuery IAM lets the app read *only* that dataset (fail-closed on mistakes).
+4. **Pages namespaced** `/d/<slug>/...` so the access gate can map URL → slug.
+5. **Reuse the shared toolkit** (theme/ui/timeline, `pages/_shared.py`, `register_top_items_callback`)
+   — don't fork chart/table/KPI code.
+6. **Nav is automatic** — one rail icon per dashboard once §5.1 lands; no per-page nav wiring.
+7. **Register a chat provider** over aggregated keys, or accept the widget is suppressed there.
+8. **Add a fixture per `data_manager` key** so dev works with no GCP creds, **and** confirm pages
+   render with an *empty* frame, not just the populated fixture (§5.17).
+9. **Keep queries bounded** — explicit `LIMIT`/sampling on any raw-row query, with
+   `BQ_MAX_BYTES_BILLED` set in prod (§5.5, §5.16).
+10. **Add/extend access + SQL-fragment + render smoke tests;** run `pytest` green (§5.19).
+11. **Assign the slug** to the client's `dashboard_slugs` only after 1–10.
+
+---
+
+## 10. Open Questions
+
+Real product/infra decisions only (not answerable from the code):
+~~1. **`--min-instances=1` cost.** Greenlight the always-on instance to kill cold-start risk (§5.7)?~~
+   **Resolved (2026-06-27): no** — keep `--min-instances=0`.
+~~2. **Reference-code overlay (`dev_ids`).** Permanent product feature (rename) or dev-only (gate)?
+   (§5.10)~~ **Resolved (2026-06-27): dev-only** — stays gated on `settings.is_dev`, no client-facing
+   need identified.
+~~3. **Cache refresh trigger.** Stay on a 1-hour TTL, or move to event-driven invalidation when the
+   daily BigQuery load job finishes?~~ **Resolved (2026-06-28): event-driven.** `POST
+   /internal/cache/refresh` (`app.py`, header `X-Cache-Refresh-Secret` checked against
+   `config.py::cache_refresh_secret`, empty = disabled/404) clears the Flask-Caching store; the daily
+   BQ load job (outside this repo, T4.4 territory) should call it once it finishes. TTL raised from
+   3600s to 86400s — now just the fallback if that call is ever missed, not the primary mechanism.
+   Caveat: with `SimpleCache` (no `cache_redis_url`) the clear only reaches the instance that handles
+   the request, so this only fully works at `--max-instances=1` until Redis is wired up.
+~~4. **Delegated "client admin"?** For ~30 clients, do we want a client-scoped admin who manages their
+   own company's users (§5.24), or keep all user/grant management with the central admin?~~
+   **Resolved (2026-06-27): no** — companies don't manage their own accounts; the operator role
+   (§5.23) already covers the cross-client delegation need.
+~~5. **Production "view as".** Is staff impersonation of a client user in prod acceptable from a
+   privacy/consent standpoint (§5.24)? It's the most useful support tool but needs a policy + an
+   audit trail before it's built.~~ **Resolved (2026-06-27): yes** — admin-only, audited
+   (`user.impersonate_start`). Built; see §5.24.
+
+*Resolved this round:* the left rail is **not** a cross-dashboard switcher — switching is via the
+Client Hub only, so the rail shows only the current dashboard (§5.1). Example dashboards are
+**kept** as internal dev/demo fixtures but must be **gated out of prod and conformed** to the plugin
+architecture (§5.18). No delegated client-admin — the operator role is the right level of
+delegation (§5.24, Open Question #4).
+
+---
+
+## Audit notes (volatile — line references valid at time of writing only)
+
+- Navigation: `app.py::_build_navigation` (per-page `NavLink` loop); Vizro
+  `vizro/models/_navigation/nav_link.py::NavLink.build` (`item_active` gate);
+  `assets/native_analytics.js::applyNavScope` (~lines 314–331) + History patch (~lines 428–440).
+- Dataset resolution: `data_common.py::_resolve_dataset` (~lines 25–45), `PROJECT_ID, DATASET_ID`
+  assigned at import.
+- Deploy config: `cloudbuild.yaml` `--min-instances=0` / `--cpu=1` / `--memory=1Gi`;
+  `Dockerfile` `--workers 2 --threads 8 --timeout 120`.
+- Done items verified: `app.py` cache `CACHE_DEFAULT_TIMEOUT=86400` + `/internal/cache/refresh`; `tenancy/events.py`
+  `_usage_executor`; `charts_discover.py` `_server_cache_lock` + TTL;
+  `dashboards/amazon_2026/__init__.py::_start_preload`.
+- Tests: `pytest -q` → **57 passed** (8 modules under `tests/`).
+- Residue: `git ls-files` shows `pages_landing/routes (1).py`, `run_*.log`, `screenshot*.py`,
+  `_smoke_callback.py`, `claude-chats-debug.log`, `nav.json` tracked.

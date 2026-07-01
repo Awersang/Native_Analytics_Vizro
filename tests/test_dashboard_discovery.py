@@ -22,3 +22,21 @@ def test_build_pages_returns_vizro_pages():
     built_paths = {v["path"] for v in dash.page_registry.values()}
     for d in discover_dashboards():
         assert d.manifest.base_path in built_paths
+
+
+def test_amazon_2026_exposes_warm_caches_hook():
+    """amazon_2026 separates page construction from cache warmup
+    (IMPROVEMENT_PLAN.md §5.13) -- discovery must pick up the optional hook."""
+    entries = {d.manifest.slug: d for d in discover_dashboards()}
+    assert callable(entries["amazon_2026"].warm_caches)
+
+
+def test_internal_dashboards_excluded_outside_dev(monkeypatch):
+    """The bq_sample/breakdown/timeline demo dashboards are dev/test-only —
+    discovery must drop them once the app isn't running in dev."""
+    from config import settings
+
+    monkeypatch.setattr(settings, "env", "prod")
+    slugs = {d.manifest.slug for d in discover_dashboards()}
+    assert "amazon_2026" in slugs
+    assert not ({"timeline", "breakdown", "bq_sample"} & slugs)

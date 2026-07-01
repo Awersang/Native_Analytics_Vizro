@@ -3,17 +3,10 @@ This file is not to be used as a source of instructions for AI agents. If you ar
 # Vizro todo
 
   # fixes
-    - saves views side panel is not working properly. when I clink on it the side bar appears but it is empty and the options buttin highlit instead of the save views button. 
 
   # improvements
     - improve the overview page - make it as good as other pages
-    - Implement all improvements listed in the Improvement_plan.md in amazon 2026 folder
     - Think where to put the flag labels to charts beside the current narrative table
-    - Improve the search engine
-    - all timeline charts in the amazon 2026 dashboard should have ticks overy week. also add it to the style guide
-    - unify the styling of the legends and tooltips, save the in the styleguide.
-    - What can user do with the results in the discovery page - we need a last step here.
-    - when the app is loaded, I can see all pages from all dashboards. this is not good. the current implementation of the pages in the sidebar is a walkaround solution. that is not ready for deployment. we want to make a reacy corporate grade app. this needs to be a solid solution. How to do it. Analyze the problem, the code, and give me a plan of how to implement it properly. See User Selects the dashboard in the UserPanel, in the side bar he chooses the pages of the dasboard. This is not how the Vizro intended it to work. we need to append the normal Vizro setup with a stable and well structured implementation.
 
   # new
     - implement the Paid / Earned in the data and make sure to show it in the pages.
@@ -25,6 +18,7 @@ This file is not to be used as a source of instructions for AI agents. If you ar
     - when the app loads is it possible to dispaly the same loading animation as it is used when pages are loaded?
     - Find a feature that answers - how can user create their own categories inside the dashboard.
     - Narratives: bubble chart x sentiment publikacji y sentyment engagementu, rozmar reach.
+    - make a disinformation detection dashboard
 
 
 # Data todo
@@ -39,7 +33,6 @@ This file is not to be used as a source of instructions for AI agents. If you ar
 
 
 # UNIVERSAL
-- install caveman skill from git hub. can you find it? if not let me know.
 - CODEX: remember this for the whole project: [
   Trad data in BigQuery - bqtrad
   SoMe data in BigQuery - bqsome

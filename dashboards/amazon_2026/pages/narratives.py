@@ -1,12 +1,12 @@
 """Narratives page — thin wiring layer. All components live in charts_narratives."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, no_update
-from vizro.models.types import capture
+from dash import Input, Output, State, callback, clientside_callback, no_update
 
 from dashboards.amazon_2026.charts_narratives import (
     _angles_data_bar_styles,
@@ -20,23 +20,26 @@ from dashboards.amazon_2026.charts_narratives import (
     _narrative_weekly_figure,
     _norm_source,
     _overview_table_rows,
-    _top_publishers_data_bar_styles,
-    _top_publishers_table_rows,
     build_narratives_combined_timeline_section,
     build_narratives_detail_section,
     build_narratives_overview_section,
     narratives_kpi_panel,
     overview_table_columns,
 )
-from dashboards.amazon_2026.charts_shared import (
-    _detail_metric_values,
-    _timeline_available_sources,
-    _timeline_figure,
-    _normalize_sources,
+from dashboards.amazon_2026.timeline_charts import (
+    normalize_sources,
+    timeline_available_sources,
+    timeline_figure,
+)
+from dashboards.amazon_2026.ui_components import (
     build_top_posts_table,
     build_top_publications_table,
+    capture,
     detail_combined_weekly_figure,
+    detail_metric_values,
     detail_weekly_figure,
+    top_publishers_data_bar_styles,
+    top_publishers_table_rows,
 )
 from dashboards.amazon_2026.data_common import (
     NARRATIVE_DETAIL_KPI_KEY,
@@ -49,18 +52,22 @@ from dashboards.amazon_2026.dev_ids import ref_label
 from dashboards.amazon_2026.pages._shared import (
     basic_metric_sink,
     build_detail_timeline_response,
+    build_standard_page,
+    detail_content_scope,
     metric_parameter,
     select_active_table_value,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def build_narratives_page(base_path: str) -> vm.Page:
-    return vm.Page(
-        id="amazon-2026-narratives",
-        title=ref_label("Narratives", "P2"),
-        path=f"{base_path}/narratives",
+    return build_standard_page(
+        base_path=base_path,
+        slug="narratives",
+        display_name="Narratives",
+        ref_code="P2",
         description="Narrative analysis across traditional media and social media.",
-        layout=vm.Flex(direction="column", gap="20px"),
         components=[
             vm.Figure(
                 id="amazon-2026-narratives-kpi-section",
@@ -77,6 +84,11 @@ def build_narratives_page(base_path: str) -> vm.Page:
             vm.Figure(
                 id="amazon-2026-narratives-detail-section",
                 figure=narratives_detail_panel(data_frame=NARRATIVE_DETAIL_KPI_KEY),
+            ),
+            # Content in its own figure — see topic_areas.py / detail_content_scope for why.
+            vm.Figure(
+                id="amazon-2026-narrative-details-content",
+                figure=narratives_content_panel(data_frame=NARRATIVE_DETAIL_KPI_KEY),
             ),
             vm.Figure(
                 id="amazon-2026-narrative-basic-metric-sink",
@@ -107,6 +119,12 @@ def narratives_detail_panel(data_frame: pd.DataFrame):
     return build_narratives_detail_section(data_frame)
 
 
+@capture("figure")
+def narratives_content_panel(data_frame: pd.DataFrame):
+    # Renders the placeholder (selected=None); the populate callback fills it.
+    return detail_content_scope(_narrative_detail_content([], None))
+
+
 @callback(
     Output("amazon-2026-narrative-detail-select", "value"),
     Input("amazon-2026-narratives-overview-table", "active_cell"),
@@ -127,18 +145,30 @@ def _select_narrative_from_table(active_cell, viewport_rows, table_rows):
     return result
 
 
+clientside_callback(
+    "function(_children){ return Date.now(); }",
+    Output("amazon-2026-narrative-detail-nonce", "data"),
+    Input("amazon-2026-narratives-detail-section", "children"),
+    prevent_initial_call=True,
+)
+
+
 @callback(
-    Output("amazon-2026-narrative-details-content", "children"),
+    Output("amazon-2026-narrative-details-content", "children", allow_duplicate=True),
     Input("amazon-2026-narrative-detail-select", "value"),
+    Input("amazon-2026-narrative-detail-nonce", "data"),
     State("amazon-2026-narrative-detail-store", "data"),
     State("amazon-2026-narratives-overview-data", "data"),
+    prevent_initial_call=True,
 )
 def _update_narrative_details(
     selected_label: str | None,
+    _nonce: Any,
     records: list[dict[str, Any]] | None,
     overview_records: list[dict[str, Any]] | None,
 ):
-    return _narrative_detail_content(records or [], selected_label, overview_records or [])
+    logger.warning("[DETAIL-DEBUG] CALLBACK _update_narrative_details selected_label=%r (None/empty -> placeholder)", selected_label)
+    return detail_content_scope(_narrative_detail_content(records or [], selected_label, overview_records or []))
 
 
 @callback(
@@ -152,10 +182,11 @@ def _update_narratives_timeline(source: str | None, store_data: dict | None):
     data = store_data or {}
     color_map = data.get("color_map") or {}
     x_range = data.get("x_range") or None
+    load_failed = bool(data.get("load_failed"))
 
     if source == "SoMe":
         df = pd.DataFrame(data.get("some") or [])
-        fig = _narrative_weekly_figure(df, "weekly_engagement", "weekly_posts", "posts", "Weekly Engagement", color_map=color_map, x_range=x_range)
+        fig = _narrative_weekly_figure(df, "weekly_engagement", "weekly_posts", "posts", "Weekly Engagement", color_map=color_map, x_range=x_range, load_failed=load_failed)
         return fig, {"height": "520px"}, ref_label("Weekly Engagement by Narrative", "P2S2G1")
 
     if source == "Trad-Multi":
@@ -170,7 +201,7 @@ def _update_narratives_timeline(source: str | None, store_data: dict | None):
 
     # default: Trad combined
     df = pd.DataFrame(data.get("trad") or [])
-    fig = _narrative_weekly_figure(df, "weekly_reach", "weekly_publications", "pubs", "Weekly Reach", color_map=color_map, x_range=x_range)
+    fig = _narrative_weekly_figure(df, "weekly_reach", "weekly_publications", "pubs", "Weekly Reach", color_map=color_map, x_range=x_range, load_failed=load_failed)
     return fig, {"height": "520px"}, ref_label("Weekly Reach by Narrative", "P2S2G1")
 
 
@@ -208,12 +239,12 @@ def _update_narrative_sentiment_timeline(
     timeline_data: dict[str, Any] | None,
 ):
     payload = dict(timeline_data or {})
-    trad_metric, some_metric = _detail_metric_values(basic_metric or "publications")
+    trad_metric, some_metric = detail_metric_values(basic_metric or "publications")
     payload["trad_metric"] = trad_metric
     payload["some_metric"] = some_metric
-    available_sources = _timeline_available_sources(payload)
-    selected_sources = _normalize_sources(source_filter, available_sources)
-    return _timeline_figure(payload, selected_sources, id_field="narrative_label"), selected_sources
+    available_sources = timeline_available_sources(payload)
+    selected_sources = normalize_sources(source_filter, available_sources)
+    return timeline_figure(payload, selected_sources, id_field="narrative_label"), selected_sources
 
 
 @callback(
@@ -289,8 +320,8 @@ def _update_narrative_top_publishers_table(
     source: str | None,
     records: list[dict[str, Any]] | None,
 ):
-    table_rows = _top_publishers_table_rows(records or [], source)
-    return table_rows, _top_publishers_data_bar_styles(table_rows)
+    table_rows = top_publishers_table_rows(records or [], source)
+    return table_rows, top_publishers_data_bar_styles(table_rows)
 
 
 @callback(

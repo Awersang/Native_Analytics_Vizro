@@ -128,13 +128,16 @@
 
     function build() {
         var dock = document.getElementById("na-left-action-dock");
-        var host = document.getElementById("nav-control-panel");
-        if (!dock || !host) return;
+        if (!dock) return;
 
         var root = ensureRoot();
         var toggle = ensureToggle();
-        if (root.parentNode !== host) {
-            host.appendChild(root);
+        // Keep the panel at <body> level (stable). It used to be appended into
+        // Vizro's #nav-control-panel, which Dash rebuilds on every navigation —
+        // that destroyed the node. native_analytics.js overlays it on the left
+        // column with position:fixed instead. See positionSidebarPanels().
+        if (root.parentNode !== document.body) {
+            document.body.appendChild(root);
         }
 
         var viewsButton = document.getElementById("saved-views-toggle");

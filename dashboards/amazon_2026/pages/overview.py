@@ -21,14 +21,16 @@ from dashboards.amazon_2026.data_common import (
     SOURCE_SENTIMENT_MONTHLY_KEY,
     TOP_ITEMS_KEY,
 )
-from dashboards.amazon_2026.dev_ids import ref_label, ref_only
-from dashboards.amazon_2026.pages._shared import metric_filter
+from dashboards.amazon_2026.dev_ids import ref_only
+from dashboards.amazon_2026.pages._shared import build_standard_page, metric_filter
 
 
 def build_overview_page(base_path: str) -> vm.Page:
-    return vm.Page(
-        id="amazon-2026-overview",
-        title=ref_label("Overview", "P1"),
+    return build_standard_page(
+        base_path=base_path,
+        slug="overview",
+        display_name="Overview",
+        ref_code="P1",
         path=base_path,
         description="Publications split in traditional media between TML and non-TML.",
         components=[
@@ -95,7 +97,6 @@ def build_overview_page(base_path: str) -> vm.Page:
                 ],
             ),
         ],
-        layout=vm.Flex(direction="column", gap="20px"),
         controls=[
             metric_filter(
                 [

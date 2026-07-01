@@ -1,11 +1,13 @@
 """
-Data generation for Native Analytics Vizro dashboard.
+Data loaders for the Reach & Engagement Timeline dashboard.
 
-Reproduces the Amazon media-monitoring dataset from the reference notebook:
-  - df_weekly          : long-form, includes "All narratives" aggregate rows
-  - df_weekly_narratives: same without the aggregate (for breakdown page)
-  - df_campaigns       : campaign schedule enriched with total reach
+Synthetic Amazon media-monitoring dataset, scoped to this dashboard package.
+``load_weekly`` includes the "All narratives" aggregate row the timeline
+chart groups on; the sibling ``breakdown`` dashboard keeps its own narrower
+copy without it.
 """
+
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 
@@ -13,7 +15,8 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 
-np.random.seed(42)
+WEEKLY_KEY = "timeline_weekly"
+CAMPAIGNS_KEY = "timeline_campaigns"
 
 START_DATE = datetime(2026, 1, 5)
 WEEKS = [(i + 1, START_DATE + timedelta(weeks=i)) for i in range(50)]
@@ -57,7 +60,14 @@ def _make_wave(arr: np.ndarray, period: float, phase: float, peak: float, sigma:
     return np.clip(gaussian_filter1d(raw, sigma=sigma), 0, None)
 
 
-def build_weekly_long() -> pd.DataFrame:
+def load_weekly() -> pd.DataFrame:
+    """Weekly reach/engagement by narrative & sentiment, plus an "All
+    narratives" aggregate row used by the dual-axis timeline chart.
+
+    Re-seeded on every call so cache refreshes reproduce the same synthetic
+    series instead of drifting on each TTL expiry.
+    """
+    np.random.seed(42)
     n = len(WEEKS)
     week_arr = np.arange(n, dtype=float)
     rows = []
@@ -91,11 +101,12 @@ def build_weekly_long() -> pd.DataFrame:
         .sum()
         .assign(narrative_label="All narratives")
     )
-    df_full = pd.concat([df, agg], ignore_index=True)
-    return df_full
+    return pd.concat([df, agg], ignore_index=True)
 
 
-def build_campaigns(df_weekly: pd.DataFrame) -> pd.DataFrame:
+def load_campaigns() -> pd.DataFrame:
+    """Campaign schedule enriched with total reach over each campaign window."""
+    df_weekly = load_weekly()
     weekly_all = (
         df_weekly[df_weekly["narrative_label"] == "All narratives"]
         .groupby("week_start", as_index=False)[["reach", "engagement"]]
@@ -124,9 +135,3 @@ def build_campaigns(df_weekly: pd.DataFrame) -> pd.DataFrame:
 
     raw["reach"] = raw.apply(_campaign_reach, axis=1)
     return raw
-
-
-# Built once at import time
-df_weekly            = build_weekly_long()
-df_weekly_narratives = df_weekly[df_weekly["narrative_label"] != "All narratives"].copy()
-df_campaigns         = build_campaigns(df_weekly)

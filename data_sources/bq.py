@@ -44,6 +44,20 @@ def run_query(sql: str) -> pd.DataFrame:
     return client.query(sql, job_config=job_config).to_dataframe()
 
 
+def run_query_params(sql: str, query_parameters: list) -> pd.DataFrame:
+    """Like ``run_query``, but with bound `google.cloud.bigquery` query parameters.
+
+    Used for queries embedding a large literal (e.g. a 1536-float query vector for
+    Discover's `VECTOR_SEARCH`) that would otherwise have to be string-interpolated.
+    """
+    from google.cloud.bigquery import QueryJobConfig
+
+    client = get_bq_client()
+    kwargs = {"maximum_bytes_billed": settings.bq_max_bytes_billed} if settings.bq_max_bytes_billed > 0 else {}
+    job_config = QueryJobConfig(query_parameters=query_parameters, **kwargs)
+    return client.query(sql, job_config=job_config).to_dataframe()
+
+
 def safe_query(sql: str, fallback: pd.DataFrame | None = None) -> pd.DataFrame:
     """Run a query, returning ``fallback`` only in development.
 

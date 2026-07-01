@@ -1,33 +1,34 @@
 """Topic Areas page — thin wiring layer. All components live in charts_topic_areas."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
 import vizro.models as vm
-from dash import Input, Output, State, callback, no_update
-from vizro.models.types import capture
+from dash import Input, Output, State, callback, clientside_callback, no_update
 
 from dashboards.amazon_2026.charts_campaigns import build_detail_content
-from dashboards.amazon_2026.charts_narratives import (
-    _top_publishers_data_bar_styles,
-    _top_publishers_table_rows,
-)
 from dashboards.amazon_2026.charts_publishers import (
-    _data_bar_styles,
     _filter_records,
-    _header_divider_styles,
-    _table_columns,
-    _table_records,
 )
-from dashboards.amazon_2026.charts_shared import (
-    _detail_metric_values,
-    _normalize_sources,
-    _timeline_available_sources,
-    _timeline_figure,
+from dashboards.amazon_2026.timeline_charts import (
+    normalize_sources,
+    timeline_available_sources,
+    timeline_figure,
+)
+from dashboards.amazon_2026.ui_components import (
+    capture,
+    data_bar_styles,
     detail_combined_weekly_figure,
+    detail_metric_values,
     detail_weekly_figure,
+    header_divider_styles,
     register_top_items_callback,
+    table_columns,
+    table_records,
+    top_publishers_data_bar_styles,
+    top_publishers_table_rows,
 )
 from dashboards.amazon_2026.charts_topic_areas import (
     _topic_area_available_sources,
@@ -57,18 +58,23 @@ from dashboards.amazon_2026.pages._shared import (
     basic_metric_sink,
     build_detail_timeline_response,
     build_overview_table_response,
+    build_standard_page,
+    detail_content_scope,
     metric_parameter,
     select_active_table_value,
 )
+
+logger = logging.getLogger(__name__)
 
 register_top_items_callback("amazon-2026-ta-topicarea", show_publication_col=True, show_author_col=True)
 
 
 def build_topic_areas_page(base_path: str) -> vm.Page:
-    return vm.Page(
-        id="amazon-2026-topic-areas",
-        title=ref_label("Topic Areas", "P6"),
-        path=f"{base_path}/topic-areas",
+    return build_standard_page(
+        base_path=base_path,
+        slug="topic-areas",
+        display_name="Topic Areas",
+        ref_code="P6",
         description="Breakdown of coverage by topic area and theme.",
         components=[
             vm.Figure(
@@ -87,12 +93,18 @@ def build_topic_areas_page(base_path: str) -> vm.Page:
                 id="amazon-2026-topic-area-details-section",
                 figure=topic_area_details_panel(data_frame=TOPIC_AREA_OVERVIEW_KEY),
             ),
+            # Content is its own figure so the populate callback writes the SAME prop
+            # (_this figure_.children) that _on_page_load writes — a single source of truth
+            # with no parent/child nested-store conflict, so a click can't revert it.
+            vm.Figure(
+                id="amazon-2026-ta-topicarea-details-content",
+                figure=topic_area_content_panel(data_frame=TOPIC_AREA_OVERVIEW_KEY),
+            ),
             vm.Figure(
                 id="amazon-2026-topic-area-basic-metric-sink",
                 figure=basic_metric_sink(data_frame=TOPIC_AREA_BREAKDOWN_KEY),
             ),
         ],
-        layout=vm.Flex(direction="column", gap="20px"),
         controls=[
             metric_parameter(
                 ["amazon-2026-topic-area-basic-metric-sink.basic_metric"],
@@ -124,6 +136,20 @@ def topic_area_details_panel(data_frame: pd.DataFrame):
     return build_topic_area_details_section(data_frame)
 
 
+@capture("figure")
+def topic_area_content_panel(data_frame: pd.DataFrame):
+    # The detail content as its own figure — renders the placeholder; the populate
+    # callback fills it. Shares the id the populate callback already targets.
+    return detail_content_scope(
+        build_detail_content(
+            None,
+            "amazon-2026-ta-topicarea",
+            "P6S4",
+            empty_label="Select a topic area to see details.",
+        )
+    )
+
+
 @callback(
     Output("amazon-2026-topic-area-treemap", "figure"),
     Output("amazon-2026-topic-area-source", "value"),
@@ -138,7 +164,7 @@ def _update_topic_area_treemap(
 ):
     records = records or []
     available_sources = _topic_area_available_sources(records)
-    selected_sources = _normalize_sources(source_filter, available_sources)
+    selected_sources = normalize_sources(source_filter, available_sources)
     fig = _topic_area_theme_treemap_figure(records, selected_sources, basic_metric or "publications")
     return fig, selected_sources
 
@@ -157,7 +183,7 @@ def _update_topic_area_media_sankey(
 ):
     records = records or []
     available_sources = _topic_area_available_sources(records)
-    selected_sources = _normalize_sources(source_filter, available_sources)
+    selected_sources = normalize_sources(source_filter, available_sources)
     fig = _topic_area_media_sankey_figure(records, selected_sources, basic_metric or "publications")
     return fig, selected_sources
 
@@ -178,10 +204,10 @@ def _update_topic_area_overview_table(
         records=records,
         source_filter=source_filter,
         filter_records=_filter_records,
-        table_records=_table_records,
-        table_columns=_table_columns,
-        header_styles=_header_divider_styles,
-        data_styles=_data_bar_styles,
+        table_records=table_records,
+        table_columns=table_columns,
+        header_styles=header_divider_styles,
+        data_styles=data_bar_styles,
         first_column_label="Topic Area",
     )
 
@@ -204,13 +230,32 @@ def _select_topic_area_from_table(active_cell, viewport_rows, table_rows):
     )
 
 
-@callback(
-    Output("amazon-2026-ta-topicarea-details-content", "children"),
-    Input("amazon-2026-ta-topicarea-detail-select", "value"),
-    State("amazon-2026-topic-area-overview-data", "data"),
+# The content figure is rebuilt to the placeholder by _on_page_load on every navigation.
+# This clientside callback fires AFTER that rebuild is applied (watching the *shell* section,
+# which the populate callback never writes, so there is no loop) and bumps a nonce, so the
+# server re-populates the current selection as a later round-trip.
+clientside_callback(
+    "function(_children){ return Date.now(); }",
+    Output("amazon-2026-ta-topicarea-detail-nonce", "data"),
+    Input("amazon-2026-topic-area-details-section", "children"),
+    prevent_initial_call=True,
 )
-def _update_topic_area_details(selected_topic_area: str | None, records: list[dict[str, Any]] | None):
-    return build_detail_content(
+
+
+@callback(
+    Output("amazon-2026-ta-topicarea-details-content", "children", allow_duplicate=True),
+    Input("amazon-2026-ta-topicarea-detail-select", "value"),
+    Input("amazon-2026-ta-topicarea-detail-nonce", "data"),
+    State("amazon-2026-topic-area-overview-data", "data"),
+    prevent_initial_call=True,
+)
+def _update_topic_area_details(
+    selected_topic_area: str | None,
+    _nonce: Any,
+    records: list[dict[str, Any]] | None,
+):
+    logger.warning("[DETAIL-DEBUG] CALLBACK _update_topic_area_details selected=%r (None/empty -> placeholder)", selected_topic_area)
+    return detail_content_scope(build_detail_content(
         selected_topic_area,
         "amazon-2026-ta-topicarea",
         "P6S4",
@@ -227,7 +272,7 @@ def _update_topic_area_details(selected_topic_area: str | None, records: list[di
         top_publishers_title="Top Topic Area Publishers",
         show_top_journalists_inline=True,
         show_profile=False,
-    )
+    ))
 
 
 @callback(
@@ -265,12 +310,12 @@ def _update_topic_area_sentiment_timeline(
     timeline_data: dict[str, Any] | None,
 ):
     payload = dict(timeline_data or {})
-    trad_metric, some_metric = _detail_metric_values(basic_metric or "publications")
+    trad_metric, some_metric = detail_metric_values(basic_metric or "publications")
     payload["trad_metric"] = trad_metric
     payload["some_metric"] = some_metric
-    available_sources = _timeline_available_sources(payload)
-    selected_sources = _normalize_sources(source_filter, available_sources)
-    return _timeline_figure(payload, selected_sources, id_field="topic_area"), selected_sources
+    available_sources = timeline_available_sources(payload)
+    selected_sources = normalize_sources(source_filter, available_sources)
+    return timeline_figure(payload, selected_sources, id_field="topic_area"), selected_sources
 
 
 @callback(
@@ -284,5 +329,5 @@ def _update_topic_area_top_publishers_table(
     source: str | None,
     records: list[dict[str, Any]] | None,
 ):
-    table_rows = _top_publishers_table_rows(records or [], source)
-    return table_rows, _top_publishers_data_bar_styles(table_rows)
+    table_rows = top_publishers_table_rows(records or [], source)
+    return table_rows, top_publishers_data_bar_styles(table_rows)

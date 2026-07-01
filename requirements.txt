@@ -13,8 +13,15 @@ plotly==6.7.0
 # Web server / sessions
 Flask==3.1.3
 Flask-Caching==2.4.0
+Flask-Compress==1.18
 Werkzeug==3.1.8
 gunicorn==23.0.0
+# Only used if CACHE_REDIS_URL is set (Flask-Caching's RedisCache backend);
+# unused/no-op otherwise.
+redis==5.2.1
+# Already a transitive dep of the google-cloud libs; pinned directly since
+# charts_discover.py now calls OpenAI's embeddings endpoint with it.
+requests==2.34.2
 
 # Data
 pandas==3.0.3

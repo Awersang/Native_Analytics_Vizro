@@ -19,6 +19,7 @@ from typing import Callable
 
 import vizro.models as vm
 
+from config import settings
 from dashboards._base import BuildContext, DashboardManifest, DataSourceHealth
 
 
@@ -28,8 +29,13 @@ class RegisteredDashboard:
     build_pages: Callable[[BuildContext], list[vm.Page]]
     # Optional health probe exported by the dashboard package as ``data_health``.
     data_health: Callable[[], list[DataSourceHealth]] | None = None
+    # Optional cache-warmup hook exported as ``warm_caches``. build_pages()
+    # only constructs pages; any network I/O to warm data_manager caches
+    # belongs here instead, called once per process after pages are built.
+    warm_caches: Callable[[], None] | None = None
     # Optional page-level icon mapping exported by the dashboard package as
     # ``PAGE_ICONS`` with keys of page ids and values of Material icon names.
+    # Used for the nav rail, which shows one icon per page (see app.py).
     page_icons: dict[str, str] | None = None
 
 
@@ -46,18 +52,23 @@ def discover_dashboards() -> list[RegisteredDashboard]:
         manifest = getattr(module, "MANIFEST", None)
         build_pages = getattr(module, "build_pages", None)
         if isinstance(manifest, DashboardManifest) and callable(build_pages):
+            # Internal dev/demo dashboards never reach a real deployment.
+            if manifest.internal and not settings.is_dev:
+                continue
             if manifest.slug != name:
                 raise ValueError(
                     f"Dashboard package 'dashboards/{name}' declares slug "
                     f"'{manifest.slug}'. Folder name and slug must match."
                 )
             data_health = getattr(module, "data_health", None)
+            warm_caches = getattr(module, "warm_caches", None)
             page_icons = getattr(module, "PAGE_ICONS", None)
             found.append(
                 RegisteredDashboard(
                     manifest=manifest,
                     build_pages=build_pages,
                     data_health=data_health if callable(data_health) else None,
+                    warm_caches=warm_caches if callable(warm_caches) else None,
                     page_icons=page_icons if isinstance(page_icons, dict) else None,
                 )
             )

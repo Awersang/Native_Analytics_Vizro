@@ -1,9 +1,19 @@
 /* Native Analytics - "Chat with your data" left-rail panel. */
 
+/* Fixed overlay docked over Vizro's #nav-control-panel column. JS
+   (positionSidebarPanels) overrides top/left/width/height inline from the live
+   nav-control-panel box; the values here are the pre-measure fallback. */
 #ext-chat-root {
+  position: fixed;
+  top: 64px;
+  left: 60px;
+  width: 280px;
+  height: calc(100vh - 64px);
+  z-index: 1030;
+  box-sizing: border-box;
   display: flex;
-  width: 100%;
-  min-height: 100%;
+  background: var(--na-surface-alt);
+  border-right: 1px solid var(--na-border);
   font-family: inherit;
   color: var(--na-text);
 }

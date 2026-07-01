@@ -22,6 +22,7 @@ MANIFEST = DashboardManifest(
     icon="cloud",
     category="Disinformation",
     data_requirements=["bigquery:amazon_2025.disinformation_timeline"],
+    internal=True,
 )
 
 def _register_data_sources() -> None:

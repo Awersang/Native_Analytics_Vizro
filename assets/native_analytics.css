@@ -5,6 +5,16 @@
  */
 
 /* -----------------------------------------------------------------------
+   Nav rail scoping. app.py's ScopedNavBar renders only the active
+   dashboard's own pages as icons — computed server-side, fresh on every
+   page render, from `active_page_id` (Vizro calls this per navigation, not
+   just at startup). Dashboard switching itself only happens through the
+   Client Hub ("/"), never through this rail. No CSS or client-side JS is
+   needed for the scoping itself; #nav-bar only ever receives the right
+   icons in the first place.
+----------------------------------------------------------------------- */
+
+/* -----------------------------------------------------------------------
    Design tokens (--na-*) — single source of truth for light + dark mode,
    shared across the Overview, Narratives and Publishers pages.
 ----------------------------------------------------------------------- */
@@ -116,7 +126,7 @@
 /* -----------------------------------------------------------------------
    Shared box styles — `panel` (boxed) and `flat` (unboxed) — and the
    element title that sits inside either. See dashboards/amazon_2026/
-   charts_shared.py:na_panel().
+   ui_components.py:na_panel().
 ----------------------------------------------------------------------- */
 
 .na-panel {
@@ -153,18 +163,31 @@
   letter-spacing: 0;
 }
 
-/* Header row used when na_panel() is given `controls` — title on the left,
-   source toggle (RadioItems/Checklist) on the right, no separator line. */
+/* Header row used by na_panel() whenever there's a title, `controls`
+   (RadioItems/Checklist source toggle), and/or a chart-menu button — title
+   on the left, everything else grouped in .na-panel-header-actions on the
+   right, no separator line. The actions group's `margin-left: auto` (not
+   `justify-content: space-between` on the row) is what keeps it right-
+   aligned even when it wraps onto its own line in a narrow panel —
+   `space-between` would otherwise drop a lone wrapped item back to the
+   left edge, since "space between" one item and nothing is nothing. */
 .na-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .na-panel-header > .na-element-title {
   margin: 0;
+}
+
+.na-panel-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
 }
 
 /* Full Native Analytics wordmark replaces the "Native Analytics" text title
@@ -182,6 +205,28 @@
 #logo-dark {
   height: var(--na-logo-height);
   width: auto;
+}
+
+/* Vizro always wraps the header logo in a link to the dashboard's "/" route
+   (vizro/models/_dashboard.py: _get_logo_images). That route resolves to the
+   landing/Client Hub shell, not anything useful inside a dashboard, so the
+   logo should just be decorative. */
+a:has(> #logo-light),
+a:has(> #logo-dark),
+a:has(> #logo) {
+  pointer-events: none;
+  cursor: default;
+}
+
+/* Dashboard name displayed immediately after the NA logo in the header. */
+.na-dashboard-title {
+  display: inline-block;
+  margin-left: 12px;
+  margin-right: auto;
+  color: var(--na-text-muted);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 /* "Back to panel" link injected into the header via Dashboard.custom_header. */
@@ -393,7 +438,8 @@ a.back-to-panel .material-symbols-outlined {
 #amazon-2026-topic-area-basic-metric-sink,
 #amazon-2026-publisher-basic-metric-sink,
 #amazon-2026-campaign-basic-metric-sink,
-#amazon-2026-narrative-basic-metric-sink {
+#amazon-2026-narrative-basic-metric-sink,
+#amazon-2026-discover-stores-section {
   min-height: 0;
 }
 
@@ -401,7 +447,8 @@ a.back-to-panel .material-symbols-outlined {
 #amazon-2026-topic-area-treemap-section,
 #amazon-2026-topic-area-media-sankey-section,
 #amazon-2026-publishers-overview-section,
-#amazon-2026-campaign-campaigns-section {
+#amazon-2026-campaign-campaigns-section,
+#amazon-2026-discover-results-section {
   min-height: 500px;
 }
 
@@ -410,13 +457,27 @@ a.back-to-panel .material-symbols-outlined {
   min-height: 460px;
 }
 
-#amazon-2026-narratives-detail-section,
-#amazon-2026-topic-area-details-section,
-#amazon-2026-publishers-details-section,
-#amazon-2026-campaign-details-section {
+/* The detail sections are split into a short "shell" figure (header + dropdown)
+   and a separate content figure that holds the selected-item detail. The height
+   is reserved on the CONTENT figure (which is the tall part), not the shell —
+   otherwise the shell reserves 600px of empty space above the content. */
+#amazon-2026-narrative-details-content,
+#amazon-2026-ta-topicarea-details-content,
+#amazon-2026-publisher-details-content,
+#amazon-2026-campaign-details-content,
+#amazon-2026-discover-detail-section {
   min-height: 600px;
 }
 
 #amazon-2026-campaign-timeline {
   min-height: 380px;
+}
+
+#amazon-2026-discover-filters-section {
+  min-height: 360px;
+}
+
+#amazon-2026-discover-clusters-section,
+#amazon-2026-discover-stats-section {
+  min-height: 120px;
 }

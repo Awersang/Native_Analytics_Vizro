@@ -65,7 +65,6 @@ def test_invalid_role_is_coerced_to_user():
     c.post(
         "/admin/users/create",
         data={
-            "uid": "rolecheck",
             "email": "r@x.local",
             "role": "superadmin",
             "_csrf_token": token,
@@ -73,7 +72,7 @@ def test_invalid_role_is_coerced_to_user():
     )
     from tenancy.users import get_user_store
 
-    u = get_user_store().get_user("rolecheck")
+    u = get_user_store().get_user("pending:r@x.local")
     assert u is not None
     assert u.role == "user"
 

@@ -7,12 +7,35 @@ that exposes, at package level:
     MANIFEST: DashboardManifest        # metadata (slug, title, role, ...)
     def build_pages(ctx) -> list[vm.Page]
 
+and, optionally:
+
+    def data_health() -> list[DataSourceHealth]   # admin health page probe
+    def warm_caches() -> None                     # warm data_manager caches
+
+``build_pages`` must construct pages only — no network I/O. Registering
+data sources with ``data_manager`` is fine (in-memory), but actually fetching
+data belongs in ``warm_caches``, called once per process after all
+dashboards' pages are built, so a dashboard stays safe to import/build in
+tests or scripts that don't want live network calls.
+
 ``app.py`` discovers all such packages, collects their pages into a single
 Vizro ``Dashboard`` (see SPIKE FINDINGS: multiple Vizro apps cannot coexist in
 one process), and uses the manifest for the Client Hub and the admin grant UI.
 
 Page paths MUST be namespaced as ``/d/<slug>`` (and ``/d/<slug>/...`` for extra
 pages) so the request gate in app.py can map any URL back to a dashboard slug.
+
+Each dashboard is bespoke to one client (see IMPROVEMENT_PLAN.md §14 for the
+amazon_2026 case study) — there is no shared, parameterized data layer across
+dashboards. Before granting anyone access to a new dashboard's slug:
+  1. Confirm every hardcoded project/dataset/ID constant in its data layer
+     points at the *new* client's data, not a copy-pasted constant from
+     whichever existing dashboard it was built from.
+  2. Prefer resolving the dataset from that client's ``Client.bq_dataset``
+     record (see ``dashboards/amazon_2026/data_common.py::_resolve_dataset``
+     for the pattern) over a literal string, so a future dataset rename is a
+     one-place fix.
+  3. Only then assign the slug to the client's ``dashboard_slugs``.
 """
 
 from __future__ import annotations
@@ -38,6 +61,10 @@ class DashboardManifest:
     # Free-form list of data dependencies for documentation/admin display, e.g.
     # ["bigquery:london_bicycles.cycle_hire"].
     data_requirements: list[str] = field(default_factory=list)
+    # Internal dev/demo dashboards (the bq_sample/breakdown/timeline examples)
+    # are excluded from discovery outside dev so clients never see example
+    # data products. Set True only for dashboards that are not real client work.
+    internal: bool = False
 
     @property
     def base_path(self) -> str:

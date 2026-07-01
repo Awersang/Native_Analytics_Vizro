@@ -22,6 +22,12 @@
   width: 100%;
 }
 
+.amazon-publishers-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .amazon-publishers-section-header h2 {
   margin: 0;
   font-size: 22px;

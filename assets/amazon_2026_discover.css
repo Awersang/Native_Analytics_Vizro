@@ -11,10 +11,10 @@
   display: inline-flex;
   align-items: center;
   padding: 4px 12px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 6px;
-  background: var(--amazon-publishers-surface-alt);
-  color: var(--amazon-publishers-text);
+  background: var(--na-surface-alt);
+  color: var(--na-text);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -22,8 +22,69 @@
 }
 
 .amazon-discover-umap-toggle:hover {
-  border-color: var(--amazon-publishers-link);
-  color: var(--amazon-publishers-link);
+  border-color: var(--na-link);
+  color: var(--na-link);
+}
+
+/* -----------------------------------------------------------------------
+   Search mode tabs (Keyword Search / Reference Similarity)
+----------------------------------------------------------------------- */
+
+.amazon-discover-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--na-border);
+}
+
+.amazon-discover-mode-tab {
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--na-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.amazon-discover-mode-tab:hover {
+  color: var(--na-text);
+}
+
+.amazon-discover-mode-tab.is-active {
+  border-bottom-color: var(--na-link);
+  color: var(--na-link);
+}
+
+/* -----------------------------------------------------------------------
+   Clear filters button (Filters panel header)
+----------------------------------------------------------------------- */
+
+.amazon-discover-clear-filters-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--na-border);
+  border-radius: 8px;
+  background: var(--na-surface-alt);
+  color: var(--na-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.amazon-discover-clear-filters-btn .material-symbols-outlined {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.amazon-discover-clear-filters-btn:hover {
+  border-color: var(--na-link);
+  color: var(--na-link);
 }
 
 /* -----------------------------------------------------------------------
@@ -61,20 +122,20 @@
   width: 100%;
   height: 38px;
   padding: 0 34px 0 12px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
-  background: var(--amazon-publishers-dropdown-bg);
-  color: var(--amazon-publishers-text);
+  background: var(--na-dropdown-bg);
+  color: var(--na-text);
   font-size: 13px;
 }
 
 .amazon-discover-search::placeholder {
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
 }
 
 .amazon-discover-search:focus {
   outline: none;
-  border-color: var(--amazon-publishers-link);
+  border-color: var(--na-link);
 }
 
 .amazon-discover-search-clear {
@@ -91,7 +152,7 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   cursor: pointer;
   transform: translateY(-50%);
 }
@@ -105,8 +166,8 @@
 }
 
 .amazon-discover-search-clear:hover {
-  background: var(--amazon-publishers-surface-hover);
-  color: var(--amazon-publishers-text);
+  background: var(--na-surface-hover);
+  color: var(--na-text);
 }
 
 .amazon-discover-search-fulltext {
@@ -124,7 +185,7 @@
   gap: 6px;
   padding-left: 40px;
   min-height: 20px;
-  color: var(--amazon-publishers-text-soft);
+  color: var(--na-text-soft);
   font-size: 12px;
   cursor: pointer;
 }
@@ -147,7 +208,7 @@
   left: 0;
   width: 32px;
   height: 18px;
-  background: var(--amazon-publishers-border);
+  background: var(--na-border);
   border-radius: 9px;
   transform: translateY(-50%);
   transition: background-color 0.15s ease;
@@ -160,7 +221,7 @@
   left: 2px;
   width: 14px;
   height: 14px;
-  background: var(--amazon-publishers-surface);
+  background: var(--na-surface);
   border-radius: 50%;
   transform: translateY(-50%);
   transition: left 0.15s ease;
@@ -168,7 +229,7 @@
 }
 
 .amazon-discover-search-fulltext label:has(input:checked)::before {
-  background: var(--amazon-publishers-link);
+  background: var(--na-link);
 }
 
 .amazon-discover-search-fulltext label:has(input:checked)::after {
@@ -178,6 +239,15 @@
 /* -----------------------------------------------------------------------
    Filter dropdowns row
 ----------------------------------------------------------------------- */
+
+.amazon-discover-controls-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--na-border);
+}
 
 .amazon-discover-controls {
   display: grid;
@@ -210,7 +280,7 @@
 }
 
 .amazon-discover-date-label {
-  color: var(--amazon-publishers-text-soft);
+  color: var(--na-text-soft);
   font-size: 12px;
 }
 
@@ -226,27 +296,27 @@
 }
 
 .amazon-discover-rangeslider .rc-slider-rail {
-  background: var(--amazon-publishers-border);
+  background: var(--na-border);
 }
 
 .amazon-discover-rangeslider .rc-slider-track {
-  background: var(--amazon-publishers-link);
+  background: var(--na-link);
 }
 
 .amazon-discover-rangeslider .rc-slider-handle {
-  border-color: var(--amazon-publishers-link);
-  background: var(--amazon-publishers-surface);
+  border-color: var(--na-link);
+  background: var(--na-surface);
   opacity: 1;
 }
 
 .amazon-discover-rangeslider .rc-slider-handle:focus-visible,
 .amazon-discover-rangeslider .rc-slider-handle:hover {
-  border-color: var(--amazon-publishers-link);
-  box-shadow: 0 0 0 4px var(--amazon-publishers-surface-hover);
+  border-color: var(--na-link);
+  box-shadow: 0 0 0 4px var(--na-surface-hover);
 }
 
 .amazon-discover-rangeslider .rc-slider-mark-text {
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -260,14 +330,14 @@
   align-items: center;
   gap: 8px;
   margin-left: 12px;
-  color: var(--amazon-publishers-text-soft);
+  color: var(--na-text-soft);
   font-size: 11px;
 }
 
 .amazon-discover-time-legend-bar {
   width: 120px;
   height: 8px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 4px;
   background: linear-gradient(to right, #2f7dd1, #35a66b, #d9c23a, #e07040, #c84e5a);
 }
@@ -278,7 +348,7 @@
 
 .amazon-discover-selection-hint {
   margin-top: 8px;
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   font-size: 11px;
 }
 
@@ -289,10 +359,10 @@
   gap: 12px;
   margin-top: 8px;
   padding: 8px 12px;
-  border: 1px solid var(--amazon-publishers-link);
+  border: 1px solid var(--na-link);
   border-radius: 8px;
-  background: var(--amazon-publishers-surface-alt);
-  color: var(--amazon-publishers-text);
+  background: var(--na-surface-alt);
+  color: var(--na-text);
   font-size: 12px;
 }
 
@@ -302,10 +372,10 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
-  background: var(--amazon-publishers-surface);
-  color: var(--amazon-publishers-text);
+  background: var(--na-surface);
+  color: var(--na-text);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -318,8 +388,8 @@
 }
 
 .amazon-discover-selection-clear:hover {
-  border-color: var(--amazon-publishers-link);
-  color: var(--amazon-publishers-link);
+  border-color: var(--na-link);
+  color: var(--na-link);
 }
 
 /* -----------------------------------------------------------------------
@@ -328,13 +398,13 @@
 
 .amazon-discover-results-count {
   margin-bottom: 12px;
-  color: var(--amazon-publishers-text-soft);
+  color: var(--na-text-soft);
   font-size: 12px;
 }
 
 #amazon-2026-discover-top-publications .dash-table-container,
 #amazon-2026-discover-top-posts .dash-table-container {
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -362,9 +432,9 @@
 ----------------------------------------------------------------------- */
 
 #amazon-2026-discover .dash-table-container .current-page {
-  color: var(--amazon-publishers-text) !important;
-  background: var(--amazon-publishers-surface) !important;
-  border-color: var(--amazon-publishers-border) !important;
+  color: var(--na-text) !important;
+  background: var(--na-surface) !important;
+  border-color: var(--na-border) !important;
 }
 
 #amazon-2026-discover .dash-table-container .current-page input,
@@ -375,8 +445,8 @@
 #amazon-2026-discover .dash-table-container .dash-table-pagination,
 #amazon-2026-discover .dash-table-container .dash-table-pagination *,
 #amazon-2026-discover .dash-table-container input.current-page {
-  color: var(--amazon-publishers-text) !important;
-  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  color: var(--na-text) !important;
+  -webkit-text-fill-color: var(--na-text) !important;
   opacity: 1 !important;
 }
 
@@ -384,7 +454,49 @@
 #amazon-2026-discover .dash-table-container .previous-page,
 #amazon-2026-discover .dash-table-container .next-page,
 #amazon-2026-discover .dash-table-container .last-page {
-  color: var(--amazon-publishers-text) !important;
+  color: var(--na-text) !important;
+}
+
+/* -----------------------------------------------------------------------
+   Result stats (collapsible section below the Results table)
+----------------------------------------------------------------------- */
+
+.amazon-discover-stats-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.amazon-discover-stats-donuts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.amazon-discover-stats-bars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 1300px) {
+  .amazon-discover-stats-kpis {
+    grid-template-columns: repeat(3, minmax(140px, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .amazon-discover-stats-bars {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 800px) {
+  .amazon-discover-stats-kpis {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* -----------------------------------------------------------------------
@@ -427,14 +539,14 @@
   flex-direction: column;
   gap: 10px;
   padding: 18px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
-  background: var(--amazon-publishers-surface-alt);
+  background: var(--na-surface-alt);
 }
 
 .amazon-discover-detail-body h3 {
   margin: 0;
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 20px;
   font-weight: 700;
   line-height: 1.3;
@@ -456,7 +568,7 @@
 
 .amazon-discover-detail-meta-value {
   overflow: hidden;
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -465,13 +577,13 @@
 .amazon-discover-detail-fulltext {
   margin-top: 16px;
   padding: 18px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
-  background: var(--amazon-publishers-surface-alt);
+  background: var(--na-surface-alt);
 }
 
 .amazon-discover-detail-fulltext summary {
-  color: var(--amazon-publishers-link);
+  color: var(--na-link);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
@@ -492,7 +604,7 @@
 
 .amazon-discover-detail-fulltext p {
   margin: 10px 0 0;
-  color: var(--amazon-publishers-text-soft);
+  color: var(--na-text-soft);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -523,7 +635,7 @@
 }
 
 .amazon-discover-some-post-author {
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 15px;
   font-weight: 700;
 }
@@ -541,19 +653,19 @@
 
 .amazon-discover-some-post-date,
 .amazon-discover-some-post-followers {
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   font-size: 12px;
 }
 
 .amazon-discover-some-post-content {
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 17px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
   padding: 12px 0;
-  border-top: 1px solid var(--amazon-publishers-border);
-  border-bottom: 1px solid var(--amazon-publishers-border);
+  border-top: 1px solid var(--na-border);
+  border-bottom: 1px solid var(--na-border);
 }
 
 .amazon-discover-some-post-tags {
@@ -574,7 +686,7 @@
 }
 
 .amazon-discover-some-post-link {
-  color: var(--amazon-publishers-link);
+  color: var(--na-link);
   font-size: 13px;
   font-weight: 600;
   text-decoration: none;
@@ -594,10 +706,10 @@
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
-  background: var(--amazon-publishers-surface-alt);
-  color: var(--amazon-publishers-text);
+  background: var(--na-surface-alt);
+  color: var(--na-text);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -610,8 +722,8 @@
 }
 
 .amazon-discover-reference-btn:hover {
-  border-color: var(--amazon-publishers-link);
-  color: var(--amazon-publishers-link);
+  border-color: var(--na-link);
+  color: var(--na-link);
 }
 
 /* -----------------------------------------------------------------------
@@ -632,9 +744,9 @@
   gap: 8px;
   min-height: 38px;
   padding: 0 12px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
-  background: var(--amazon-publishers-dropdown-bg);
+  background: var(--na-dropdown-bg);
 }
 
 .amazon-discover-reference-content {
@@ -644,7 +756,7 @@
 
 .amazon-discover-reference-empty {
   overflow: hidden;
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -660,20 +772,20 @@
 
 .amazon-discover-reference-date {
   flex: 0 0 auto;
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   font-size: 12px;
 }
 
 .amazon-discover-reference-publisher {
   flex: 0 0 auto;
-  color: var(--amazon-publishers-text-soft);
+  color: var(--na-text-soft);
   font-size: 12px;
   font-weight: 600;
 }
 
 .amazon-discover-reference-title {
   overflow: hidden;
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -690,7 +802,7 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   cursor: pointer;
 }
 
@@ -699,8 +811,8 @@
 }
 
 .amazon-discover-reference-clear:hover {
-  background: var(--amazon-publishers-surface-hover);
-  color: var(--amazon-publishers-text);
+  background: var(--na-surface-hover);
+  color: var(--na-text);
 }
 
 .amazon-discover-similarity-row {
@@ -714,28 +826,28 @@
 }
 
 .amazon-discover-similarity-slider .rc-slider-mark-text {
-  color: var(--amazon-publishers-text-muted);
+  color: var(--na-text-muted);
   font-size: 11px;
 }
 
 .amazon-discover-similarity-slider .rc-slider-rail {
-  background: var(--amazon-publishers-border);
+  background: var(--na-border);
 }
 
 .amazon-discover-similarity-slider .rc-slider-track {
-  background: var(--amazon-publishers-link);
+  background: var(--na-link);
 }
 
 .amazon-discover-similarity-slider .rc-slider-handle {
-  border-color: var(--amazon-publishers-link);
-  background: var(--amazon-publishers-surface);
+  border-color: var(--na-link);
+  background: var(--na-surface);
   opacity: 1;
 }
 
 .amazon-discover-similarity-slider .rc-slider-handle:focus-visible,
 .amazon-discover-similarity-slider .rc-slider-handle:hover {
-  border-color: var(--amazon-publishers-link);
-  box-shadow: 0 0 0 4px var(--amazon-publishers-surface-hover);
+  border-color: var(--na-link);
+  box-shadow: 0 0 0 4px var(--na-surface-hover);
 }
 
 .amazon-discover-similarity-slider .dash-slider-input,

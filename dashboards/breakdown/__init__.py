@@ -7,8 +7,8 @@ Refactored from the original ``pages/breakdown.py``.
 from __future__ import annotations
 
 import vizro.models as vm
+from vizro.managers import data_manager
 
-from charts import engagement_ratio_scatter, narrative_reach_bar, sentiment_stacked_area
 from dashboards._base import (
     BuildContext,
     DashboardManifest,
@@ -16,7 +16,12 @@ from dashboards._base import (
     export_button,
     freshness_note,
 )
-from data import df_weekly_narratives
+from dashboards.breakdown.charts import (
+    engagement_ratio_scatter,
+    narrative_reach_bar,
+    sentiment_stacked_area,
+)
+from dashboards.breakdown.data import DATA_KEY, load_weekly_narratives
 
 MANIFEST = DashboardManifest(
     slug="breakdown",
@@ -25,24 +30,36 @@ MANIFEST = DashboardManifest(
     icon="insights",
     category="Media Intelligence",
     data_requirements=["synthetic:media_weekly"],
+    internal=True,
 )
 
 
+def _register_data_sources() -> None:
+    # Registered at both import and build time, since Vizro clears the shared
+    # data manager during dev hot reload.
+    data_manager[DATA_KEY] = load_weekly_narratives
+
+
+_register_data_sources()
+
+
 def data_health() -> list[DataSourceHealth]:
-    latest = df_weekly_narratives["week_start"].max()
+    df = load_weekly_narratives()
+    latest = df["week_start"].max()
     return [
         DataSourceHealth(
             name="synthetic:media_weekly",
             status="ok",
             detail="Synthetic dataset (always available).",
-            rows=len(df_weekly_narratives),
+            rows=len(df),
             as_of=str(getattr(latest, "date", lambda: latest)()),
         )
     ]
 
 
 def build_pages(ctx: BuildContext) -> list[vm.Page]:
-    latest = df_weekly_narratives["week_start"].max()
+    _register_data_sources()
+    latest = load_weekly_narratives()["week_start"].max()
     page = vm.Page(
         id="breakdown",
         title=MANIFEST.title,
@@ -67,17 +84,17 @@ def build_pages(ctx: BuildContext) -> list[vm.Page]:
             vm.Graph(
                 id="narrative_bar_chart",
                 title="Total Reach by Narrative & Sentiment",
-                figure=narrative_reach_bar(data_frame=df_weekly_narratives),
+                figure=narrative_reach_bar(data_frame=DATA_KEY),
             ),
             vm.Graph(
                 id="sentiment_area_chart",
                 title="Reach Over Time — Stacked by Sentiment",
-                figure=sentiment_stacked_area(data_frame=df_weekly_narratives),
+                figure=sentiment_stacked_area(data_frame=DATA_KEY),
             ),
             vm.Graph(
                 id="ratio_scatter_chart",
                 title="Reach vs Engagement  ·  bubble size = engagement-to-reach ratio",
-                figure=engagement_ratio_scatter(data_frame=df_weekly_narratives),
+                figure=engagement_ratio_scatter(data_frame=DATA_KEY),
             ),
             export_button(),
         ],

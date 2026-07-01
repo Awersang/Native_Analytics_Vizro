@@ -8,58 +8,59 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import dash_table, dcc, html
 
-from dashboards.amazon_2026.charts_publishers import (
-    SOURCE_OPTIONS,
-    _cell_width_styles,
-    _data_bar_styles,
-    _detail_kpi_groups,
-    _dev_inline_label,
-    _find_record,
-    _header_divider_styles,
-    _table_columns,
-    _table_records,
-)
-from dashboards.amazon_2026.charts_narratives import (
-    _TOP_TABLES_PAGE_SIZE,
-    _build_shared_x_range,
-    _top_journalists_data_bar_styles,
-    _top_journalists_table_columns,
-    _top_journalists_table_rows,
-    _top_publishers_data_bar_styles,
-    _top_publishers_table_columns,
-    _top_publishers_table_rows,
-)
-from dashboards.amazon_2026.charts_shared import (
+from dashboards.amazon_2026.theme import (
     ACCENT_SOME,
     ACCENT_TRAD,
+    THEME_GRID,
+    THEME_SURFACE,
+    THEME_TEXT,
+    WEEKLY_DTICK_MS,
+    theme_hoverlabel,
+)
+from dashboards.amazon_2026.timeline_charts import (
+    _add_empty_figure_annotation,
+    _timeline_chart_title,
+    normalize_sources,
+    timeline_available_sources,
+    timeline_figure,
+)
+from dashboards.amazon_2026.ui_components import (
+    SOURCE_OPTIONS,
     TABLE_STYLE_CELL,
     TABLE_STYLE_DATA,
     TABLE_STYLE_DATA_CONDITIONAL,
     TABLE_STYLE_HEADER,
+    TOOLTIP_CSS,
+    TOP_TABLES_PAGE_SIZE,
     TOP_TABLE_STYLE_CELL,
     TOP_TABLE_STYLE_HEADER,
-    THEME_GRID,
-    THEME_SURFACE,
-    THEME_TEXT,
-    TOOLTIP_CSS,
     TRAD_SOME_OPTIONS,
-    _json_safe,
-    _normalize_sources,
-    _num,
-    _theme_hoverlabel,
-    _timeline_available_sources,
-    _timeline_chart_title,
-    _timeline_figure,
-    _timeline_records_from_frame,
     build_overview_table_section,
+    build_shared_x_range,
     build_top_items_panel,
     build_top_items_table_data,
+    cell_width_styles,
+    data_bar_styles,
+    data_load_failed,
     detail_combined_weekly_figure,
+    detail_kpi_groups,
+    dev_inline_label,
+    find_record,
+    header_divider_styles,
+    json_safe,
     load_and_filter,
     na_panel,
     safe_load,
+    table_columns,
+    table_records,
+    timeline_records_from_frame,
+    top_journalists_data_bar_styles,
+    top_journalists_table_columns,
+    top_journalists_table_rows,
+    top_publishers_data_bar_styles,
+    top_publishers_table_columns,
+    top_publishers_table_rows,
     trad_some_controls,
-    _add_empty_figure_annotation,
 )
 from dashboards.amazon_2026.data_common import (
     CAMPAIGN_NARRATIVES_KEY,
@@ -198,6 +199,7 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
         bargap=0.35,
         xaxis=dict(
             type="date",
+            dtick=WEEKLY_DTICK_MS,
             tickformat="%b\n%Y",
             showgrid=True,
             gridcolor=THEME_GRID,
@@ -210,7 +212,7 @@ def _campaign_timeline_figure(data_frame: pd.DataFrame) -> go.Figure:
             showgrid=True,
             gridcolor=THEME_GRID,
         ),
-        hoverlabel=_theme_hoverlabel(),
+        hoverlabel=theme_hoverlabel(),
     )
     return fig
 
@@ -257,13 +259,13 @@ def _campaign_table_records(data_frame: pd.DataFrame, id_column: str = "campaign
     df["display_name"] = df[id_column].fillna("").astype(str)
     df["publisher_uid"] = df["display_name"]
     df["publisher_type"] = df.apply(_campaign_type, axis=1)
-    return [_json_safe(record) for record in df.to_dict("records")]
+    return [json_safe(record) for record in df.to_dict("records")]
 
 
 def build_campaign_campaigns_section(data_frame: pd.DataFrame) -> html.Div:
     records = _campaign_table_records(data_frame)
-    table_data = _table_records(records)
-    columns = _table_columns("All")
+    table_data = table_records(records)
+    columns = table_columns("All")
     columns[0] = {"name": ["", "Campaign"], "id": "display_name"}
     controls = html.Div(
         className="amazon-publishers-controls",
@@ -289,13 +291,13 @@ def build_campaign_campaigns_section(data_frame: pd.DataFrame) -> html.Div:
         store_id="amazon-2026-campaign-campaigns-data",
         section_title=ref_label("Campaigns Overview", "P7S3"),
         controls=controls,
-        dev_label=_dev_inline_label("P7S3T1", "Campaigns Table"),
+        dev_label=dev_inline_label("P7S3T1", "Campaigns Table"),
         table_id="amazon-2026-campaign-campaigns-table",
         table_data=table_data,
         columns=columns,
-        style_cell_conditional=_cell_width_styles(),
-        style_header_conditional=_header_divider_styles(columns),
-        style_data_conditional=_data_bar_styles(table_data, columns),
+        style_cell_conditional=cell_width_styles(),
+        style_header_conditional=header_divider_styles(columns),
+        style_data_conditional=data_bar_styles(table_data, columns),
     )
 
 
@@ -328,39 +330,54 @@ def build_campaign_details_section(
     selector_label: str = "Campaign",
     placeholder: str = "Select campaign…",
     empty_label: str = "Select a campaign to see details.",
+    render_content: bool = True,
 ) -> html.Div:
+    logger.warning("[DETAIL-DEBUG] FIGURE-REBUILD build_campaign_details_section id_prefix=%s (on_page_load) -> content reset to placeholder", id_prefix)
     df = data_frame.copy() if data_frame is not None else pd.DataFrame()
     options_values = df[filter_column].dropna().tolist() if filter_column in df.columns else []
     options = [{"label": value, "value": value} for value in options_values]
-    return html.Div(
-        className="amazon-publishers-section amazon-publishers-details amazon-narrative-details",
-        children=[
-            html.Div(
-                className="amazon-publishers-section-header",
-                children=[html.H2(ref_label(header_label, ref_prefix))],
-            ),
-            html.Div(
-                className="amazon-publishers-detail-selector",
-                children=[
-                    html.Div(selector_label, className="amazon-publishers-control-label"),
-                    dcc.Dropdown(
-                        id=f"{id_prefix}-detail-select",
-                        options=options,
-                        value=None,
-                        searchable=True,
-                        clearable=True,
-                        persistence=True,
-                        persistence_type="session",
-                        placeholder=placeholder,
-                        className="amazon-publishers-dropdown",
-                    ),
-                ],
-            ),
+    children = [
+        html.Div(
+            className="amazon-publishers-section-header",
+            children=[html.H2(ref_label(header_label, ref_prefix))],
+        ),
+        html.Div(
+            className="amazon-publishers-detail-selector",
+            children=[
+                html.Div(selector_label, className="amazon-publishers-control-label"),
+                dcc.Dropdown(
+                    id=f"{id_prefix}-detail-select",
+                    options=options,
+                    value=None,
+                    searchable=True,
+                    clearable=True,
+                    persistence=True,
+                    persistence_type="session",
+                    placeholder=placeholder,
+                    className="amazon-publishers-dropdown",
+                ),
+            ],
+        ),
+    ]
+    # When render_content is False the content lives in its OWN vm.Figure (see e.g.
+    # topic_areas.py). That avoids the parent(section)/child(content) nested-store
+    # inconsistency where _on_page_load rewrites section.children with the placeholder
+    # while the populate callback writes the nested content.children — any later React
+    # re-render then reconciles the populated content back to the placeholder.
+    if render_content:
+        children.append(
             html.Div(
                 id=f"{id_prefix}-details-content",
                 children=build_detail_content(None, id_prefix, ref_prefix, empty_label=empty_label),
-            ),
-        ],
+            )
+        )
+    else:
+        # Nonce bumped by a clientside callback after _on_page_load rebuilds this shell, so the
+        # separate content figure gets re-populated with the current selection (see topic_areas.py).
+        children.append(dcc.Store(id=f"{id_prefix}-detail-nonce"))
+    return html.Div(
+        className="amazon-publishers-section amazon-publishers-details amazon-narrative-details",
+        children=children,
     )
 
 
@@ -423,7 +440,7 @@ def _campaign_profile_panel(
     if not df.empty and filter_column in df.columns:
         matches = df[df[filter_column] == selected_campaign]
         if not matches.empty:
-            record = _json_safe(matches.iloc[0].to_dict())
+            record = json_safe(matches.iloc[0].to_dict())
 
     description = str(record.get("profile") or "").strip()
     takeaways = [
@@ -491,10 +508,10 @@ def build_detail_content(
     if not selected_campaign:
         return html.Div(className="amazon-publishers-empty", children=empty_label)
     children = []
-    selected_record = _find_record(records or [], selected_campaign)
+    selected_record = find_record(records or [], selected_campaign)
     kpi_groups = []
     if selected_record is not None:
-        trad_kpis, some_kpis = _detail_kpi_groups(selected_record)
+        trad_kpis, some_kpis = detail_kpi_groups(selected_record)
         if trad_kpis:
             kpi_groups.append(html.Div(className="amazon-publishers-detail-kpis", children=trad_kpis))
         if some_kpis:
@@ -592,7 +609,7 @@ def _campaign_detail_timeline_section(
     trad_df = load_and_filter(weekly_reach_key, filter_column, selected_campaign)
     some_df = load_and_filter(some_weekly_engagement_key, filter_column, selected_campaign)
 
-    x_range = _build_shared_x_range(trad_df, some_df)
+    x_range = build_shared_x_range(trad_df, some_df)
 
     initial_fig = detail_combined_weekly_figure(
         trad_df, some_df,
@@ -602,8 +619,8 @@ def _campaign_detail_timeline_section(
         x_range=x_range, dtick=7 * 24 * 60 * 60 * 1000,
     )
 
-    available_sources = _timeline_available_sources({"has_trad": not trad_df.empty, "has_some": not some_df.empty})
-    selected_sources = _normalize_sources(available_sources, available_sources)
+    available_sources = timeline_available_sources({"has_trad": not trad_df.empty, "has_some": not some_df.empty})
+    selected_sources = normalize_sources(available_sources, available_sources)
 
     return na_panel(
         html.Span(id=f"{id_prefix}-detail-timeline-title", children=ref_label("Publications and Posts", f"{ref_prefix}G1")),
@@ -614,6 +631,7 @@ def _campaign_detail_timeline_section(
                     "trad": trad_df.to_dict("records") if not trad_df.empty else [],
                     "some": some_df.to_dict("records") if not some_df.empty else [],
                     "x_range": x_range,
+                    "load_failed": data_load_failed(trad_df, some_df),
                 },
             ),
             dcc.Graph(
@@ -686,8 +704,8 @@ def _load_narrative_sentiment_data(narrative_labels: list[str]) -> tuple[list[di
         )
 
     return (
-        _timeline_records_from_frame(matched_trad, id_field="narrative_label"),
-        _timeline_records_from_frame(matched_some, id_field="narrative_label"),
+        timeline_records_from_frame(matched_trad, id_field="narrative_label"),
+        timeline_records_from_frame(matched_some, id_field="narrative_label"),
     )
 
 
@@ -709,10 +727,11 @@ def _campaign_sentiment_timeline_section(
         filter_column: selected_campaign,
         "trad_metric": trad_metric,
         "some_metric": some_metric,
-        "trad_timeline": _timeline_records_from_frame(trad_df, id_field=filter_column),
-        "some_timeline": _timeline_records_from_frame(some_df, id_field=filter_column),
+        "trad_timeline": timeline_records_from_frame(trad_df, id_field=filter_column),
+        "some_timeline": timeline_records_from_frame(some_df, id_field=filter_column),
         "has_trad": not trad_df.empty,
         "has_some": not some_df.empty,
+        "load_failed": data_load_failed(trad_df, some_df),
     }
 
     narrative_labels: list[str] = []
@@ -725,8 +744,8 @@ def _campaign_sentiment_timeline_section(
         # when the user enables the Narratives overlay, to avoid blocking the initial detail render.
         timeline_data["narrative_labels"] = narrative_labels
 
-    available_sources = _timeline_available_sources(timeline_data)
-    selected_sources = _normalize_sources(available_sources, available_sources)
+    available_sources = timeline_available_sources(timeline_data)
+    selected_sources = normalize_sources(available_sources, available_sources)
     options = [
         {
             "label": option["label"],
@@ -744,7 +763,7 @@ def _campaign_sentiment_timeline_section(
             dcc.Store(id=f"{id_prefix}-sentiment-timeline-data", data=timeline_data),
             dcc.Graph(
                 id=f"{id_prefix}-sentiment-timeline-graph",
-                figure=_timeline_figure(timeline_data, selected_sources, id_field=filter_column),
+                figure=timeline_figure(timeline_data, selected_sources, id_field=filter_column),
                 config={"displayModeBar": False, "responsive": True},
                 className="amazon-publishers-timeline-graph",
             ),
@@ -775,9 +794,9 @@ def _campaign_top_publishers_section(
 ) -> html.Div:
     df = load_and_filter(top_publishers_key, filter_column, selected_campaign)
 
-    records = [_json_safe(row) for row in df.to_dict("records")]
-    table_rows = _top_publishers_table_rows(records, "Trad")
-    table_cols = _top_publishers_table_columns()
+    records = [json_safe(row) for row in df.to_dict("records")]
+    table_rows = top_publishers_table_rows(records, "Trad")
+    table_cols = top_publishers_table_columns()
 
     return na_panel(
         ref_label(title, f"{ref_prefix}T1"),
@@ -787,7 +806,7 @@ def _campaign_top_publishers_section(
                 id=f"{id_prefix}-top-publishers-table",
                 data=table_rows,
                 columns=table_cols,
-                page_size=_TOP_TABLES_PAGE_SIZE,
+                page_size=TOP_TABLES_PAGE_SIZE,
                 sort_action="native",
                 filter_action="none",
                 cell_selectable=False,
@@ -795,7 +814,7 @@ def _campaign_top_publishers_section(
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
                 style_cell=TOP_TABLE_STYLE_CELL,
                 style_header=TOP_TABLE_STYLE_HEADER,
-                style_data_conditional=_top_publishers_data_bar_styles(table_rows),
+                style_data_conditional=top_publishers_data_bar_styles(table_rows),
                 css=[{"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"}],
             ),
             html.Div("No publisher data available for this campaign.", className="amazon-publishers-empty")
@@ -827,9 +846,9 @@ def _campaign_top_journalists_section(
 ) -> html.Div:
     df = load_and_filter(top_journalists_key, filter_column, selected_campaign)
 
-    records = [_json_safe(row) for row in df.to_dict("records")]
-    table_rows = _top_journalists_table_rows(records)
-    table_cols = _top_journalists_table_columns()
+    records = [json_safe(row) for row in df.to_dict("records")]
+    table_rows = top_journalists_table_rows(records)
+    table_cols = top_journalists_table_columns()
 
     return na_panel(
         ref_label("Top Journalists", f"{ref_prefix}T2"),
@@ -838,7 +857,7 @@ def _campaign_top_journalists_section(
                 id=f"{id_prefix}-top-journalists-table",
                 data=table_rows,
                 columns=table_cols,
-                page_size=_TOP_TABLES_PAGE_SIZE,
+                page_size=TOP_TABLES_PAGE_SIZE,
                 sort_action="native",
                 filter_action="none",
                 cell_selectable=False,
@@ -846,7 +865,7 @@ def _campaign_top_journalists_section(
                 style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
                 style_cell=TOP_TABLE_STYLE_CELL,
                 style_header=TOP_TABLE_STYLE_HEADER,
-                style_data_conditional=_top_journalists_data_bar_styles(table_rows),
+                style_data_conditional=top_journalists_data_bar_styles(table_rows),
                 css=[{"selector": ".dash-spreadsheet-menu-item", "rule": "display: none !important;"}],
             ),
             html.Div("No journalist data available for this campaign.", className="amazon-publishers-empty")
@@ -865,7 +884,7 @@ def _campaign_top_items_panel(
     top_publications_key: str = CAMPAIGN_TOP_PUBLICATIONS_KEY,
 ) -> html.Div:
     df = load_and_filter(top_publications_key, filter_column, selected_campaign)
-    records = [_json_safe(row) for row in df.to_dict("records")]
+    records = [json_safe(row) for row in df.to_dict("records")]
     trad_table_data, some_table_data = build_top_items_table_data(records)
     return build_top_items_panel(
         id_prefix,

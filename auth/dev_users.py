@@ -39,6 +39,14 @@ def _fixture_clients() -> list[Client]:
             accent_color="#2b8ae6",
             dashboard_slugs=["breakdown"],
         ),
+        Client(
+            id="amazon",
+            name="Amazon",
+            bq_dataset="amazon_2026",
+            brand_name="Amazon Intelligence",
+            accent_color="#ff9900",
+            dashboard_slugs=["amazon_2026"],
+        ),
     ]
 
 
@@ -53,11 +61,67 @@ def _fixture_users() -> list[User]:
             display_name="ACME Analyst",
         ),
         User(
+            uid="dev-user-acme-2",
+            email="user2@acme.local",
+            role="user",
+            client_id="acme",
+            display_name="ACME Analyst 2",
+        ),
+        User(
+            uid="dev-user-acme-3",
+            email="user3@acme.local",
+            role="user",
+            client_id="acme",
+            display_name="ACME Analyst 3",
+        ),
+        User(
             uid="dev-user-globex",
             email="user@globex.local",
             role="user",
             client_id="globex",
             display_name="Globex Analyst",
+        ),
+        User(
+            uid="dev-user-globex-2",
+            email="user2@globex.local",
+            role="user",
+            client_id="globex",
+            display_name="Globex Analyst 2",
+        ),
+        User(
+            uid="dev-user-globex-3",
+            email="user3@globex.local",
+            role="user",
+            client_id="globex",
+            display_name="Globex Analyst 3",
+        ),
+        User(
+            uid="dev-user-amazon",
+            email="user@amazon.local",
+            role="user",
+            client_id="amazon",
+            display_name="Amazon Analyst",
+        ),
+        User(
+            uid="dev-user-amazon-2",
+            email="user2@amazon.local",
+            role="user",
+            client_id="amazon",
+            display_name="Amazon Analyst 2",
+        ),
+        User(
+            uid="dev-user-amazon-3",
+            email="user3@amazon.local",
+            role="user",
+            client_id="amazon",
+            display_name="Amazon Analyst 3",
+        ),
+        User(
+            uid="dev-operator",
+            email="operator@dev.local",
+            role="operator",
+            display_name="Platform Operator",
+            allowed_client_ids=["acme", "amazon"],
         ),
     ]
 

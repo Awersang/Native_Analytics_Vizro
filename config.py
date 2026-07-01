@@ -20,6 +20,10 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Placeholder session secret shipped as the field default below. Exported so
+# app.py can refuse to boot in prod if this literal is still in effect.
+DEFAULT_SESSION_SECRET = "dev-insecure-secret-change-me"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -50,12 +54,25 @@ class Settings(BaseSettings):
     session_revocation_check_interval: int = 600
 
     # ── Flask / session ───────────────────────────────────────────────────────
-    session_secret: str = "dev-insecure-secret-change-me"
+    session_secret: str = DEFAULT_SESSION_SECRET
     session_cookie_name: str = "na_session"
 
     # ── GCP ───────────────────────────────────────────────────────────────────
     gcp_project_id: str = ""
     gcp_region: str = "europe-west1"
+
+    # Redis/Memorystore URL (e.g. "redis://10.0.0.3:6379/0") for a cache shared
+    # across all gunicorn workers/instances. Empty (default) keeps the
+    # process-local SimpleCache, which is fine for a single instance but means
+    # every worker/instance refreshes BigQuery on its own clock once there's
+    # more than one. Set this once concurrency rises.
+    cache_redis_url: str = ""
+
+    # Shared secret the daily BigQuery load job posts back (header
+    # X-Cache-Refresh-Secret) to clear the cache the moment fresh data lands,
+    # instead of waiting out CACHE_DEFAULT_TIMEOUT. Empty (default) disables
+    # the endpoint — set it once the load job is wired to call it.
+    cache_refresh_secret: str = ""
 
     # ── Firebase / Identity Platform (only used when auth_enabled) ────────────
     firebase_api_key: str = ""
@@ -94,6 +111,11 @@ class Settings(BaseSettings):
     # answers questions offline (no GCP creds needed in dev).
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
+
+    # OpenAI key for Discover's semantic search (dashboards/amazon_2026/charts_discover.py).
+    # Embeds the typed query with the same model used for the corpus' stored `embedding`
+    # column. Empty → semantic search is skipped; keyword search alone still works.
+    openai_api_key: str = ""
 
     @property
     def is_dev(self) -> bool:

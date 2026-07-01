@@ -9,17 +9,19 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, callback, dcc, html
 from scipy.stats import gaussian_kde
 
-from dashboards.amazon_2026.charts_shared import (
+from dashboards.amazon_2026.theme import (
     NARRATIVE_LINE_COLORS,
     THEME_BORDER,
     THEME_GRID,
     THEME_SURFACE,
     THEME_TEXT,
     THEME_TEXT_MUTED,
-    _add_empty_figure_annotation,
-    _hex_to_rgba,
-    _json_safe,
-    _theme_hoverlabel,
+    hex_to_rgba,
+    theme_hoverlabel,
+)
+from dashboards.amazon_2026.timeline_charts import _add_empty_figure_annotation
+from dashboards.amazon_2026.ui_components import (
+    json_safe,
     na_panel,
 )
 from dashboards.amazon_2026.dev_ids import ref_label
@@ -55,7 +57,7 @@ def _records_from_frame(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
     df["umap_y"] = pd.to_numeric(df["umap_y"], errors="coerce")
     df = df.dropna(subset=["umap_x", "umap_y"])
     df["narrative_label"] = df["narrative_label"].fillna("").astype(str)
-    return [_json_safe(row) for row in df.to_dict("records")]
+    return [json_safe(row) for row in df.to_dict("records")]
 
 
 def _build_color_map(df: pd.DataFrame) -> dict[str, str]:
@@ -260,7 +262,7 @@ def _archive_figure(
                         end=z_max,
                         size=(z_max - z_start) / 4,
                     ),
-                    colorscale=[[0, _hex_to_rgba(color, 0)], [1, _hex_to_rgba(color, 0.45)]],
+                    colorscale=[[0, hex_to_rgba(color, 0)], [1, hex_to_rgba(color, 0.45)]],
                     line=dict(width=0),
                     hoverinfo="skip",
                 )
@@ -316,7 +318,7 @@ def _apply_archive_layout(fig: go.Figure) -> None:
         ),
         xaxis=dict(title=None, showgrid=True, gridcolor=THEME_GRID, zeroline=False, showticklabels=False),
         yaxis=dict(title=None, showgrid=True, gridcolor=THEME_GRID, zeroline=False, showticklabels=False),
-        hoverlabel=_theme_hoverlabel(size=12),
+        hoverlabel=theme_hoverlabel(size=12),
     )
 
 
@@ -329,25 +331,6 @@ def build_archive_scatter_section(data_frame: pd.DataFrame) -> html.Div:
     return na_panel(
         ref_label("Narrative Clusters (UMAP)", "P5S1G1"),
         [
-            html.Div(
-                className="amazon-publishers-chart-controls",
-                children=[
-                    dcc.Checklist(
-                        id="amazon-2026-archive-color-toggle",
-                        options=[{"label": "Color by narrative", "value": "color"}],
-                        value=["color"],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                    dcc.Checklist(
-                        id="amazon-2026-archive-kde-toggle",
-                        options=[{"label": "KDE", "value": "kde"}],
-                        value=[],
-                        inline=True,
-                        className="amazon-publishers-radio",
-                    ),
-                ],
-            ),
             dcc.Store(
                 id="amazon-2026-archive-scatter-data",
                 data={"records": records, "color_map": color_map},
@@ -364,6 +347,25 @@ def build_archive_scatter_section(data_frame: pd.DataFrame) -> html.Div:
                 style={"height": "640px"},
             ),
         ],
+        controls=html.Div(
+            className="amazon-publishers-chart-controls",
+            children=[
+                dcc.Checklist(
+                    id="amazon-2026-archive-color-toggle",
+                    options=[{"label": "Color by narrative", "value": "color"}],
+                    value=["color"],
+                    inline=True,
+                    className="amazon-publishers-radio",
+                ),
+                dcc.Checklist(
+                    id="amazon-2026-archive-kde-toggle",
+                    options=[{"label": "KDE", "value": "kde"}],
+                    value=[],
+                    inline=True,
+                    className="amazon-publishers-radio",
+                ),
+            ],
+        ),
     )
 
 

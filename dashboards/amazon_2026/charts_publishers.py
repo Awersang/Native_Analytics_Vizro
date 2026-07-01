@@ -8,127 +8,60 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 from dash import dash_table, dcc, html
-from dash.dash_table.Format import Format, Scheme
 
-from dashboards.amazon_2026.charts_shared import (
+from dashboards.amazon_2026.theme import (
     ACCENT_SOME,
     ACCENT_TRAD,
     DONUT_COLORS,
-    NARRATIVE_SOME_COLUMNS,
-    NARRATIVE_TRAD_COLUMNS,
     THEME_BORDER,
     THEME_ROW_EVEN,
-    THEME_ROW_ODD,
     THEME_SURFACE,
     THEME_SURFACE_ALT,
     THEME_TEXT,
     THEME_TEXT_MUTED,
-    TOOLTIP_CSS,
+    hex_to_rgba,
+    topic_area_color_map,
+)
+from dashboards.amazon_2026.timeline_charts import (
     _as_list,
-    _coerce_float,
-    _detail_metric_values,
     _filter_trad_some,
-    _hex_to_rgba,
-    _json_safe,
-    _kpi_card,
-    donut_figure,
-    donut_panel,
-    empty_donut_panel,
+    _normalized_narrative_sources,
+    _timeline_chart_title,
+    normalize_sources,
+    timeline_available_sources,
+    timeline_figure,
+)
+from dashboards.amazon_2026.ui_components import (
+    NARRATIVE_SOME_COLUMNS,
+    NARRATIVE_TRAD_COLUMNS,
+    SOURCE_OPTIONS,
+    TOOLTIP_CSS,
+    _coerce_float,
+    chart_menu_button,
     _narrative_data_bar_styles,
     _narrative_header_divider_styles,
     _narratives_table_columns,
-    _normalize_sources,
-    _normalized_narrative_sources,
-    _num,
-    na_panel,
-    _timeline_available_sources,
-    _timeline_chart_title,
-    _timeline_figure,
-    _timeline_records_from_frame,
     build_overview_table_section,
     build_top_items_panel,
     build_top_items_table_data,
-    topic_area_color_map,
+    cell_width_styles,
+    data_bar_styles,
+    detail_kpi_groups,
+    dev_inline_label,
+    donut_figure,
+    donut_panel,
+    empty_donut_panel,
+    find_record,
+    header_divider_styles,
+    json_safe,
+    kpi_card,
+    na_panel,
+    num,
+    table_columns,
+    table_records,
     trad_some_controls,
 )
-from dashboards.amazon_2026.dev_ids import is_enabled, ref_badge, ref_label
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-SOURCE_OPTIONS = [
-    {"label": "All", "value": "All"},
-    {"label": "Trad", "value": "Trad"},
-    {"label": "SoMe", "value": "SoMe"},
-    {"label": "Trad&SoMe", "value": "Trad+SoMe"},
-]
-
-TRAD_COLUMNS = [
-    "trad_article_count",
-    "trad_total_reach",
-    "trad_positive_share",
-    "trad_negative_share",
-]
-SOME_COLUMNS = [
-    "some_post_count",
-    "some_total_reach",
-    "some_total_engagement",
-    "some_avg_engagement",
-    "some_positive_share",
-    "some_negative_share",
-    "some_engagement_positive_share",
-    "some_engagement_negative_share",
-]
-BAR_COLORS = {
-    "trad_article_count": "var(--amazon-publishers-bar-trad-publications)",
-    "trad_total_reach": "var(--amazon-publishers-bar-trad-reach)",
-    "trad_positive_share": "var(--amazon-publishers-bar-positive)",
-    "trad_negative_share": "var(--amazon-publishers-bar-negative)",
-    "some_post_count": "var(--amazon-publishers-bar-some-posts)",
-    "some_total_reach": "var(--amazon-publishers-bar-some-reach)",
-    "some_total_engagement": "var(--amazon-publishers-bar-some-engagement)",
-    "some_avg_engagement": "var(--amazon-publishers-bar-some-average)",
-    "some_positive_share": "var(--amazon-publishers-bar-positive)",
-    "some_negative_share": "var(--amazon-publishers-bar-negative)",
-    "some_engagement_positive_share": "var(--amazon-publishers-bar-positive)",
-    "some_engagement_negative_share": "var(--amazon-publishers-bar-negative)",
-}
-
-
-def _precompute_bar_styles_by_column() -> dict[str, list[dict[str, Any]]]:
-    """Build per-column gradient rules for all 101 percentage buckets × 2 row parities.
-
-    Runs once at import time so _data_bar_styles never iterates over table rows.
-    Each rule matches on hidden data columns ({col}_pct and row_parity) so the
-    DataTable only evaluates O(rules_per_col × rows) instead of O(N²) filter
-    expressions. Rules are keyed by column so _data_bar_styles can filter to
-    only visible columns in O(n_columns) time.
-    """
-    row_bgs = [
-        ("even", THEME_ROW_EVEN),
-        ("odd", THEME_ROW_ODD),
-    ]
-    result: dict[str, list[dict[str, Any]]] = {}
-    for col, color in BAR_COLORS.items():
-        col_rules: list[dict[str, Any]] = []
-        for pct in range(101):
-            for parity, row_bg in row_bgs:
-                col_rules.append({
-                    "if": {
-                        "column_id": col,
-                        "filter_query": f"{{row_parity}} = '{parity}' && {{{col}_pct}} = {pct}",
-                    },
-                    "background": (
-                        f"linear-gradient(90deg, {color} 0%, {color} {pct}%, "
-                        f"{row_bg} {pct}%, {row_bg} 100%)"
-                    ),
-                })
-        result[col] = col_rules
-    return result
-
-
-_BAR_STYLES_BY_COLUMN: dict[str, list[dict[str, Any]]] = _precompute_bar_styles_by_column()
+from dashboards.amazon_2026.dev_ids import ref_label
 
 # ---------------------------------------------------------------------------
 # Public section builders (called by @capture wrappers in publishers.py)
@@ -137,8 +70,8 @@ _BAR_STYLES_BY_COLUMN: dict[str, list[dict[str, Any]]] = _precompute_bar_styles_
 
 def build_publishers_overview_section(data_frame: pd.DataFrame) -> html.Div:
     records = _records_from_frame(data_frame)
-    table_data = _table_records(records)
-    columns = _table_columns("All")
+    table_data = table_records(records)
+    columns = table_columns("All")
     controls = html.Div(
         className="amazon-publishers-controls",
         children=[
@@ -191,13 +124,13 @@ def build_publishers_overview_section(data_frame: pd.DataFrame) -> html.Div:
         store_id="amazon-2026-publishers-data",
         section_title=ref_label("Overview", "P3S1"),
         controls=controls,
-        dev_label=_dev_inline_label("P3S1T1", "Overview Table"),
+        dev_label=dev_inline_label("P3S1T1", "Overview Table"),
         table_id="amazon-2026-publishers-table",
         table_data=table_data,
         columns=columns,
-        style_cell_conditional=_cell_width_styles(),
-        style_header_conditional=_header_divider_styles(columns),
-        style_data_conditional=_data_bar_styles(table_data, columns),
+        style_cell_conditional=cell_width_styles(),
+        style_header_conditional=header_divider_styles(columns),
+        style_data_conditional=data_bar_styles(table_data, columns),
         pre_table_children=[html.Div(id="amazon-2026-publishers-kpis", children=_kpi_cards(records))],
     )
 
@@ -228,10 +161,11 @@ def build_publishers_details_section(data_frame: pd.DataFrame) -> html.Div:
                     ),
                 ],
             ),
-            html.Div(
-                id="amazon-2026-publisher-details-content",
-                children=_details_content(records, None),
-            ),
+            # Content lives in its own vm.Figure (see pages/publishers.py + detail_content_scope):
+            # keeps shell and populated content as separate single-source props so a click can't
+            # revert the content. Nonce bumped by a clientside callback after _on_page_load rebuilds
+            # this shell, re-populating the current selection.
+            dcc.Store(id="amazon-2026-publisher-detail-nonce"),
         ],
     )
 
@@ -286,7 +220,7 @@ def _records_from_frame(data_frame: pd.DataFrame) -> list[dict[str, Any]]:
     df.loc[df["publisher_uid"].eq(""), "publisher_uid"] = df.loc[df["publisher_uid"].eq(""), "display_name"]
     df["tml_labels"] = df.apply(_publisher_tml_labels, axis=1)
     df = df.sort_values(["total_items", "display_name"], ascending=[False, True]).reset_index(drop=True)
-    return [_json_safe(record) for record in df.to_dict("records")]
+    return [json_safe(record) for record in df.to_dict("records")]
 
 
 def _publisher_tml_labels(row: pd.Series) -> str:
@@ -303,7 +237,7 @@ def _top_publications_from_frame(data_frame: pd.DataFrame) -> list[dict[str, Any
             df[column] = ""
     df["Reach"] = pd.to_numeric(df["Reach"], errors="coerce").fillna(0).astype(int)
     df["Engagement"] = pd.to_numeric(df["Engagement"], errors="coerce").fillna(0).astype(int)
-    return [_json_safe(record) for record in df.to_dict("records")]
+    return [json_safe(record) for record in df.to_dict("records")]
 
 
 def _topic_area_records_from_frame(
@@ -317,131 +251,12 @@ def _topic_area_records_from_frame(
     if value_column not in df.columns:
         df[value_column] = 0
     df[value_column] = pd.to_numeric(df[value_column], errors="coerce").fillna(0)
-    return [_json_safe(record) for record in df.to_dict("records")]
+    return [json_safe(record) for record in df.to_dict("records")]
 
 
 # ---------------------------------------------------------------------------
 # Overview table helpers
 # ---------------------------------------------------------------------------
-
-
-def _table_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = [
-        {
-            "id": record.get("publisher_uid", ""),
-            "row_id": idx,
-            "row_parity": "odd" if idx % 2 else "even",
-            "publisher_uid": record.get("publisher_uid", ""),
-            "publisher_type": record.get("publisher_type", ""),
-            "display_name": record.get("display_name", ""),
-            "trad_article_count": _num(record, "trad_article_count"),
-            "trad_total_reach": _num(record, "trad_total_reach"),
-            "trad_positive_share": _share_fraction(record, "trad_positive_pct"),
-            "trad_negative_share": _share_fraction(record, "trad_negative_pct"),
-            "some_post_count": _num(record, "some_post_count"),
-            "some_total_reach": _num(record, "some_total_reach"),
-            "some_total_engagement": _num(record, "some_total_engagement"),
-            "some_avg_engagement": _num(record, "some_avg_engagement"),
-            "some_positive_share": _share_fraction(record, "some_positive_pct"),
-            "some_negative_share": _share_fraction(record, "some_negative_pct"),
-            "some_engagement_positive_share": _engagement_sentiment_share(record, "some_engagement_positive"),
-            "some_engagement_negative_share": _engagement_sentiment_share(record, "some_engagement_negative"),
-        }
-        for idx, record in enumerate(records)
-    ]
-    # Add normalised percentage columns used by _BAR_STYLES_BY_COLUMN filter rules.
-    for col in [*TRAD_COLUMNS, *SOME_COLUMNS]:
-        max_val = max((_num(r, col) for r in rows), default=0)
-        for r in rows:
-            r[f"{col}_pct"] = round((_num(r, col) / max_val) * 100) if max_val > 0 else 0
-    return rows
-
-
-def _table_columns(source_filter: str) -> list[dict[str, Any]]:
-    visible_metric_columns = []
-    if source_filter in {"All", "Trad", "Trad+SoMe"}:
-        visible_metric_columns.extend(
-            [
-                {
-                    "name": ["Trad", "Publications"],
-                    "id": "trad_article_count",
-                    "type": "numeric",
-                    "format": Format(group=True, precision=0, scheme=Scheme.fixed),
-                },
-                {
-                    "name": ["Trad", "Reach"],
-                    "id": "trad_total_reach",
-                    "type": "numeric",
-                    "format": Format(group=True, precision=0, scheme=Scheme.fixed),
-                },
-                {
-                    "name": ["Trad", "Positive sentiment share of reach"],
-                    "id": "trad_positive_share",
-                    "type": "numeric",
-                    "format": Format(precision=1, scheme=Scheme.percentage),
-                },
-                {
-                    "name": ["Trad", "Negative sentiment share of reach"],
-                    "id": "trad_negative_share",
-                    "type": "numeric",
-                    "format": Format(precision=1, scheme=Scheme.percentage),
-                },
-            ]
-        )
-    if source_filter in {"All", "SoMe", "Trad+SoMe"}:
-        visible_metric_columns.extend(
-            [
-                {
-                    "name": ["SoMe", "Posts"],
-                    "id": "some_post_count",
-                    "type": "numeric",
-                    "format": Format(group=True, precision=0, scheme=Scheme.fixed),
-                },
-                {
-                    "name": ["SoMe", "Reach"],
-                    "id": "some_total_reach",
-                    "type": "numeric",
-                    "format": Format(group=True, precision=0, scheme=Scheme.fixed),
-                },
-                {
-                    "name": ["SoMe", "Engagement"],
-                    "id": "some_total_engagement",
-                    "type": "numeric",
-                    "format": Format(group=True, precision=0, scheme=Scheme.fixed),
-                },
-                {
-                    "name": ["SoMe", "Average Engagement"],
-                    "id": "some_avg_engagement",
-                    "type": "numeric",
-                    "format": Format(group=True, precision=1, scheme=Scheme.fixed),
-                },
-                {
-                    "name": ["SoMe", "Positive sentiment share of reach"],
-                    "id": "some_positive_share",
-                    "type": "numeric",
-                    "format": Format(precision=1, scheme=Scheme.percentage),
-                },
-                {
-                    "name": ["SoMe", "Negative sentiment share of reach"],
-                    "id": "some_negative_share",
-                    "type": "numeric",
-                    "format": Format(precision=1, scheme=Scheme.percentage),
-                },
-                {
-                    "name": ["SoMe", "Share of positive engagement"],
-                    "id": "some_engagement_positive_share",
-                    "type": "numeric",
-                    "format": Format(precision=1, scheme=Scheme.percentage),
-                },
-                {
-                    "name": ["SoMe", "Share of negative engagement"],
-                    "id": "some_engagement_negative_share",
-                    "type": "numeric",
-                    "format": Format(precision=1, scheme=Scheme.percentage),
-                },
-            ]
-        )
-    return [{"name": ["", "Author"], "id": "display_name"}, *visible_metric_columns]
 
 
 def _filter_records(
@@ -454,12 +269,12 @@ def _filter_records(
     media_values = set(_as_list(media_filter))
     filtered = []
     for record in records:
-        if source_filter == "Trad" and _num(record, "trad_article_count") <= 0:
+        if source_filter == "Trad" and num(record, "trad_article_count") <= 0:
             continue
-        if source_filter == "SoMe" and _num(record, "some_post_count") <= 0:
+        if source_filter == "SoMe" and num(record, "some_post_count") <= 0:
             continue
         if source_filter == "Trad+SoMe" and (
-            _num(record, "trad_article_count") <= 0 or _num(record, "some_post_count") <= 0
+            num(record, "trad_article_count") <= 0 or num(record, "some_post_count") <= 0
         ):
             continue
         record_tml_values = set(
@@ -471,87 +286,6 @@ def _filter_records(
             continue
         filtered.append(record)
     return filtered
-
-
-def _has_source_divider(columns: list[dict[str, Any]]) -> bool:
-    visible_ids = {column["id"] for column in columns}
-    return "some_post_count" in visible_ids and any(column_id in visible_ids for column_id in TRAD_COLUMNS)
-
-
-def _header_divider_styles(columns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    styles = [
-        {
-            "if": {"column_id": "display_name"},
-            "borderRight": "none",
-            "boxShadow": f"inset -1px 0 0 {THEME_BORDER}",
-        }
-    ]
-    if not _has_source_divider(columns):
-        return styles
-    styles.append(
-        {
-            "if": {"column_id": "some_post_count"},
-            "borderLeft": "none",
-            "boxShadow": f"inset 1px 0 0 {THEME_BORDER}",
-        }
-    )
-    return styles
-
-
-def _data_bar_styles(table_data: list[dict[str, Any]], columns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # table_data is not read here; percentage buckets are pre-baked into row data
-    # by _table_records and matched via _BAR_STYLES_BY_COLUMN filter rules.
-    visible_ids = {column["id"] for column in columns}
-    styles: list[dict[str, Any]] = [
-        {"if": {"row_index": "odd"}, "backgroundColor": THEME_ROW_ODD},
-        {
-            "if": {"column_id": "display_name"},
-            "color": "var(--amazon-publishers-link)",
-            "cursor": "pointer",
-            "borderRight": "none",
-            "boxShadow": f"inset -1px 0 0 {THEME_BORDER}",
-            "position": "relative",
-            "zIndex": 4,
-        },
-        {
-            "if": {"state": "active"},
-            "backgroundColor": "transparent",
-            "border": f"1px solid {THEME_BORDER}",
-        },
-        {
-            "if": {"state": "selected"},
-            "backgroundColor": "transparent",
-            "border": f"1px solid {THEME_BORDER}",
-        },
-    ]
-    if _has_source_divider(columns):
-        styles.append({
-            "if": {"column_id": "some_post_count"},
-            "borderLeft": "none",
-            "boxShadow": f"inset 1px 0 0 {THEME_BORDER}",
-        })
-    for col in [*TRAD_COLUMNS, *SOME_COLUMNS]:
-        if col in visible_ids:
-            styles.extend(_BAR_STYLES_BY_COLUMN[col])
-    return styles
-
-
-def _cell_width_styles() -> list[dict[str, Any]]:
-    metric_width = {"width": "150px", "maxWidth": "150px", "minWidth": "150px"}
-    return [
-        {
-            "if": {"column_id": "display_name"},
-            "width": "240px",
-            "maxWidth": "240px",
-            "minWidth": "240px",
-            "textAlign": "left",
-            "fontWeight": "700",
-        },
-        *[
-            {"if": {"column_id": column}, **metric_width, "textAlign": "right"}
-            for column in [*TRAD_COLUMNS, *SOME_COLUMNS]
-        ],
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -566,8 +300,8 @@ def _kpi_cards(records: list[dict[str, Any]]) -> html.Div:
     linked_publishers = 0
     for row in records:
         total_publishers += 1
-        has_trad = _num(row, "trad_article_count") > 0
-        has_some = _num(row, "some_post_count") > 0
+        has_trad = num(row, "trad_article_count") > 0
+        has_some = num(row, "some_post_count") > 0
         trad_publishers += int(has_trad)
         some_publishers += int(has_some)
         linked_publishers += int(has_trad and has_some)
@@ -580,8 +314,8 @@ def _kpi_cards(records: list[dict[str, Any]]) -> html.Div:
                     html.Div(
                         className="amazon-publishers-kpi-panel-summary-kpis",
                         children=[
-                            _kpi_card("Publishers Total", f"{total_publishers:,.0f}", compact=True),
-                            _kpi_card("Linked Trad + SoMe", f"{linked_publishers:,.0f}", compact=True),
+                            kpi_card("Publishers Total", f"{total_publishers:,.0f}", compact=True),
+                            kpi_card("Linked Trad + SoMe", f"{linked_publishers:,.0f}", compact=True),
                         ],
                     ),
                     _publisher_overlap_venn(trad_publishers, some_publishers, linked_publishers),
@@ -594,7 +328,7 @@ def _kpi_cards(records: list[dict[str, Any]]) -> html.Div:
                 records,
                 "trad_dominant_media_type",
                 "Media type split",
-                lambda row: _num(row, "trad_article_count") > 0,
+                lambda row: num(row, "trad_article_count") > 0,
             ),
             _distribution_panel(
                 "SoMe",
@@ -603,11 +337,10 @@ def _kpi_cards(records: list[dict[str, Any]]) -> html.Div:
                 records,
                 "some_dominant_platform",
                 "Platform split",
-                lambda row: _num(row, "some_post_count") > 0,
+                lambda row: num(row, "some_post_count") > 0,
             ),
         ],
     )
-
 
 
 def _distribution_panel(
@@ -626,7 +359,7 @@ def _distribution_panel(
             html.Div(title, className="amazon-publishers-kpi-group-title"),
             html.Div(
                 className="amazon-publishers-kpi-panel-body",
-                children=[_kpi_card(stat_label, f"{stat_value:,.0f}", compact=True), donut],
+                children=[kpi_card(stat_label, f"{stat_value:,.0f}", compact=True), donut],
             ),
         ],
     )
@@ -695,7 +428,7 @@ def _publisher_overlap_venn(trad_publishers: int, some_publishers: int, linked_p
                 y=trad_y,
                 mode="lines",
                 fill="toself",
-                fillcolor=_hex_to_rgba(ACCENT_TRAD, 0.28),
+                fillcolor=hex_to_rgba(ACCENT_TRAD, 0.28),
                 line={"color": ACCENT_TRAD, "width": 1.5},
                 hoverinfo="skip",
                 showlegend=False,
@@ -705,7 +438,7 @@ def _publisher_overlap_venn(trad_publishers: int, some_publishers: int, linked_p
                 y=some_y,
                 mode="lines",
                 fill="toself",
-                fillcolor=_hex_to_rgba(ACCENT_SOME, 0.28),
+                fillcolor=hex_to_rgba(ACCENT_SOME, 0.28),
                 line={"color": ACCENT_SOME, "width": 1.5},
                 hoverinfo="skip",
                 showlegend=False,
@@ -755,7 +488,7 @@ def _publisher_overlap_venn(trad_publishers: int, some_publishers: int, linked_p
         showlegend=False,
     )
     return html.Div(
-        className="amazon-publishers-venn",
+        className="amazon-publishers-venn na-chart-menu-host",
         children=[
             dcc.Graph(
                 figure=figure,
@@ -764,6 +497,7 @@ def _publisher_overlap_venn(trad_publishers: int, some_publishers: int, linked_p
                 className="amazon-publishers-venn-graph",
                 style={"width": "100%", "height": "100%", "minWidth": 0},
             ),
+            chart_menu_button(has_plot=True, has_table=False),
         ],
     )
 
@@ -817,12 +551,13 @@ def _details_content(
     topic_areas: list[dict[str, Any]] | None = None,
     some_topic_areas: list[dict[str, Any]] | None = None,
     top_publications: list[dict[str, Any]] | None = None,
+    timeline_load_failed: bool = False,
 ):
     if not records:
         return html.Div(className="amazon-publishers-empty", children="No publisher data available.")
     if not selected_uid:
         return html.Div(className="amazon-publishers-empty", children="No author selected.")
-    selected = _find_record(records, selected_uid)
+    selected = find_record(records, selected_uid)
     if selected is None:
         return html.Div(className="amazon-publishers-empty", children="No publisher data available.")
     raw_platform_links = selected.get("platforms_url", "")
@@ -843,6 +578,7 @@ def _details_content(
         some_metric,
         trad_timeline or [],
         some_timeline or [],
+        load_failed=timeline_load_failed,
     )
     selected_narratives = _combined_narratives_from_record(selected)
     topic_area_panel = _topic_area_panel(selected, topic_areas or [], some_topic_areas or [])
@@ -884,32 +620,10 @@ def _details_content(
     )
 
 
-def _detail_kpi_groups(record: dict[str, Any]) -> tuple[list[html.Div], list[html.Div]]:
-    trad_cards: list[html.Div] = []
-    if _num(record, "trad_article_count") > 0:
-        trad_cards = [
-            _kpi_card("Trad publications", f"{_num(record, 'trad_article_count'):,.0f}"),
-            _kpi_card("Trad reach", f"{_num(record, 'trad_total_reach'):,.0f}"),
-            _kpi_card("Trad positive share", f"{_num(record, 'trad_positive_pct'):,.1f}%"),
-            _kpi_card("Trad negative share", f"{_num(record, 'trad_negative_pct'):,.1f}%"),
-        ]
-    some_cards: list[html.Div] = []
-    if _num(record, "some_post_count") > 0:
-        some_cards = [
-            _kpi_card("SoMe posts", f"{_num(record, 'some_post_count'):,.0f}"),
-            _kpi_card("SoMe reach", f"{_num(record, 'some_total_reach'):,.0f}"),
-            _kpi_card("SoMe engagement", f"{_num(record, 'some_total_engagement'):,.0f}"),
-            _kpi_card("Avg. engagement", f"{_num(record, 'some_avg_engagement'):,.1f}"),
-            _kpi_card("SoMe positive share", f"{_num(record, 'some_positive_pct'):,.1f}%"),
-            _kpi_card("SoMe negative share", f"{_num(record, 'some_negative_pct'):,.1f}%"),
-        ]
-    return trad_cards, some_cards
-
-
 def _detail_kpis(record: dict[str, Any]) -> list[html.Div]:
-    trad_cards, some_cards = _detail_kpi_groups(record)
+    trad_cards, some_cards = detail_kpi_groups(record)
     cards = trad_cards + some_cards
-    return cards or [_kpi_card("Items", f"{_num(record, 'total_items'):,.0f}")]
+    return cards or [kpi_card("Items", f"{num(record, 'total_items'):,.0f}")]
 
 
 def _profile_block(record: dict[str, Any]) -> html.Div:
@@ -942,9 +656,9 @@ def _profile_badges(record: dict[str, Any]) -> list[html.Div]:
 
 def _publisher_source_labels(record: dict[str, Any]) -> list[str]:
     labels: list[str] = []
-    if _num(record, "trad_article_count") > 0:
+    if num(record, "trad_article_count") > 0:
         labels.append("Trad")
-    if _num(record, "some_post_count") > 0:
+    if num(record, "some_post_count") > 0:
         labels.append("SoMe")
     if labels:
         return labels
@@ -995,6 +709,7 @@ def _timeline_panel(
     some_metric: str,
     trad_timeline: list[dict[str, Any]],
     some_timeline: list[dict[str, Any]],
+    load_failed: bool = False,
 ) -> html.Div:
     timeline_data = {
         "publisher_uid": str(selected.get("publisher_uid", "")),
@@ -1002,18 +717,19 @@ def _timeline_panel(
         "some_metric": some_metric,
         "trad_timeline": trad_timeline,
         "some_timeline": some_timeline,
-        "has_trad": _num(selected, "trad_article_count") > 0,
-        "has_some": _num(selected, "some_post_count") > 0,
+        "has_trad": num(selected, "trad_article_count") > 0,
+        "has_some": num(selected, "some_post_count") > 0,
+        "load_failed": load_failed,
     }
-    available_sources = _timeline_available_sources(timeline_data)
-    selected_sources = _normalize_sources(available_sources, available_sources)
+    available_sources = timeline_available_sources(timeline_data)
+    selected_sources = normalize_sources(available_sources, available_sources)
     return na_panel(
         _timeline_panel_title(selected_sources, trad_metric, some_metric),
         [
             dcc.Store(id="amazon-2026-publisher-timeline-data", data=timeline_data),
             dcc.Graph(
                 id="amazon-2026-publisher-timeline-graph",
-                figure=_timeline_figure(timeline_data, selected_sources),
+                figure=timeline_figure(timeline_data, selected_sources),
                 config={"displayModeBar": False, "responsive": True},
                 className="amazon-publishers-timeline-graph",
             ),
@@ -1056,11 +772,11 @@ def _topic_area_panel(
         "publisher_uid": str(selected.get("publisher_uid", "")),
         "trad_topic_areas": trad_topic_area_rows,
         "some_topic_areas": some_topic_area_rows,
-        "has_trad": _num(selected, "trad_article_count") > 0,
-        "has_some": _num(selected, "some_post_count") > 0,
+        "has_trad": num(selected, "trad_article_count") > 0,
+        "has_some": num(selected, "some_post_count") > 0,
     }
     available_sources = _topic_area_available_sources(payload)
-    selected_sources = _normalize_sources(available_sources, available_sources)
+    selected_sources = normalize_sources(available_sources, available_sources)
     panel_title = ref_label("Publications by Topic Area", "P3S2G4")
     rows = _topic_area_rows(payload, selected_sources)
     controls = trad_some_controls(
@@ -1090,7 +806,7 @@ def _topic_area_treemap_figure(
     selected_sources: list[str] | None = None,
 ) -> go.Figure:
     payload = topic_area_data or {}
-    selected_sources = _normalize_sources(selected_sources, _topic_area_available_sources(payload))
+    selected_sources = normalize_sources(selected_sources, _topic_area_available_sources(payload))
     rows = _topic_area_rows(payload, selected_sources)
     total_label = "Total publications and posts" if len(selected_sources) > 1 else (
         "Total posts" if selected_sources == ["SoMe"] else "Total publications"
@@ -1246,9 +962,9 @@ def _narratives_table(rows: list[dict[str, Any]]) -> html.Div:
 
 def _narrative_available_sources(rows: list[dict[str, Any]]) -> list[str]:
     available_sources: list[str] = []
-    if any(_num(row, "trad_publications") > 0 or _num(row, "trad_reach") > 0 for row in rows):
+    if any(num(row, "trad_publications") > 0 or num(row, "trad_reach") > 0 for row in rows):
         available_sources.append("Trad")
-    if any(_num(row, "some_posts") > 0 or _num(row, "some_reach") > 0 for row in rows):
+    if any(num(row, "some_posts") > 0 or num(row, "some_reach") > 0 for row in rows):
         available_sources.append("SoMe")
     return available_sources
 
@@ -1282,10 +998,10 @@ def _narratives_table_rows(rows: list[dict[str, Any]], source_filter: list[str] 
     show_some = "SoMe" in selected_sources
     selected_rows: list[dict[str, Any]] = []
     for idx, row in enumerate(rows):
-        trad_publications = _num(row, "trad_publications")
-        trad_reach = _num(row, "trad_reach")
-        some_posts = _num(row, "some_posts")
-        some_reach = _num(row, "some_reach")
+        trad_publications = num(row, "trad_publications")
+        trad_reach = num(row, "trad_reach")
+        some_posts = num(row, "some_posts")
+        some_reach = num(row, "some_reach")
         if show_trad and not show_some and trad_publications <= 0 and trad_reach <= 0:
             continue
         if show_some and not show_trad and some_posts <= 0 and some_reach <= 0:
@@ -1296,18 +1012,18 @@ def _narratives_table_rows(rows: list[dict[str, Any]], source_filter: list[str] 
             {
                 "row_id": idx,
                 "narrative_label": row.get("narrative_label", ""),
-                **{column: _num(row, column) if show_trad else 0 for column in NARRATIVE_TRAD_COLUMNS},
-                **{column: _num(row, column) if show_some else 0 for column in NARRATIVE_SOME_COLUMNS},
+                **{column: num(row, column) if show_trad else 0 for column in NARRATIVE_TRAD_COLUMNS},
+                **{column: num(row, column) if show_some else 0 for column in NARRATIVE_SOME_COLUMNS},
             }
         )
     return sorted(
         selected_rows,
         key=lambda item: (
-            -(_num(item, "trad_reach") + _num(item, "some_reach")),
-            -_num(item, "trad_reach"),
-            -_num(item, "some_reach"),
-            -_num(item, "trad_publications"),
-            -_num(item, "some_posts"),
+            -(num(item, "trad_reach") + num(item, "some_reach")),
+            -num(item, "trad_reach"),
+            -num(item, "some_reach"),
+            -num(item, "trad_publications"),
+            -num(item, "some_posts"),
             str(item.get("narrative_label", "")),
         ),
     )[:12]
@@ -1368,9 +1084,9 @@ def _combined_narratives_from_record(record: dict[str, Any]) -> list[dict[str, A
     return sorted(
         rows,
         key=lambda item: (
-            -_num(item, "total_reach"),
-            -_num(item, "trad_publications"),
-            -_num(item, "some_posts"),
+            -num(item, "total_reach"),
+            -num(item, "trad_publications"),
+            -num(item, "some_posts"),
             str(item.get("narrative_label", "")),
         ),
     )
@@ -1389,18 +1105,6 @@ def _top_items_panel(top_publications: list[dict[str, Any]]) -> html.Div:
         trad_table_data,
         some_table_data,
     )
-
-
-# ---------------------------------------------------------------------------
-# Shared UI helpers
-# ---------------------------------------------------------------------------
-
-
-def _dev_inline_label(ref: str, label: str = "") -> html.Div | None:
-    if not is_enabled():
-        return None
-    text = ref_label(label, ref) if label else ref_badge(ref)
-    return html.Div(text, className="na-dev-inline-label")
 
 
 # ---------------------------------------------------------------------------
@@ -1603,15 +1307,6 @@ def _split_values(value: Any) -> list[str]:
     return [str(item).strip() for item in raw_values if str(item).strip()]
 
 
-def _find_record(records: list[dict[str, Any]], selected_uid: str | None) -> dict[str, Any] | None:
-    if selected_uid is None:
-        return None
-    for record in records:
-        if record.get("publisher_uid") == selected_uid:
-            return record
-    return None
-
-
 def _author_options(records: list[dict[str, Any]]) -> list[dict[str, str]]:
     return [
         {"label": str(record.get("display_name", "Unknown")), "value": str(record.get("publisher_uid", ""))}
@@ -1627,21 +1322,6 @@ def _filter_options(records: list[dict[str, Any]], column: str) -> list[dict[str
 # ---------------------------------------------------------------------------
 # Primitive utilities
 # ---------------------------------------------------------------------------
-
-
-def _share_fraction(record: dict[str, Any], key: str) -> float:
-    return _num(record, key) / 100
-
-
-def _engagement_sentiment_share(record: dict[str, Any], key: str) -> float:
-    total = (
-        _num(record, "some_engagement_positive")
-        + _num(record, "some_engagement_negative")
-        + _num(record, "some_engagement_neutral")
-    )
-    if total <= 0:
-        return 0.0
-    return _num(record, key) / total
 
 
 def _initials(name: str) -> str:

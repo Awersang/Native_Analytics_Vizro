@@ -8,7 +8,7 @@
 }
 
 #amazon-2026-narratives-overview-table .dash-table-container {
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -59,9 +59,9 @@
 ----------------------------------------------------------------------- */
 
 #amazon-2026-narratives .dash-table-container .current-page {
-  color: var(--amazon-publishers-text) !important;
-  background: var(--amazon-publishers-surface) !important;
-  border-color: var(--amazon-publishers-border) !important;
+  color: var(--na-text) !important;
+  background: var(--na-surface) !important;
+  border-color: var(--na-border) !important;
 }
 
 #amazon-2026-narratives .dash-table-container .current-page input,
@@ -72,8 +72,8 @@
 #amazon-2026-narratives .dash-table-container .dash-table-pagination,
 #amazon-2026-narratives .dash-table-container .dash-table-pagination *,
 #amazon-2026-narratives .dash-table-container input.current-page {
-  color: var(--amazon-publishers-text) !important;
-  -webkit-text-fill-color: var(--amazon-publishers-text) !important;
+  color: var(--na-text) !important;
+  -webkit-text-fill-color: var(--na-text) !important;
   opacity: 1 !important;
 }
 
@@ -81,7 +81,7 @@
 #amazon-2026-narratives .dash-table-container .previous-page,
 #amazon-2026-narratives .dash-table-container .next-page,
 #amazon-2026-narratives .dash-table-container .last-page {
-  color: var(--amazon-publishers-text) !important;
+  color: var(--na-text) !important;
 }
 
 /* -----------------------------------------------------------------------
@@ -154,7 +154,7 @@
   flex-direction: column;
   gap: 24px;
   padding: 24px;
-  border: 1px solid var(--amazon-publishers-border);
+  border: 1px solid var(--na-border);
   border-radius: 8px;
 }
 
@@ -179,7 +179,7 @@
 
 .amazon-narrative-profile-title {
   margin: 0;
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 26px;
   font-weight: 700;
   letter-spacing: 0;
@@ -242,7 +242,7 @@
 
 .amazon-narrative-subheading {
   margin: 24px 0 12px;
-  color: var(--amazon-publishers-text);
+  color: var(--na-text);
   font-size: 15px;
   font-weight: 700;
 }

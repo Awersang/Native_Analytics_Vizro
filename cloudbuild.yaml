@@ -38,7 +38,7 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
-      - --set-env-vars=ENV=prod,AUTH_ENABLED=true,GCP_PROJECT_ID=$PROJECT_ID,FIREBASE_API_KEY=AIzaSyDsAGYIca_7Sr36jqsEkDxy3s5V2Fh8UWQ,FIREBASE_AUTH_DOMAIN=native-analytics-486522.firebaseapp.com,FIRESTORE_DATABASE=nativeanalytics-vizro-logindb
+      - --set-env-vars=ENV=prod,AUTH_ENABLED=true,GCP_PROJECT_ID=$PROJECT_ID,FIREBASE_API_KEY=AIzaSyDsAGYIca_7Sr36jqsEkDxy3s5V2Fh8UWQ,FIREBASE_AUTH_DOMAIN=native-analytics-486522.firebaseapp.com,FIRESTORE_DATABASE=nativeanalytics-vizro-logindb,BQ_MAX_BYTES_BILLED=20000000000
       - --set-secrets=SESSION_SECRET=na-session-secret:latest
       - --cpu=1
       - --memory=1Gi
